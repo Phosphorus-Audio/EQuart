@@ -281,7 +281,8 @@ impl NiceEguiApp for EquartEditor {
             || self.scale.is_shown()
             || self.dial.is_shown()
             || self.drag.is_some()
-            || self.marquee.is_some();
+            || self.marquee.is_some()
+            || self.held_delta.is_some();
         if animated {
             ui.ctx().request_repaint();
         } else {

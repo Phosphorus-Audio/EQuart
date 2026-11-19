@@ -324,14 +324,18 @@ impl EquartEditor {
                     let active = !bypassed && !region.bypass.value() && !self.params.bypass.value();
 
                     ui.horizontal(|ui| {
-                        let button = ui
-                            .add_enabled(active, egui::Button::new("Δ"))
-                            .on_hover_text("Hold to hear what this region's Resonance removes.");
+                        let button = ui.add_enabled(
+                            active,
+                            egui::Button::new("Δ").sense(egui::Sense::click_and_drag()),
+                        );
 
                         held = active
-                            && button.is_pointer_button_down_on()
-                            && button.contains_pointer()
+                            && (button.is_pointer_button_down_on() || button.dragged())
                             && ui.input(|i| i.focused && i.pointer.primary_down());
+
+                        if !held {
+                            button.on_hover_text("Hold to hear what this region's Resonance removes.");
+                        }
 
                         if !active {
                             ui.label("Bypassed");
