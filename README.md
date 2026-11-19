@@ -1,0 +1,65 @@
+# PPA EQuart
+
+Parametric EQ by Phosphorus Audio, built with [nice-plug](https://codeberg.org/RustAudio/nice-plug) (VST3 & CLAP).
+
+![interface](docs/screenshot.png)
+
+
+## performance
+
+Static SVF sections run on an AVX2 block kernel (8 frames at a time via short convolution + state fixup) 
+
+But! If something changes a parameter (like dragging a knob or running automation), it falls back to per-sample processing only while it's moving.
+
+`cargo test --release bench_engine_throughput` (48 kHz stereo, best of 5 runs):
+
+| case | time | of one core |
+| --- | --- | --- |
+| all bands off | 16.1 ns/frame | 0.08% |
+| 8 bells | 28.2 ns/frame | 0.14% |
+| 8 cuts at 96 dB/oct (128 biquads) | 106.1 ns/frame | 0.51% |
+| same, 2x oversampling | 175.4 ns/frame | 0.84% |
+| same, 4x oversampling | 364.4 ns/frame | 1.75% |
+
+Oversampling latency: 0 frames (1x), 32 frames (2x), 48 frames (4x).
+
+## building
+
+Needs Rust and native build tools (MSVC on Windows). Windows UI uses wgpu / D3D12 (no OpenGL fallback).
+
+```powershell
+cargo xtask bundle equart --release
+```
+
+Outputs `target/bundled/equart.clap` and `target/bundled/equart.vst3/`. (`build.bat` / `build.sh` wrap this too.)
+
+With `dpi-trace` enabled, frame stats log to `%LOCALAPPDATA%\f0lock\diagnostics\`:
+
+```powershell
+cargo xtask bundle equart --release --features dpi-trace
+```
+
+Standalone app (for testing without a DAW):
+
+```powershell
+cargo run --release --features standalone -- --help
+```
+
+For debug builds with a fake pink noise signal (when you have no audio backend):
+
+```powershell
+mkdir target; New-Item target/test-signal
+cargo run --features standalone
+```
+
+Delete `target/test-signal` to go back to real audio.
+
+
+## credits
+
+- [nice-plug](https://codeberg.org/RustAudio/nice-plug)
+- [Cytomic: Linear Trapezoidal Integrated SVF](https://www.cytomic.com/files/dsp/SvfLinearTrapOptimised.pdf)
+- [f0lock](https://github.com/sout233/f0lock) — SVF coeffs, cut cascade, analyser, spectrum, knobs, dynamic EQ detector
+- [CamillaDSP](https://github.com/HEnquist/camilladsp) — RBJ biquad formulas for just tests maybe (why? just add a Fruity Parametric EQ 2 and see its ref)
+- [lsp-dsp-units](https://github.com/sadko4u/lsp-dsp-units) — Butterworth pole/Q math
+- [ZLEqualizer](https://github.com/ZL-Audio/ZLEqualizer) — just multi-section cascade reference

@@ -1,0 +1,190 @@
+use super::*;
+
+#[test]
+fn plot_menu_bands_and_regions() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    let plot = axis_plot();
+    let find_text = |editor: &mut EquartEditor, time, label| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+                time: Some(time),
+                focused: true,
+                ..Default::default()
+            },
+            |ui| editor.draw(ui),
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    let rect = clipped.shape.visual_bounding_rect();
+                    clipped.clip_rect.contains_rect(rect).then(|| rect.center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing visible label: {label}"))
+    };
+    let invoke = |editor: &mut EquartEditor, time, position, action| {
+        click_button(&ctx, editor, time, position, egui::PointerButton::Secondary);
+        let item = find_text(editor, time + 0.1, action);
+        click(&ctx, editor, time + 0.2, item);
+    };
+
+    let original = editor.control(1);
+    let point = Pos2::new(plot.x(1_200.0), plot.y(4.0));
+    invoke(&mut editor, 0.0, point, "Add Band");
+    assert_eq!(editor.selected, Some(0));
+    assert!((editor.control(0).frequency - 1_200.0).abs() < 0.1);
+    assert!((editor.control(0).gain - 4.0).abs() < 0.02);
+
+    let blank = Pos2::new(plot.x(3_500.0), plot.y(5.0));
+    invoke(&mut editor, 1.0, blank, "Freeze");
+    assert!(editor.params.analyzer_frozen.load(Ordering::Relaxed));
+    invoke(&mut editor, 2.0, blank, "Freeze");
+    assert!(!editor.params.analyzer_frozen.load(Ordering::Relaxed));
+
+    invoke(&mut editor, 2.5, blank, "Add Spectral Region");
+    assert_eq!(editor.selected_region, Some(0));
+    assert_eq!(editor.selected, None);
+    let region = editor.params.regions[0].control();
+    assert!(region.enabled && !region.bypass);
+    assert!((region.high / region.low - 2.0).abs() < 0.001);
+    assert_eq!(region.gain, crate::region::DEFAULT_GAIN);
+    let range = find_text(&mut editor, 2.8, "Range");
+    let softness = find_text(&mut editor, 2.81, "Edge Softness");
+    let gain = find_text(&mut editor, 2.82, "Gain");
+    assert!(range.y < softness.y && softness.y < gain.y);
+    let panel = editor
+        .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 0.0)
+        .unwrap();
+    let bypass = panel.min + Vec2::new(24.0, 18.0);
+    click(&ctx, &mut editor, 2.9, bypass);
+    assert!(editor.params.regions[0].bypass.value());
+    let action = |y| Pos2::new(panel.right() - 18.0, panel.top() + y);
+    let add_modifier = action(108.5);
+    click(&ctx, &mut editor, 3.1, add_modifier);
+    assert!(
+        editor
+            .modifier_picker
+            .as_ref()
+            .is_some_and(modifiers::Picker::is_up)
+    );
+    let harmonic = find_text(&mut editor, 4.1, "Harmonic");
+    click(&ctx, &mut editor, 4.2, harmonic);
+    let add = find_text(&mut editor, 4.3, "Add");
+    click(&ctx, &mut editor, 4.4, add);
+    let harmonic = editor.params.regions[0].harmonic.control();
+    assert!(harmonic.enabled);
+    assert_eq!((harmonic.first, harmonic.last), (2, 8));
+    let protect = find_text(&mut editor, 4.9, "Protect");
+    click(&ctx, &mut editor, 5.0, protect);
+    assert_eq!(
+        editor.params.regions[0].harmonic.mode.value(),
+        crate::region::HarmonicMode::Protect
+    );
+    let expanded = editor
+        .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 0.0)
+        .unwrap();
+    let action = |y| Pos2::new(expanded.left() + panel.width() - 18.0, expanded.top() + y);
+    click(&ctx, &mut editor, 5.4, action(15.5));
+    assert_eq!(editor.selected_region, None);
+    assert!(editor.params.regions[0].enabled.value());
+    let chip = find_text(&mut editor, 5.5, "Region 1");
+    click(&ctx, &mut editor, 5.6, chip);
+    assert_eq!(editor.selected_region, Some(0));
+    click(&ctx, &mut editor, 6.0, action(46.5));
+    assert!(!editor.params.regions[0].enabled.value());
+    assert!(!editor.params.regions[0].harmonic.enabled.value());
+    for _ in 0..crate::region::REGION_COUNT {
+        editor.place_region(880.0);
+    }
+    assert!(
+        editor
+            .params
+            .regions
+            .iter()
+            .all(|region| region.enabled.value())
+    );
+    assert_eq!(
+        editor.selected_region,
+        Some(crate::region::REGION_COUNT - 1)
+    );
+
+    editor.set_band_enabled(1, true);
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    editor.set(&setter, &editor.params.band(1).pitch.enabled, true);
+    editor.set_band_enabled(1, false);
+    assert!(editor.band_exists(1));
+    invoke(&mut editor, 6.6, blank, "Delete all");
+    assert_eq!(editor.selected, None);
+    assert_eq!(editor.selected_region, None);
+    assert!(
+        editor
+            .params
+            .regions
+            .iter()
+            .all(|region| !region.enabled.value())
+    );
+    assert_eq!(marker_count(&ctx, &mut editor, 7.0), 0);
+    assert_eq!(editor.control(1), original);
+    assert!((0..BAND_COUNT).all(|index| !editor.params.is_placed(index)));
+}
+
+#[test]
+fn panel_converts_band_region() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    let params = editor.params.clone();
+    let band = params.band(0);
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    let center = axis_plot().hz(CANVAS.x * 0.5);
+    editor.set_band_enabled(0, true);
+    editor.set(&setter, &band.kind, FilterKind::Peak);
+    editor.set(&setter, &band.frequency, center);
+    editor.set(&setter, &band.gain, 4.25);
+    editor.set(&setter, &band.q, 1.3);
+    editor.set(&setter, &band.slope, CutSlope::Db48);
+    editor.set_band_enabled(0, false);
+    editor.pick_only(0);
+
+    let convert = panel_button(Layout::PANEL_W - 18.0, 77.5);
+    click(&ctx, &mut editor, 0.0, convert);
+    assert_eq!(editor.selected_region, Some(0));
+    assert!(!editor.band_exists(0));
+    let region = params.regions[0].control();
+    assert!(region.enabled && region.bypass);
+    assert_eq!(region.gain, 4.25);
+    assert!(region.low < center && region.high > center);
+
+    let panel = editor
+        .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 0.0)
+        .unwrap();
+    let convert = Pos2::new(panel.right() - 18.0, panel.top() + 77.5);
+    click(&ctx, &mut editor, 0.5, convert);
+    assert_eq!(editor.selected, Some(0));
+    assert!(!params.regions[0].enabled.value());
+    assert!(editor.band_exists(0));
+    let band = editor.control(0);
+    assert!(!band.enabled);
+    assert!((band.frequency - center).abs() < 0.02);
+    assert!((band.q - 1.3).abs() < 0.01);
+    assert_eq!(band.gain, 4.25);
+    assert_eq!(band.slope, CutSlope::Db48);
+
+    for _ in 0..crate::region::REGION_COUNT {
+        editor.place_region(880.0);
+    }
+    editor.pick_only(0);
+    click(
+        &ctx,
+        &mut editor,
+        1.0,
+        panel_button(Layout::PANEL_W - 18.0, 77.5),
+    );
+    assert_eq!(editor.selected, Some(0));
+    assert_eq!(editor.control(0), band);
+}

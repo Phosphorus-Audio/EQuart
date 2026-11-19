@@ -1,0 +1,51 @@
+[package]
+name = "equart"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Phosphorus Audio"]
+description = "Good EQ by PPA"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+members = ["xtask"]
+exclude = ["vendor/nice-plug", "vendor/baseview", "vendor/egui-baseview", "vendor/pitch-estimate"]
+resolver = "3"
+
+[features]
+standalone = ["nice-plug/standalone"]
+dpi-trace = ["nice-plug-egui/dpi-trace"]
+
+[[bin]]
+name = "equart"
+required-features = ["standalone"]
+
+[dependencies]
+nice-plug = { path = "vendor/nice-plug/crates/nice-plug", features = ["assert_process_allocs", "unsafe_flush_denormals"] }
+egui = { version = "0.37", features = ["default_fonts"] }
+realfft = "3.5"
+pitch-estimate = { path = "vendor/pitch-estimate" }
+
+[dev-dependencies]
+nice-assert-no-alloc = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+nice-plug-egui = { path = "vendor/nice-plug/crates/nice-plug-egui", default-features = false, features = ["wgpu"] }
+egui-wgpu = { version = "0.37", default-features = false }
+
+[target.'cfg(not(windows))'.dependencies]
+nice-plug-egui = { path = "vendor/nice-plug/crates/nice-plug-egui" }
+
+[patch.crates-io]
+egui-baseview = { path = "vendor/egui-baseview" }
+baseview = { path = "vendor/baseview" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

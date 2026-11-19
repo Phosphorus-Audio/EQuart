@@ -1,0 +1,6 @@
+# Normalise line endings in the repository so a Windows checkout and a Linux
+# CI checkout produce the same bytes.
+* text=auto eol=lf
+
+*.ttf binary
+*.png binary
