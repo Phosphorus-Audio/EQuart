@@ -20,7 +20,10 @@ impl EquartEditor {
             .filter(|(_, region)| region.enabled)
             .enumerate()
         {
-            let [left, right] = region.bounds().map(|hz| plot.x(hz));
+            let [left_hz, right_hz] = region.bounds();
+            let [left, right] = [left_hz, right_hz].map(|hz| plot.x(hz));
+            let low_is_left = region.low <= region.high;
+
             let selected = self.selected_region == Some(index);
             let fill: u8 = if region.bypass {
                 9
@@ -32,11 +35,60 @@ impl EquartEditor {
             let color = if region.bypass { MUTED } else { REGION_COLOR };
             let rect = Rect::from_x_y_ranges(left..=right, plot.rect.y_range());
             painter.rect_filled(rect, 0.0, color.gamma_multiply(f32::from(fill) / 255.0));
-            for edge in [left, right] {
+
+            let mid_x = 0.5 * (left + right);
+            for (is_left, edge) in [(true, left), (false, right)] {
+                let (min_x, max_x) = if right - left < 8.0 {
+                    if is_left {
+                        (edge - 4.0, mid_x)
+                    } else {
+                        (mid_x, edge + 4.0)
+                    }
+                } else {
+                    (edge - 4.0, edge + 4.0)
+                };
+
+                let edge_rect = Rect::from_x_y_ranges(min_x..=max_x, plot.rect.y_range());
+
+                let edge_resp = ui
+                    .interact(
+                        edge_rect,
+                        ui.make_persistent_id(("spectral-region-edge", index, is_left)),
+                        Sense::click_and_drag(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+
+                if edge_resp.clicked() || edge_resp.drag_started() {
+                    self.select_region(index);
+                }
+
+                if edge_resp.dragged()
+                    && let Some(pos) = edge_resp.interact_pointer_pos()
+                    && let Some(gui) = &self.gui
+                {
+                    let raw_hz = plot.hz(pos.x).clamp(crate::analyzer::MIN_HZ, FREQUENCY_MAX_HZ);
+                    let next_hz = if is_left {
+                        raw_hz.min((right_hz / 1.03).max(crate::analyzer::MIN_HZ))
+                    } else {
+                        raw_hz.max((left_hz * 1.03).min(FREQUENCY_MAX_HZ))
+                    };
+                    let region_params = &self.params.regions[index];
+                    let param = if is_left == low_is_left {
+                        &region_params.low
+                    } else {
+                        &region_params.high
+                    };
+                    self.set(&gui.param_setter(), param, next_hz);
+                }
+                let hot = edge_resp.hovered() || edge_resp.dragged();
+
                 painter.vline(
                     edge,
                     rect.y_range(),
-                    Stroke::new(1.0, color.gamma_multiply(0.4)),
+                    Stroke::new(
+                        if hot { 2.0 } else { 1.0 },
+                        color.gamma_multiply(if hot { 0.9 } else { 0.4 }),
+                    ),
                 );
             }
 
@@ -47,9 +99,14 @@ impl EquartEditor {
                 .interact(
                     chip,
                     ui.make_persistent_id(("spectral-region", index)),
-                    Sense::click(),
+                    Sense::click_and_drag(),
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+            if button.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+
             painter.rect_filled(chip, 5.0, Color32::from_gray(32));
             painter.rect_stroke(
                 chip,
@@ -71,8 +128,54 @@ impl EquartEditor {
                 FontId::proportional(11.0),
                 color,
             );
-            if button.clicked() || button.secondary_clicked() {
+
+            if button.clicked() || button.secondary_clicked() || button.drag_started() {
                 self.select_region(index);
+            }
+
+            let drag_id = button.id.with("drag-origin");
+            if button.drag_started()
+                && let Some(origin) = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or_else(|| button.interact_pointer_pos())
+            {
+                ui.data_mut(|d| d.insert_temp(drag_id, (origin.x, left_hz, right_hz)));
+            }
+
+            if button.dragged()
+                && let Some((start_x, start_low, start_high)) =
+                    ui.data(|d| d.get_temp::<(f32, f32, f32)>(drag_id))
+                && let Some(pos) = button.interact_pointer_pos()
+                && let Some(gui) = &self.gui
+            {
+                let ratio = (start_high / start_low).max(1.03);
+                let scale = (plot.max_hz / crate::analyzer::MIN_HZ)
+                    .powf((pos.x - start_x) / plot.rect.width().max(1.0));
+
+                let mut next_low = start_low * scale;
+                let mut next_high = next_low * ratio;
+
+                if next_low < crate::analyzer::MIN_HZ {
+                    next_low = crate::analyzer::MIN_HZ;
+                    next_high = (next_low * ratio).min(FREQUENCY_MAX_HZ);
+                }
+
+                if next_high > FREQUENCY_MAX_HZ {
+                    next_high = FREQUENCY_MAX_HZ;
+                    next_low = (next_high / ratio).max(crate::analyzer::MIN_HZ);
+                }
+
+                let setter = gui.param_setter();
+                let region_params = &self.params.regions[index];
+
+                let (low_param, high_param) = if low_is_left {
+                    (&region_params.low, &region_params.high)
+                } else {
+                    (&region_params.high, &region_params.low)
+                };
+
+                self.set(&setter, low_param, next_low);
+                self.set(&setter, high_param, next_high);
             }
             button.context_menu(|ui| {
                 if ui.selectable_label(region.bypass, "Bypass").clicked() {
