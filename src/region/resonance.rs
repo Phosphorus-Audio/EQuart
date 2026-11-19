@@ -1,5 +1,5 @@
 use super::{REGION_COUNT, RegionControl};
-use crate::band::BandControl;
+use crate::band::{BandControl, ChannelMode};
 use crate::filter::CutSlope;
 use nice_plug::prelude::*;
 use realfft::{RealFftPlanner, RealToComplex, num_complex::Complex32};
@@ -15,6 +15,12 @@ pub struct ResonanceControl {
     pub depth: f32,
     pub threshold: f32,
     pub q: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    pub ratio: f32,
+    pub smooth: f32,
+    pub stereo_link: f32,
+    pub bias: f32,
 }
 
 impl Default for ResonanceControl {
@@ -22,8 +28,14 @@ impl Default for ResonanceControl {
         Self {
             enabled: false,
             depth: 6.0,
-            threshold: 8.0,
+            threshold: 4.5,
             q: 10.0,
+            attack_ms: 12.0,
+            release_ms: 80.0,
+            ratio: 75.0,
+            smooth: 35.0,
+            stereo_link: 100.0,
+            bias: 0.0,
         }
     }
 }
@@ -40,6 +52,18 @@ pub struct ResonanceParams {
     pub threshold: FloatParam,
     #[id = "res_q"]
     pub q: FloatParam,
+    #[id = "res_attack"]
+    pub attack: FloatParam,
+    #[id = "res_release"]
+    pub release: FloatParam,
+    #[id = "res_ratio"]
+    pub ratio: FloatParam,
+    #[id = "res_smooth"]
+    pub smooth: FloatParam,
+    #[id = "res_link"]
+    pub stereo_link: FloatParam,
+    #[id = "res_bias"]
+    pub bias: FloatParam,
 }
 
 impl ResonanceParams {
@@ -57,6 +81,11 @@ impl ResonanceParams {
             )
             .with_unit(" dB")
         };
+        let pct = |label, value, min, max| {
+            FloatParam::new(name(label), value, FloatRange::Linear { min, max })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_rounded(0))
+        };
         Self {
             enabled: BoolParam::new(name("Enabled"), false),
             bypassed: BoolParam::new(name("Bypassed"), false),
@@ -70,6 +99,30 @@ impl ResonanceParams {
                     max: 32.0,
                 },
             ),
+            attack: FloatParam::new(
+                name("Attack"),
+                defaults.attack_ms,
+                FloatRange::Logarithmic {
+                    min: 0.5,
+                    max: 100.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            release: FloatParam::new(
+                name("Release"),
+                defaults.release_ms,
+                FloatRange::Logarithmic {
+                    min: 5.0,
+                    max: 500.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            ratio: pct("Ratio", defaults.ratio, 0.0, 200.0),
+            smooth: pct("Smooth", defaults.smooth, 0.0, 100.0),
+            stereo_link: pct("Stereo Link", defaults.stereo_link, 0.0, 100.0),
+            bias: pct("Bias", defaults.bias, -100.0, 100.0),
         }
     }
 
@@ -79,6 +132,12 @@ impl ResonanceParams {
             threshold: self.threshold.value(),
             depth: self.depth.value(),
             q: self.q.value(),
+            attack_ms: self.attack.value(),
+            release_ms: self.release.value(),
+            ratio: self.ratio.value(),
+            smooth: self.smooth.value(),
+            stereo_link: self.stereo_link.value(),
+            bias: self.bias.value(),
         }
     }
 }
@@ -87,13 +146,14 @@ impl ResonanceParams {
 pub(crate) struct Peak {
     pub hz: f32,
     pub excess: f32,
+    pub channel: ChannelMode,
 }
 
 impl Peak {
     pub(crate) fn band(self, region: RegionControl) -> BandControl {
         let res = region.resonance;
         let [low, high] = region.bounds();
-        let cut = (self.excess - res.threshold).clamp(0.0, res.depth);
+        let cut = ((self.excess - res.threshold) * (res.ratio * 0.01)).clamp(0.0, res.depth);
         BandControl {
             enabled: region.enabled
                 && !region.bypass
@@ -104,6 +164,7 @@ impl Peak {
             gain: -cut,
             q: res.q,
             slope: CutSlope::Db12,
+            channel: self.channel,
             ..BandControl::default()
         }
     }
@@ -116,9 +177,10 @@ pub(crate) struct Detector {
     input: Vec<f32>,
     output: Vec<Complex32>,
     scratch: Vec<Complex32>,
-    frame_power: Vec<f32>,
-    power: Vec<f32>,
-    sum: Vec<f64>,
+    frame_power: [Vec<f32>; 2],
+    power: [Vec<f32>; 2],
+    db: [Vec<f32>; 3],
+    sum_db: [Vec<f64>; 3],
     cursor: usize,
     remaining: usize,
     pub peaks: [[Peak; PEAKS]; REGION_COUNT],
@@ -127,6 +189,7 @@ pub(crate) struct Detector {
 impl Detector {
     pub(crate) fn new() -> Self {
         let fft = RealFftPlanner::new().plan_fft_forward(WINDOW);
+        let bins = WINDOW / 2 + 1;
         Self {
             ring: vec![[0.0; 2]; WINDOW].into_boxed_slice(),
             window: (0..WINDOW)
@@ -136,9 +199,10 @@ impl Detector {
             output: fft.make_output_vec(),
             scratch: fft.make_scratch_vec(),
             fft,
-            frame_power: vec![0.0; WINDOW / 2 + 1],
-            power: vec![0.0; WINDOW / 2 + 1],
-            sum: vec![0.0; WINDOW / 2 + 2],
+            frame_power: [vec![0.0; bins], vec![0.0; bins]],
+            power: [vec![0.0; bins], vec![0.0; bins]],
+            db: [vec![0.0; bins], vec![0.0; bins], vec![0.0; bins]],
+            sum_db: [vec![0.0; bins + 1], vec![0.0; bins + 1], vec![0.0; bins + 1]],
             cursor: 0,
             remaining: WINDOW,
             peaks: Default::default(),
@@ -148,7 +212,7 @@ impl Detector {
     pub(crate) fn reset(&mut self) {
         self.cursor = 0;
         self.remaining = WINDOW;
-        self.power.fill(0.0);
+        self.power.iter_mut().for_each(|p| p.fill(0.0));
         self.peaks = Default::default();
     }
 
@@ -171,37 +235,59 @@ impl Detector {
     }
 
     fn analyze(&mut self, rate: f32, regions: &[RegionControl; REGION_COUNT]) {
-        self.frame_power.fill(0.0);
-        for channel in 0..2 {
+        for ch in 0..2 {
+            self.frame_power[ch].fill(0.0);
             for (i, sample) in self.input.iter_mut().enumerate() {
-                *sample = self.ring[(self.cursor + i) % WINDOW][channel] * self.window[i];
+                *sample = self.ring[(self.cursor + i) % WINDOW][ch] * self.window[i];
             }
             self.fft
                 .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
                 .expect("resonance FFT buffers match the plan");
-            for (power, bin) in self.frame_power.iter_mut().zip(&self.output) {
-                *power += bin.norm_sqr();
+            for (power, bin) in self.frame_power[ch].iter_mut().zip(&self.output) {
+                *power = bin.norm_sqr();
             }
         }
-        let attack = 1.0 - (-(HOP as f32) / (0.012 * rate)).exp();
-        let release = 1.0 - (-(HOP as f32) / (0.055 * rate)).exp();
-        for (i, (power, &frame)) in self.power.iter_mut().zip(&self.frame_power).enumerate() {
-            let alpha = if frame > *power { attack } else { release };
-            *power += alpha * (frame - *power);
-            self.sum[i + 1] = self.sum[i] + f64::from(*power);
+
+        // Fast base envelope to remove single-frame FFT jitter before dB conversion.
+        let base_att = 1.0 - (-(HOP as f32) / (0.002 * rate)).exp();
+        let base_rel = 1.0 - (-(HOP as f32) / (0.015 * rate)).exp();
+        let floor = (WINDOW as f32 * 0.25).powi(2) * 1e-9;
+        let floor_db = 10.0 * floor.log10();
+
+        for i in 0..self.power[0].len() {
+            for ch in 0..2 {
+                let frame = self.frame_power[ch][i];
+                let power = &mut self.power[ch][i];
+                let alpha = if frame > *power { base_att } else { base_rel };
+                *power += alpha * (frame - *power);
+                let db = 10.0 * (*power).max(floor).log10();
+                self.db[ch][i] = db;
+                self.sum_db[ch][i + 1] = self.sum_db[ch][i] + f64::from(db);
+            }
+            let mid_power = 0.5 * (self.power[0][i] + self.power[1][i]);
+            let mid_db = 10.0 * mid_power.max(floor).log10();
+            self.db[2][i] = mid_db;
+            self.sum_db[2][i + 1] = self.sum_db[2][i] + f64::from(mid_db);
         }
+
         let previous = self.peaks;
-        self.peaks = Default::default();
+        let mut candidates: [[Peak; PEAKS]; REGION_COUNT] = Default::default();
         let bin_hz = rate / WINDOW as f32;
-        // scan union of regions once even if they overlap
+
+        // scan union of active regions once
         let mut intervals = [(0, 0); REGION_COUNT];
         let mut count = 0;
         for region in regions {
             let [low, high] = region.bounds();
-            if region.enabled && !region.bypass && region.resonance.enabled
-                && region.resonance.depth > 0.0 && low < high {
+            if region.enabled
+                && !region.bypass
+                && region.resonance.enabled
+                && region.resonance.depth > 0.0
+                && low < high
+            {
                 let first = ((low / bin_hz - 0.5).ceil() as usize).max(1);
-                let end = ((high / bin_hz + 0.5).floor() as usize + 1).min(self.power.len() - 1);
+                let end =
+                    ((high / bin_hz + 0.5).floor() as usize + 1).min(self.db[2].len() - 1);
                 if first < end {
                     intervals[count] = (first, end);
                     count += 1;
@@ -216,51 +302,115 @@ impl Detector {
             scanned = scanned.max(end);
             start..end
         });
-        for i in bins {
-            let [left, center, right] = [self.power[i - 1], self.power[i], self.power[i + 1]];
-            if center <= left || center < right {
-                continue;
-            }
-            // skip Hann main lobe, compare vs sideband mean (floor -90 dBFS)
-            let span = (i / 5).max(6);
+
+        let local_excess = |sum_db: &[f64], db_slice: &[f32], i: usize, span: usize| -> f32 {
             let lo = i.saturating_sub(span);
-            let hi = (i + span + 1).min(self.power.len());
+            let hi = (i + span + 1).min(db_slice.len());
             let a = i.saturating_sub(2);
             let b = (i + 3).min(hi);
-            let background = ((self.sum[a] - self.sum[lo]) + (self.sum[hi] - self.sum[b]))
-                / (a - lo + hi - b) as f64;
-            let floor = (WINDOW as f32 * 0.25).powi(2) * 1e-9;
-            let contrast = center / (background as f32).max(floor);
-            let excess = 10.0 * contrast.min(self.frame_power[i] / floor).log10();
-            let [l, c, r] = [left, center, right].map(|p| p.max(f32::MIN_POSITIVE).ln());
+            let side_count = a - lo + hi - b;
+            if side_count == 0 {
+                return 0.0;
+            }
+            let bg_db = ((sum_db[a] - sum_db[lo]) + (sum_db[hi] - sum_db[b])) as f32
+                / side_count as f32;
+            (db_slice[i] - bg_db).min(db_slice[i] - floor_db).max(0.0)
+        };
+
+        for i in bins {
+            // check local maximum on stereo mid or either channel
+            let mid_peak = self.db[2][i] > self.db[2][i - 1] && self.db[2][i] >= self.db[2][i + 1];
+            let l_peak = self.db[0][i] > self.db[0][i - 1] && self.db[0][i] >= self.db[0][i + 1];
+            let r_peak = self.db[1][i] > self.db[1][i - 1] && self.db[1][i] >= self.db[1][i + 1];
+            if !mid_peak && !l_peak && !r_peak {
+                continue;
+            }
+
+            let [l, c, r] = [self.db[2][i - 1], self.db[2][i], self.db[2][i + 1]];
             let offset = if 2.0 * c > l + r {
                 0.5 * (r - l) / (2.0 * c - l - r)
             } else {
                 0.0
             };
             let hz = (i as f32 + offset) * bin_hz;
-            for (slots, region) in self.peaks.iter_mut().zip(regions) {
+            let octaves = (hz / 1_000.0).max(0.01).log2();
+            let min_gap = (hz * 0.08).max(bin_hz * 2.5);
+
+            for (slots, region) in candidates.iter_mut().zip(regions) {
+                let res = region.resonance;
                 let [low, high] = region.bounds();
                 if !region.enabled
                     || region.bypass
-                    || !region.resonance.enabled
-                    || region.resonance.depth == 0.0
-                    || excess <= region.resonance.threshold
+                    || !res.enabled
+                    || res.depth == 0.0
                     || hz < low
                     || hz > high
                     || low == high
                 {
                     continue;
                 }
+
+                let smooth_scale = 0.5 + (res.smooth * 0.01);
+                let span = ((i as f32 * 0.15 * smooth_scale).round() as usize).max(5);
+
+                let link = res.stereo_link * 0.01;
+                let ex_m = local_excess(&self.sum_db[2], &self.db[2], i, span);
+                let (excess_raw, channel) = if link >= 0.99 {
+                    (ex_m, ChannelMode::Stereo)
+                } else {
+                    let ex_l = local_excess(&self.sum_db[0], &self.db[0], i, span);
+                    let ex_r = local_excess(&self.sum_db[1], &self.db[1], i, span);
+                    let ex = link * ex_m + (1.0 - link) * ex_l.max(ex_r);
+                    let ch = if link < 0.5 && (ex_l - ex_r).abs() > 3.0 * (1.0 - link) {
+                        if ex_l > ex_r {
+                            ChannelMode::Left
+                        } else {
+                            ChannelMode::Right
+                        }
+                    } else {
+                        ChannelMode::Stereo
+                    };
+                    (ex, ch)
+                };
+
+                let excess = (excess_raw + octaves * (res.bias * 0.01) * 3.0).max(0.0);
+                if excess <= res.threshold {
+                    continue;
+                }
+
+                if let Some(near) = slots
+                    .iter()
+                    .position(|p| p.hz > 0.0 && (p.hz - hz).abs() < min_gap)
+                {
+                    if excess > slots[near].excess {
+                        slots[near] = Peak { hz, excess, channel };
+                        slots.sort_by(|a, b| b.excess.total_cmp(&a.excess));
+                    }
+                    continue;
+                }
+
                 if let Some(at) = slots.iter().position(|peak| excess > peak.excess) {
                     slots[at..].rotate_right(1);
-                    slots[at] = Peak { hz, excess };
+                    slots[at] = Peak { hz, excess, channel };
                 }
             }
         }
-        // Keep nearby peaks on the same biquad when their strength order swaps.
-        for (slots, old) in self.peaks.iter_mut().zip(previous) {
-            let ranked = *slots;
+
+        for ((slots, ranked), (old, region)) in self
+            .peaks
+            .iter_mut()
+            .zip(candidates)
+            .zip(previous.iter().zip(regions))
+        {
+            let res = region.resonance;
+            if !region.enabled || region.bypass || !res.enabled {
+                *slots = Default::default();
+                continue;
+            }
+
+            let att = 1.0 - (-(HOP as f32) / (0.001 * res.attack_ms.max(0.5) * rate)).exp();
+            let rel = 1.0 - (-(HOP as f32) / (0.001 * res.release_ms.max(1.0) * rate)).exp();
+
             *slots = Default::default();
             let mut matched = [false; PEAKS];
             for (i, peak) in ranked.iter().enumerate().filter(|(_, p)| p.hz > 0.0) {
@@ -270,17 +420,44 @@ impl Detector {
                     .filter(|&(_, distance)| distance <= (peak.hz * 0.1).max(bin_hz))
                     .min_by(|a, b| a.1.total_cmp(&b.1));
                 if let Some((j, _)) = nearest {
-                    slots[j] = *peak;
+                    let prev_ex = old[j].excess;
+                    let alpha = if peak.excess > prev_ex { att } else { rel };
+                    slots[j] = Peak {
+                        hz: peak.hz,
+                        excess: prev_ex + alpha * (peak.excess - prev_ex),
+                        channel: peak.channel,
+                    };
                     matched[i] = true;
                 }
             }
+
             let mut free = slots.iter_mut().filter(|p| p.hz == 0.0);
             for (peak, _) in ranked
                 .into_iter()
                 .zip(matched)
                 .filter(|(p, used)| p.hz > 0.0 && !used)
             {
-                *free.next().expect("one filter slot per selected peak") = peak;
+                if let Some(slot) = free.next() {
+                    let start = res.threshold;
+                    *slot = Peak {
+                        hz: peak.hz,
+                        excess: start + att * (peak.excess - start),
+                        channel: peak.channel,
+                    };
+                }
+            }
+
+            for j in 0..PEAKS {
+                if slots[j].hz == 0.0 && old[j].hz > 0.0 && old[j].excess > res.threshold {
+                    let next_ex = old[j].excess + rel * (0.0 - old[j].excess);
+                    if next_ex > res.threshold {
+                        slots[j] = Peak {
+                            hz: old[j].hz,
+                            excess: next_ex,
+                            channel: old[j].channel,
+                        };
+                    }
+                }
             }
         }
     }

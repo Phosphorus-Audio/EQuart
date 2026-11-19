@@ -151,10 +151,14 @@ impl Telemetry {
         }
         for (row, peaks) in self.resonance.iter().zip(&engine.resonance.peaks) {
             for (atomic, peak) in row.iter().zip(peaks) {
-                // Publish each frequency/prominence pair together (Hz and 1/256 dB).
                 let hz = peak.hz.round() as u16;
-                let db = (peak.excess * 256.0).round() as u16;
-                atomic.store(u32::from(hz) | (u32::from(db) << 16), Ordering::Relaxed);
+                let db = ((peak.excess * 128.0).round() as u32).min(0x3FFF);
+                let ch = match peak.channel {
+                    crate::band::ChannelMode::Left => 1u32,
+                    crate::band::ChannelMode::Right => 2u32,
+                    _ => 0u32,
+                };
+                atomic.store(u32::from(hz) | (db << 16) | (ch << 30), Ordering::Relaxed);
             }
         }
         self.harmonic_hz.store(
@@ -243,7 +247,16 @@ impl Telemetry {
     pub(crate) fn resonance_peaks(&self, index: usize) -> [Peak; PEAKS] {
         std::array::from_fn(|i| {
             let bits = self.resonance[index][i].load(Ordering::Relaxed);
-            Peak { hz: (bits as u16) as f32, excess: (bits >> 16) as f32 / 256.0 }
+            let channel = match bits >> 30 {
+                1 => crate::band::ChannelMode::Left,
+                2 => crate::band::ChannelMode::Right,
+                _ => crate::band::ChannelMode::Stereo,
+            };
+            Peak {
+                hz: (bits as u16) as f32,
+                excess: ((bits >> 16) & 0x3FFF) as f32 / 128.0,
+                channel,
+            }
         })
     }
 

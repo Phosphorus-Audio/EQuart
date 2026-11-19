@@ -3,7 +3,7 @@ pub(crate) mod resonance;
 
 pub use harmonic::{HarmonicControl, HarmonicMode, MAX_HARMONIC};
 
-use crate::band::{Band, BandControl, ChannelMode, SECTIONS};
+use crate::band::{Band, BandControl, SECTIONS};
 use crate::filter::{CutSlope, FilterKind, bell_bandwidth};
 use crate::params::{FREQUENCY_MAX_HZ, Q_MAX, Q_MIN};
 use nice_plug::prelude::*;
@@ -263,7 +263,7 @@ impl Region {
         while active != 0 {
             let index = active.trailing_zeros() as usize;
             active &= active - 1;
-            self.filters[index].process(left, right, ChannelMode::Stereo);
+            self.filters[index].process(left, right, self.targets[index].channel);
         }
     }
 }

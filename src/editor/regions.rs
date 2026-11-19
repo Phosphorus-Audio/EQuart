@@ -123,12 +123,19 @@ impl EquartEditor {
         self.set(setter, &region.softness, control.softness);
         self.set(setter, &region.gain, control.gain);
         self.set(setter, &region.bypass, control.bypass);
+
         let res = &region.resonance;
         self.set(setter, &res.enabled, control.resonance.enabled);
         self.set(setter, &res.bypassed, false);
         self.set(setter, &res.depth, control.resonance.depth);
         self.set(setter, &res.threshold, control.resonance.threshold);
         self.set(setter, &res.q, control.resonance.q);
+        self.set(setter, &res.attack, control.resonance.attack_ms);
+        self.set(setter, &res.release, control.resonance.release_ms);
+        self.set(setter, &res.ratio, control.resonance.ratio);
+        self.set(setter, &res.smooth, control.resonance.smooth);
+        self.set(setter, &res.stereo_link, control.resonance.stereo_link);
+        self.set(setter, &res.bias, control.resonance.bias);
         self.set(setter, &region.harmonic.enabled, control.harmonic.enabled);
         self.set(setter, &region.harmonic.bypassed, false);
         self.set(setter, &region.harmonic.mode, control.harmonic.mode);
@@ -199,8 +206,21 @@ impl EquartEditor {
             harmonic.first.default_plain_value(),
         );
         self.set(setter, &harmonic.last, harmonic.last.default_plain_value());
-        for param in [&region.low, &region.high, &region.softness, &region.gain,
-            &region.resonance.depth, &region.resonance.threshold, &region.resonance.q] {
+        for param in [
+            &region.low,
+            &region.high,
+            &region.softness,
+            &region.gain,
+            &region.resonance.depth,
+            &region.resonance.threshold,
+            &region.resonance.q,
+            &region.resonance.attack,
+            &region.resonance.release,
+            &region.resonance.ratio,
+            &region.resonance.smooth,
+            &region.resonance.stereo_link,
+            &region.resonance.bias,
+        ] {
             let default = param.default_plain_value();
             if param.value() != default {
                 self.set(setter, param, default);

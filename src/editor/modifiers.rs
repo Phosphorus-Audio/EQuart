@@ -14,6 +14,7 @@ const COLUMN_GAP: f32 = 10.0;
 const DYNAMIC_WIDTH: f32 = 808.0 + HEADER_WIDTH + THRESHOLD_WIDTH + COLUMN_GAP;
 const PITCH_WIDTH: f32 = HEADER_WIDTH + 2.0 * 10.0 + 160.0 + 135.0 + 145.0 + 2.0 * COLUMN_GAP;
 const HARMONIC_WIDTH: f32 = 220.0;
+const RESONANCE_WIDTH: f32 = HEADER_WIDTH + 2.0 * 10.0 + 145.0 + 140.0 + 140.0 + 2.0 * COLUMN_GAP;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Modifier {
@@ -56,7 +57,8 @@ impl Modifier {
         match self {
             Self::Dynamic => DYNAMIC_WIDTH,
             Self::Pitch => PITCH_WIDTH,
-            Self::Harmonic | Self::Resonance => HARMONIC_WIDTH,
+            Self::Harmonic => HARMONIC_WIDTH,
+            Self::Resonance => RESONANCE_WIDTH,
         }
     }
 
@@ -271,35 +273,77 @@ impl EquartEditor {
             self.set(&setter, &res.enabled, false);
             return;
         }
-        let inner = Rect::from_min_max(header.right_top() + Vec2::splat(8.0), rect.max - Vec2::splat(8.0));
+
+        let mut inner = rect.shrink2(Vec2::new(10.0, 7.0));
+        inner.min.x += HEADER_WIDTH;
+
         let mut held = false;
-        ui.scope_builder(egui::UiBuilder::new().id_salt(("resonance", index)).max_rect(inner)
-            .layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
-            self.dynamic_number(ui, &setter, "Depth", &res.depth, 0.1)
-                .on_hover_text("Maximum additional cut per peak. Set region Gain to 0 dB for resonance suppression alone.");
-            self.dynamic_number(ui, &setter, "Prominence", &res.threshold, 0.1)
-                .on_hover_text("How far a peak must rise above neighboring frequencies to trigger reduction.");
-            self.dynamic_number(ui, &setter, "Q", &res.q, 0.1)
-                .on_hover_text("Higher Q narrows each cut.");
-            let control = region.control();
-            let strongest = self.telemetry.resonance_peaks(index).into_iter()
-                .filter(|peak| peak.band(control).enabled)
-                .max_by(|a, b| a.excess.total_cmp(&b.excess));
-            let active = !bypassed && !region.bypass.value() && !self.params.bypass.value();
-            ui.horizontal(|ui| {
-                let button = ui.add_enabled(active, egui::Button::new("Δ"))
-                    .on_hover_text("Hold to hear what this region's Resonance removes.");
-                held = active && button.is_pointer_button_down_on() && button.contains_pointer()
-                    && ui.input(|i| i.focused && i.pointer.primary_down());
-                if !active {
-                    ui.label("Bypassed");
-                } else if let Some(peak) = strongest {
-                    ui.label(format!("{:.0} Hz  {:.1} dB", peak.hz, peak.band(control).gain));
-                } else {
-                    ui.label("No active peaks");
-                }
-            });
-        });
+
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt(("resonance", index))
+                .max_rect(inner)
+                .layout(egui::Layout::left_to_right(egui::Align::Min)),
+            |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(COLUMN_GAP, 4.0);
+                column(ui, 145.0, |ui| {
+                    self.dynamic_number(ui, &setter, "Depth", &res.depth, 0.1)
+                        .on_hover_text("Maximum cut per peak. Set region Gain to 0 dB for resonance suppression alone.");
+                    self.dynamic_number(ui, &setter, "Prominence", &res.threshold, 0.1)
+                        .on_hover_text("Minimum contrast above neighboring frequencies to trigger reduction.");
+                    self.dynamic_number(ui, &setter, "Q", &res.q, 0.1)
+                        .on_hover_text("Higher Q narrows each cut.");
+                    self.dynamic_number(ui, &setter, "Ratio", &res.ratio, 1.0)
+                        .on_hover_text("Suppression slope applied to excess above Prominence.");
+                });
+
+                column(ui, 140.0, |ui| {
+                    self.dynamic_number(ui, &setter, "Attack", &res.attack, 0.25)
+                        .on_hover_text("How fast cuts react to new resonances.");
+                    self.dynamic_number(ui, &setter, "Release", &res.release, 1.0)
+                        .on_hover_text("How fast cuts recover after a resonance drops.");
+                    self.dynamic_number(ui, &setter, "Smooth", &res.smooth, 1.0)
+                        .on_hover_text("Background window width: low targets sharp spikes, high catches wider mud.");
+                });
+
+                column(ui, 140.0, |ui| {
+                    self.dynamic_number(ui, &setter, "Link", &res.stereo_link, 1.0)
+                        .on_hover_text("Stereo link: 100% links L/R, lower values suppress single-channel resonances.");
+
+                    self.dynamic_number(ui, &setter, "Bias", &res.bias, 1.0)
+                        .on_hover_text("Frequency sensitivity tilt: negative favors lows, positive favors highs.");
+
+                    let control = region.control();
+
+                    let strongest = self
+                        .telemetry
+                        .resonance_peaks(index)
+                        .into_iter()
+                        .filter(|peak| peak.band(control).enabled)
+                        .max_by(|a, b| a.excess.total_cmp(&b.excess));
+                    let active = !bypassed && !region.bypass.value() && !self.params.bypass.value();
+
+                    ui.horizontal(|ui| {
+                        let button = ui
+                            .add_enabled(active, egui::Button::new("Δ"))
+                            .on_hover_text("Hold to hear what this region's Resonance removes.");
+
+                        held = active
+                            && button.is_pointer_button_down_on()
+                            && button.contains_pointer()
+                            && ui.input(|i| i.focused && i.pointer.primary_down());
+
+                        if !active {
+                            ui.label("Bypassed");
+                        } else if let Some(peak) = strongest {
+                            ui.label(format!("{:.0} Hz  {:.1} dB", peak.hz, peak.band(control).gain));
+                        } else {
+                            ui.label("No active peaks");
+                        }
+                    });
+                });
+            },
+        );
         if held {
             self.held_delta = Some(index);
         }
