@@ -88,6 +88,7 @@ impl EquartEditor {
             &band.frequency,
             &band.gain,
             &band.q,
+            &band.pitch.multiplier,
             &band.dynamics.threshold,
             &band.dynamics.range,
             &band.dynamics.attack,

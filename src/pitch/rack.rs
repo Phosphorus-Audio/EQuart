@@ -59,7 +59,9 @@ impl PitchRack {
         let voice = &mut self.bands[index];
         if !bypass && band.enabled && band.pitch.enabled {
             voice.advance(
-                self.bank.detected(index),
+                self.bank
+                    .detected(index)
+                    .map(|hz| hz * band.pitch.multiplier),
                 band.frequency,
                 band.pitch.tracking_ms,
                 rate,

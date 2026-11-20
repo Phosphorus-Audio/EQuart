@@ -114,6 +114,7 @@ fn pool_shares_and_keeps_lock() {
     };
     let original = PitchKey::from(settings);
     settings.tracking_ms = 100.0;
+    settings.multiplier = 2.0;
     settings.target.reference = 500.0; // Unused in Auto.
     assert_eq!(PitchKey::from(settings), original);
     let mut requests = [None; SOURCES];
@@ -205,7 +206,7 @@ fn pitch_mod_and_dropout_return() {
     };
     bands[0].pitch.enabled = true;
     bands[0].pitch.algorithm = DetectionMode::Mpm;
-    let controls = Controls {
+    let mut controls = Controls {
         bands,
         regions: Default::default(),
         output_db: 0.0,
@@ -226,6 +227,38 @@ fn pitch_mod_and_dropout_return() {
     assert_eq!(controls.bands[0].frequency, 900.0);
     assert_eq!(engine.latency(), 0);
     assert_eq!(engine.dynamic_gains()[0], 0.0);
+
+    controls.bands[0].pitch.multiplier = 2.0;
+
+    let mut input = tone(rate, 220.0, 0.4, rate as usize);
+    for (sample, harmonic) in input.iter_mut().zip(tone(rate, 440.0, 0.06, rate as usize)) {
+        *sample += harmonic;
+    }
+
+    let mut right = input.clone();
+    nice_assert_no_alloc::assert_no_alloc(|| {
+        engine.process_block(&mut input, &mut right, &controls);
+    });
+
+    let (detected, applied) = engine.pitch_levels().next().unwrap();
+    assert!((detected.unwrap() - 220.0).abs() < 1.0);
+    assert!((applied.unwrap() - 440.0).abs() < 2.0);
+
+    let tail = &input[36_000..];
+    let (sin, cos) = tail
+        .iter()
+        .enumerate()
+        .fold((0.0, 0.0), |(sin, cos), (i, sample)| {
+            let phase = TAU * 440.0 * i as f32 / rate;
+            (sin + sample * phase.sin(), cos + sample * phase.cos())
+        });
+
+    let harmonic = 2.0 * sin.hypot(cos) / tail.len() as f32;
+    let level = 20.0 * (harmonic / 0.06).log10();
+    assert!(
+        (level + 12.0).abs() < 0.3,
+        "second harmonic gain {level} dB"
+    );
 
     for _ in 0..10 {
         engine.process_block(&mut [0.0; 4800], &mut [0.0; 4800], &controls);

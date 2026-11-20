@@ -409,6 +409,10 @@ impl EquartEditor {
                         &pitch.detection,
                         "Smooths note changes and the return to the band frequency.",
                     );
+                    self.dynamic_number(ui, &setter, "Multiplier", &pitch.multiplier, 0.01)
+                        .on_hover_text(
+                            "Sets the band frequency to the detected fundamental times this value.",
+                        );
                 });
                 column(ui, 145.0, |ui| {
                     self.pitch_target_controls(ui, &setter, &pitch.detection);

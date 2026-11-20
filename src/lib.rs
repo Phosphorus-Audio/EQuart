@@ -129,6 +129,14 @@ impl Plugin for Equart {
             }
         }
         region::HarmonicControl::migrate_state(state);
+
+        let multiplier = pitch::PitchControl::default().multiplier;
+        for index in 1..=band::BAND_COUNT {
+            state
+                .params
+                .entry(format!("pitch_multiplier_{index}"))
+                .or_insert(ParamValue::F32(multiplier));
+        }
     }
 
     fn editor(&mut self, _: AsyncExecutor<Self>) -> Option<Self::Editor> {

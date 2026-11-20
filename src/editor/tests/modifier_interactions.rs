@@ -132,6 +132,7 @@ fn modifier_picker_add() {
         assert!(editor.modifier_picker.is_none());
         assert!(editor.reveal_modifier.is_none());
         if modifier == Modifier::Pitch {
+            find_text(&mut editor, 1.95, "Multiplier");
             let algorithm = find_text(&mut editor, 2.0, "F0LOCK Ψ");
             click(&ctx, &mut editor, 2.1, algorithm);
             let pyin = find_text(&mut editor, 2.15, "pYIN");

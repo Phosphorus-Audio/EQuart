@@ -40,7 +40,7 @@ fn region_boost_and_cut() {
 }
 
 #[test]
-fn region_parameter_migration() {
+fn legacy_parameter_migration() {
     use nice_plug::plugin::{ParamValue, Plugin, PluginState};
     use nice_plug::prelude::Enum;
 
@@ -51,6 +51,7 @@ fn region_parameter_migration() {
             ("region_depth_6".into(), ParamValue::F32(5.0)),
             ("region_gain_6".into(), ParamValue::F32(3.0)),
             ("harmonic_width_6".into(), ParamValue::F32(35.0)),
+            ("pitch_multiplier_2".into(), ParamValue::F32(2.5)),
         ]
         .into(),
         fields: Default::default(),
@@ -76,6 +77,16 @@ fn region_parameter_migration() {
     assert!(matches!(
         state.params.get("harmonic_source_1"),
         Some(ParamValue::I32(0))
+    ));
+
+    assert!(matches!(
+        state.params.get("pitch_multiplier_1"),
+        Some(ParamValue::F32(1.0))
+    ));
+
+    assert!(matches!(
+        state.params.get("pitch_multiplier_2"),
+        Some(ParamValue::F32(2.5))
     ));
     assert!(matches!(
         state.params.get("harmonic_pitch_profile_1"),

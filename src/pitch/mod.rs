@@ -25,6 +25,7 @@ use tracker::Tracker;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PitchControl {
     pub enabled: bool,
+    pub multiplier: f32,
     pub algorithm: DetectionMode,
     pub profile: DetectionRange,
     pub tracking_ms: f32,
@@ -37,6 +38,7 @@ impl Default for PitchControl {
     fn default() -> Self {
         Self {
             enabled: false,
+            multiplier: 1.0,
             algorithm: DetectionMode::default(),
             profile: DetectionRange::default(),
             tracking_ms: 35.0,

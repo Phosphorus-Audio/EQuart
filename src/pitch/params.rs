@@ -9,6 +9,8 @@ pub struct PitchParams {
     pub bypassed: BoolParam,
     #[nested]
     pub detection: PitchDetectionParams,
+    #[id = "pitch_multiplier"]
+    pub multiplier: FloatParam,
 }
 
 #[derive(Params)]
@@ -41,6 +43,15 @@ impl PitchParams {
             enabled: BoolParam::new(format!("{band} Pitch Enabled"), false),
             bypassed: BoolParam::new(format!("{band} Pitch Bypassed"), false),
             detection: PitchDetectionParams::new(&format!("{band} Pitch"), PitchControl::default()),
+            multiplier: FloatParam::new(
+                format!("{band} Pitch Multiplier"),
+                PitchControl::default().multiplier,
+                FloatRange::Logarithmic {
+                    min: 0.125,
+                    max: 16.0,
+                },
+            )
+            .with_unit("×"),
         }
     }
 
@@ -48,7 +59,10 @@ impl PitchParams {
         if !self.enabled.value() || self.bypassed.value() {
             return PitchControl::default();
         }
-        self.detection.control()
+        PitchControl {
+            multiplier: self.multiplier.value(),
+            ..self.detection.control()
+        }
     }
 }
 
@@ -107,6 +121,7 @@ impl PitchDetectionParams {
                 reference: self.reference.value(),
                 tolerance: self.tolerance.value(),
             },
+            ..PitchControl::default()
         }
     }
 }
