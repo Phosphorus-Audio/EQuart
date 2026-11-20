@@ -190,7 +190,7 @@ fn shared_detector_tracking_rates() {
 }
 
 #[test]
-fn pitch_mod_and_dropout_return() {
+fn pitch_mod_holds_frequency_during_dropout() {
     let rate = 48_000.0;
     let mut engine = Engine::new(rate);
     engine.analyze = false;
@@ -260,8 +260,31 @@ fn pitch_mod_and_dropout_return() {
         "second harmonic gain {level} dB"
     );
 
+    engine.process_block(&mut [0.0; 4_800], &mut [0.0; 4_800], &controls);
+    let (detected, held) = engine.pitch_levels().next().unwrap();
+    assert_eq!(detected, None);
+    let held = held.expect("the band should keep its tracked frequency");
+    assert!((held - 440.0).abs() < 2.0, "held frequency was {held} Hz");
+
     for _ in 0..10 {
         engine.process_block(&mut [0.0; 4800], &mut [0.0; 4800], &controls);
     }
+
+    let (detected, applied) = engine.pitch_levels().next().unwrap();
+
+    assert_eq!(detected, None);
+    assert!((applied.unwrap() - held).abs() < 0.1);
+
+    let mut input = tone(rate, 330.0, 0.4, rate as usize / 2);
+    let mut right = input.clone();
+    engine.process_block(&mut input, &mut right, &controls);
+    let (detected, applied) = engine.pitch_levels().next().unwrap();
+    assert!((detected.unwrap() - 330.0).abs() < 1.0);
+    assert!((applied.unwrap() - 660.0).abs() < 2.0);
+
+    controls.bands[0].pitch.enabled = false;
+    // controls.bands[0].pitch.enabled = true;
+    engine.process_block(&mut [0.0; 64], &mut [0.0; 64], &controls);
+
     assert_eq!(engine.pitch_levels().next(), Some((None, None)));
 }

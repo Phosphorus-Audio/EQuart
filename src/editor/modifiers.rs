@@ -399,7 +399,8 @@ impl EquartEditor {
                         ui.label("No pitch detected");
                     }
                     if active && let Some(hz) = self.telemetry.tracked_frequency(index) {
-                        ui.label(format!("Band {hz:.1} Hz"));
+                        let label = if detected.is_some() { "Band" } else { "Held" };
+                        ui.label(format!("{label} {hz:.1} Hz"));
                     }
                 });
                 column(ui, 135.0, |ui| {
@@ -407,7 +408,7 @@ impl EquartEditor {
                         ui,
                         &setter,
                         &pitch.detection,
-                        "Smooths note changes and the return to the band frequency.",
+                        "Smooths note changes. The band holds its last frequency when detection is lost.",
                     );
                     self.dynamic_number(ui, &setter, "Multiplier", &pitch.multiplier, 0.01)
                         .on_hover_text(

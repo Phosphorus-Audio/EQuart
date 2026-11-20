@@ -57,17 +57,15 @@ impl PitchRack {
         rate: f32,
     ) -> Option<f32> {
         let voice = &mut self.bands[index];
-        if !bypass && band.enabled && band.pitch.enabled {
+        if bypass || !band.enabled || !band.pitch.enabled {
+            voice.clear();
+        } else if let Some(hz) = self.bank.detected(index) {
             voice.advance(
-                self.bank
-                    .detected(index)
-                    .map(|hz| hz * band.pitch.multiplier),
+                hz * band.pitch.multiplier,
                 band.frequency,
                 band.pitch.tracking_ms,
                 rate,
             );
-        } else {
-            voice.clear();
         }
         voice.target()
     }
@@ -82,7 +80,7 @@ impl PitchRack {
         if let Some(settings) = detection
             && let Some(hz) = self.bank.detected(HARMONIC_SOURCE + index)
         {
-            voice.advance(Some(hz), hz, settings.tracking_ms, rate);
+            voice.advance(hz, hz, settings.tracking_ms, rate);
         } else {
             voice.clear();
         }
@@ -124,21 +122,22 @@ impl PitchVoice {
         self.frequency.map(|frequency| frequency.hz)
     }
 
-    /// glide to tracked pitch, or back to saved freq when lost
-    fn advance(&mut self, detected: Option<f32>, base_hz: f32, tracking_ms: f32, rate: f32) {
-        let Some(from) = self
+    fn advance(&mut self, target_hz: f32, initial_hz: f32, tracking_ms: f32, rate: f32) {
+        // let from = self
+        //     .frequency
+        //     .map(|frequency| frequency.log_hz)
+        //     .or_else(|| detected.map(|_| f64::from(base_hz).ln()))
+        // else {
+        //     return;
+        // };
+
+        let from = self
             .frequency
-            .map(|frequency| frequency.log_hz)
-            .or_else(|| detected.map(|_| f64::from(base_hz).ln()))
-        else {
-            return;
-        };
-        let target = f64::from(detected.unwrap_or(base_hz)).ln();
-        if detected.is_none() && (from - target).abs() < 1e-5 {
-            self.clear();
-            return;
-        }
+            .map_or_else(|| f64::from(initial_hz).ln(), |frequency| frequency.log_hz);
+
+        let target = f64::from(target_hz).ln();
         let clock = (tracking_ms, rate);
+
         if self.clock != Some(clock) {
             self.alpha = 1.0
                 - (-(COEFF_FRAMES as f64) / (0.001 * f64::from(tracking_ms) * f64::from(rate)))
