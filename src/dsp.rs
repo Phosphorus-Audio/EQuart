@@ -380,8 +380,8 @@ pub fn blend<T: Sample>(dry: &[T], wet: &mut [T], amount: f32) {
 }
 
 /// Largest absolute value across both channels, `NaN` if anything is not finite.
-pub fn peak(left: &[f32], right: &[f32]) -> f32 {
-    let mut peak = 0.0_f32;
+pub fn peak<T: Sample>(left: &[T], right: &[T]) -> T {
+    let mut peak = T::zero();
     for sample in left.iter().chain(right) {
         let magnitude = sample.abs();
         if magnitude > peak || !magnitude.is_finite() {
@@ -389,4 +389,101 @@ pub fn peak(left: &[f32], right: &[f32]) -> f32 {
         }
     }
     peak
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::*;
+    use crate::filter::FilterKind;
+
+    #[test]
+    fn avx2_residual_against_f64_svf() {
+        if !wide() {
+            eprintln!("AVX2/FMA unavailable, so we need skipped SIMD residual measurement XD");
+            return;
+        }
+
+        const RATE: usize = 48_000;
+        // const RATE: usize = 41000;
+
+        let amplitude = 10.0_f64.powf(-6.34 / 20.0);
+        let cases = [
+            (24, vec![(24.0, 16.0, 12.0)]),
+            (48, vec![(48.0, 16.0, 12.0)]),
+            (96, vec![(96.0, 16.0, 12.0)]),
+            (10_000, vec![(10_000.0, 2.0, 24.0)]),
+            (15_000, vec![(15_000.0, 2.0, 24.0)]),
+            (20_000, vec![(20_000.0, 2.0, 24.0)]),
+            (1_000, vec![(1_000.0, 1.0, 0.001)]),
+            (
+                1_500,
+                (0..32)
+                    .map(|i| {
+                        (
+                            200.0 + 450.0 * f64::from(i),
+                            1.2,
+                            if i % 2 == 0 { 0.5 } else { -0.5 },
+                        )
+                    })
+                    .collect(),
+            ),
+        ];
+        for (tone, sections) in cases {
+            let warmup = if tone < 100 { 6 * RATE } else { RATE / 4 };
+            let mut avx: Vec<_> = (0..warmup + RATE / 4)
+                .map(|i| {
+                    (amplitude
+                        * (std::f64::consts::TAU * ((tone * i) % RATE) as f64 / RATE as f64).sin())
+                        as f32
+                })
+                .collect();
+            let mut scalar = avx.clone();
+            let mut reference: Vec<_> = avx.iter().copied().map(f64::from).collect();
+            let count = sections.len();
+            for (hz, q, gain) in sections {
+                let coeff = Coefficients::for_kind(
+                    RATE as f32,
+                    hz as f32,
+                    q as f32,
+                    gain as f32,
+                    FilterKind::Peak,
+                );
+                let reference_coeff =
+                    Coefficients::for_kind(RATE as f64, hz, q, gain, FilterKind::Peak);
+                let kernel = Kernel::new(&coeff);
+                assert!(kernel.stable, "{tone} Hz: case must use the AVX2 kernel");
+                kernel.apply_slice(&mut State::zero(), &mut avx);
+                let mut state = State::zero();
+                for x in &mut scalar {
+                    *x = step(&mut state, &coeff, *x);
+                }
+                let mut state = State::zero();
+                for x in &mut reference {
+                    *x = step(&mut state, &reference_coeff, *x);
+                }
+            }
+
+            let power: f64 = reference[warmup..].iter().map(|x| x * x).sum();
+            let residual = |actual: &[f32]| {
+                let error: f64 = actual[warmup..]
+                    .iter()
+                    .zip(&reference[warmup..])
+                    .map(|(&a, &b)| (f64::from(a) - b).powi(2))
+                    .sum();
+                10.0 * (error / power).log10()
+            };
+
+            let avx_db = residual(&avx);
+
+            println!(
+                "{tone} Hz, {count} section(s): AVX2 {avx_db:.2} dBr, scalar {:.2} dBr",
+                residual(&scalar)
+            );
+
+            assert!(
+                avx_db < if tone < 100 { -60.0 } else { -100.0 },
+                "{tone} Hz: {avx_db} dBr"
+            );
+        }
+    }
 }

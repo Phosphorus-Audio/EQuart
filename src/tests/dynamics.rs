@@ -24,26 +24,191 @@ fn sine(i: usize) -> f32 {
 }
 
 #[test]
-fn dynamic_block_independent() {
-    let config = dynamic_band(true);
-    let source: Vec<_> = (0..8_191).map(sine).collect();
-    let mut rendered = Vec::new();
-    for chunk in [17, 512] {
-        let mut engine = Engine::new(RATE);
-        engine.analyze = false;
-        let mut left = source.clone();
-        let mut right = source.clone();
-        for (left, right) in left.chunks_mut(chunk).zip(right.chunks_mut(chunk)) {
-            engine.process_block(left, right, &config);
-        }
-        rendered.push(left);
-    }
-    assert!(
-        rendered[0]
+fn dynamic_tone_separates_modulation_from_static_residual() {
+    use crate::band::COEFF_FRAMES;
+    use crate::dynamics::DetectorMode;
+    use crate::precision::Precision;
+    use realfft::RealFftPlanner;
+
+    let frames = RATE as usize;
+    let fft = RealFftPlanner::<f64>::new().plan_fft_forward(frames);
+    let measure = |samples: &[f32], tone: usize| {
+        let mut input: Vec<_> = samples.iter().copied().map(f64::from).collect();
+        let mut spectrum = fft.make_output_vec();
+        fft.process(&mut input, &mut spectrum).unwrap();
+        let power = spectrum[tone].norm_sqr();
+        let residual: f64 = spectrum
             .iter()
-            .zip(&rendered[1])
-            .all(|(a, b)| (a - b).abs() < 1e-5)
-    );
+            .enumerate()
+            .filter(|(bin, _)| *bin != tone)
+            .map(|(bin, value)| {
+                (if bin == 0 || bin == frames / 2 {
+                    0.5
+                } else {
+                    1.0
+                }) * value.norm_sqr()
+            })
+            .sum();
+
+        let harmonic: f64 = spectrum
+            .iter()
+            .skip(2 * tone)
+            .step_by(tone)
+            .map(|value| value.norm_sqr())
+            .sum();
+
+        let clock = frames / COEFF_FRAMES;
+        let sideband = tone.abs_diff((2 * tone).abs_diff(clock));
+        let strongest_spur = spectrum
+            .iter()
+            .enumerate()
+            .filter(|(bin, _)| *bin != tone)
+            .max_by(|(_, a), (_, b)| a.norm_sqr().total_cmp(&b.norm_sqr()))
+            .unwrap()
+            .0;
+
+        let db = [
+            residual,
+            harmonic,
+            spectrum[3 * tone].norm_sqr(),
+            spectrum[sideband].norm_sqr(),
+        ]
+        .map(|energy| 10.0 * (energy / power).log10());
+        (db, strongest_spur)
+    };
+
+    for tone in [110, 999] {
+        let amplitude = 10.0_f64.powf(-6.34 / 20.0);
+        let source: Vec<_> = (0..frames)
+            .map(|i| {
+                (amplitude
+                    * (std::f64::consts::TAU * ((i * tone) % frames) as f64 / f64::from(RATE))
+                        .sin()) as f32
+            })
+            .collect();
+
+        let mut config = dynamic_band(true);
+
+        config.bands[0].frequency = tone as f32;
+        config.bands[0].q = 1.0;
+
+        let dynamic = &mut config.bands[0].dynamics;
+
+        dynamic.threshold = -14.0;
+        dynamic.above.range = -12.0;
+        dynamic.above.ratio = 1.0;
+        dynamic.detect.mode = DetectorMode::Broadband;
+
+        let render = |config: &Controls| {
+            let mut engine = Engine::new(RATE);
+            engine.analyze = false;
+
+            let mut gain_sum = 0.0;
+            let mut left = source.clone();
+            let mut right = source.clone();
+
+            engine.process_block(&mut left, &mut right, config);
+            left.copy_from_slice(&source);
+            right.copy_from_slice(&source);
+
+            for (l, r) in left
+                .chunks_mut(COEFF_FRAMES)
+                .zip(right.chunks_mut(COEFF_FRAMES))
+            {
+                engine.process_block(l, r, config);
+                gain_sum += f64::from(engine.dynamic_gains()[0]);
+            }
+            (
+                measure(&left, tone),
+                (gain_sum / (frames / COEFF_FRAMES) as f64) as f32,
+            )
+        };
+
+        println!(
+            "{tone} Hz input [residual, THD, H3, clock sideband] dB: {:?}",
+            measure(&source, tone)
+        );
+
+        for precision in [Precision::Single, Precision::Double] {
+            config.precision = precision;
+            config.bands[0].dynamics.enabled = true;
+            config.bands[0].dynamics.attack_ms = 2.0;
+            config.bands[0].dynamics.release_ms = 2.0;
+
+            let (fast, gain) = render(&config);
+
+            assert!(
+                (-5.0..-4.0).contains(&gain),
+                "the dynamic band must operate away from its limits: {gain}"
+            );
+
+            config.bands[0].dynamics.attack_ms = 40.0;
+            config.bands[0].dynamics.release_ms = 40.0;
+
+            let (slow, _) = render(&config);
+
+            config.bands[0].dynamics.enabled = false;
+            config.bands[0].gain = gain;
+
+            let (frozen, _) = render(&config);
+
+            config.bands[0].gain = 0.0;
+
+            println!(
+                "{tone} Hz {precision:?}: fast {fast:?}, slow {slow:?}, frozen {frozen:?}, gain {gain:.2} dB"
+            );
+
+            assert!(
+                frozen.0[0] < -135.0,
+                "{precision:?}, {tone} Hz static reference"
+            );
+
+            if tone == 110 {
+                assert!(fast.0[1] < -64.0, "{precision:?}: 110 Hz THD {fast:?}");
+                assert!(
+                    fast.0[1] - slow.0[1] > 15.0,
+                    "{precision:?}: 110 Hz smoothing"
+                );
+            } else {
+                assert!(
+                    fast.0[0] < -122.0 && fast.0[3] < -126.0,
+                    "{precision:?}: 999 Hz modulation {fast:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dynamic_block_independent() {
+    use crate::oversample::Oversampling;
+
+    let mut config = dynamic_band(true);
+    config.bands[0].dynamics.threshold = -13.0;
+
+    let source: Vec<_> = (0..8_191).map(sine).collect();
+
+    for mode in Oversampling::ALL {
+        config.oversampling = mode;
+        let render = |chunk| {
+            let mut engine = Engine::new(RATE);
+            engine.analyze = false;
+            let mut left = source.clone();
+            let mut right = source.clone();
+            for (left, right) in left.chunks_mut(chunk).zip(right.chunks_mut(chunk)) {
+                engine.process_block(left, right, &config);
+            }
+            left
+        };
+
+        let a = render(17);
+        let b = render(512);
+
+        assert!(
+            a.iter().zip(&b).all(|(a, b)| (a - b).abs() < 1e-5),
+            "{mode:?}"
+        );
+    }
 }
 
 #[test]

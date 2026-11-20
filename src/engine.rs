@@ -1,12 +1,15 @@
 use crate::analyzer::Analyzer;
 use crate::audio_path::{AudioPath, OutputMix};
-use crate::band::{BAND_COUNT, BandControl, COEFF_FRAMES};
+use crate::band::{BAND_COUNT, BandControl, COEFF_FRAMES, CoefficientTiming};
 use crate::dsp;
 use crate::dynamics::{Dynamics, Sidechain};
 use crate::oversample::Oversampling;
 use crate::pitch::PitchRack;
 use crate::precision::Precision;
 use crate::region::{REGION_COUNT, RegionControl};
+
+mod host;
+pub(crate) use host::HostSample;
 
 pub struct Controls {
     pub bands: [BandControl; BAND_COUNT],
@@ -259,11 +262,11 @@ impl Engine {
     }
 
     /// process stereo planar audio in-place
-    pub fn process_block_with_sidechain(
+    pub fn process_block_with_sidechain<T: HostSample>(
         &mut self,
-        left: &mut [f32],
-        right: &mut [f32],
-        sidechain: Option<Sidechain<'_>>,
+        left: &mut [T],
+        right: &mut [T],
+        sidechain: Option<Sidechain<'_, T>>,
         controls: &Controls,
     ) {
         #[cfg(all(debug_assertions, not(test)))]
@@ -297,7 +300,12 @@ impl Engine {
         );
         let analyze = self.analyze;
 
-        self.set_precision(controls.precision);
+        let precision = if T::NATIVE_DOUBLE {
+            Precision::Double
+        } else {
+            controls.precision
+        };
+        self.set_precision(precision);
         self.set_oversampling(controls.oversampling);
         let requested = self.delta_request.filter(|&index| {
             !controls.bypass
@@ -314,30 +322,39 @@ impl Engine {
             self.delta_mix = 0.0;
         }
 
+        let mut analysis_l = [0.0; COEFF_FRAMES];
+        let mut analysis_r = [0.0; COEFF_FRAMES];
+        let mut side_l = [0.0; COEFF_FRAMES];
+        let mut side_r = [0.0; COEFF_FRAMES];
         let mut offset = 0;
         while offset < frames {
             // split at coeff-update boundaries
             let end = (offset + (COEFF_FRAMES - self.frame)).min(frames);
             let left = &mut left[offset..end];
             let right = &mut right[offset..end];
-            let len = left.len();
-
             if self.frame == 0 {
                 self.refresh(controls);
             }
-            self.pitch.process(left, right);
+            let left_analysis = T::analysis(left, &mut analysis_l);
+            let right_analysis = T::analysis(right, &mut analysis_r);
+            self.pitch.process(left_analysis, right_analysis);
             if resonance_live {
                 self.resonance
-                    .push(left, right, self.rate, &controls.regions);
+                    .push(left_analysis, right_analysis, self.rate, &controls.regions);
             }
 
             if detects || self.detectors_live {
-                let sidechain = sidechain.map(|[l, r]| [&l[offset..end], &r[offset..end]]);
-                self.detect(left, right, sidechain, controls);
+                let sidechain = sidechain.map(|[l, r]| {
+                    [
+                        T::analysis(&l[offset..end], &mut side_l),
+                        T::analysis(&r[offset..end], &mut side_r),
+                    ]
+                });
+                self.detect(left_analysis, right_analysis, sidechain, controls);
             }
 
             if analyze {
-                for (l, r) in left.iter().zip(right.iter()) {
+                for (l, r) in left_analysis.iter().zip(right_analysis) {
                     self.analyzer.push([*l, *r]);
                 }
             }
@@ -365,45 +382,12 @@ impl Engine {
                 }),
             };
 
-            match self.precision {
-                Precision::Single => {
-                    self.single
-                        .process(left, right, &controls.bands, output, &mut self.delta_mix)
-                }
-                Precision::Double => {
-                    let mut double_left = [0.0_f64; COEFF_FRAMES];
-                    let mut double_right = [0.0_f64; COEFF_FRAMES];
-                    let double_left = &mut double_left[..len];
-                    let double_right = &mut double_right[..len];
-
-                    for (wide, sample) in double_left
-                        .iter_mut()
-                        .chain(double_right.iter_mut())
-                        .zip(left.iter().chain(right.iter()))
-                    {
-                        *wide = f64::from(*sample);
-                    }
-
-                    self.double.process(
-                        double_left,
-                        double_right,
-                        &controls.bands,
-                        output,
-                        &mut self.delta_mix,
-                    );
-
-                    for (sample, wide) in left
-                        .iter_mut()
-                        .chain(right.iter_mut())
-                        .zip(double_left.iter().chain(double_right.iter()))
-                    {
-                        *sample = *wide as f32;
-                    }
-                }
-            }
+            T::render(self, left, right, controls, output);
 
             if analyze {
-                for (l, r) in left.iter().zip(right.iter()) {
+                let left = T::analysis(left, &mut analysis_l);
+                let right = T::analysis(right, &mut analysis_r);
+                for (l, r) in left.iter().zip(right) {
                     self.output_analyzer.push([*l, *r]);
                 }
             }
@@ -415,8 +399,8 @@ impl Engine {
                 self.fault = Some("equart: non-finite DSP output");
             }
 
-            self.block_input = self.block_input.max(input_peak);
-            self.block_output = self.block_output.max(output_peak);
+            self.block_input = self.block_input.max(input_peak.double() as f32);
+            self.block_output = self.block_output.max(output_peak.double() as f32);
 
             self.frame += end - offset;
             if self.frame >= COEFF_FRAMES {
@@ -432,15 +416,15 @@ impl Engine {
     }
 
     /// Duplicate a mono buffer into both channels before filtering.
-    pub fn process_mono(
+    pub fn process_mono<T: HostSample>(
         &mut self,
-        buf: &mut [f32],
-        sidechain: Option<Sidechain<'_>>,
+        buf: &mut [T],
+        sidechain: Option<Sidechain<'_, T>>,
         controls: &Controls,
     ) {
         const TILE: usize = 512;
 
-        let mut right = [0.0_f32; TILE];
+        let mut right = [T::zero(); TILE];
         let sidechain = sidechain.filter(|[l, r]| l.len() >= buf.len() && r.len() >= buf.len());
         for (index, tile) in buf.chunks_mut(TILE).enumerate() {
             let right = &mut right[..tile.len()];
@@ -473,6 +457,11 @@ impl Engine {
         };
 
         let rate = self.rate * mode.factor() as f32;
+        let timing = CoefficientTiming {
+            alpha: self.alpha,
+            fade_step: self.step,
+            frames: COEFF_FRAMES * mode.factor(),
+        };
 
         for (i, &control) in controls.bands.iter().enumerate() {
             let mut control = control;
@@ -486,12 +475,8 @@ impl Engine {
                 control.gain += self.dynamic_gains[i];
             }
             match self.precision {
-                Precision::Single => {
-                    self.single.bands[i].update(control, rate, self.alpha, self.step)
-                }
-                Precision::Double => {
-                    self.double.bands[i].update(control, rate, self.alpha, self.step)
-                }
+                Precision::Single => self.single.bands[i].update(control, rate, timing),
+                Precision::Double => self.double.bands[i].update(control, rate, timing),
             }
         }
         for (index, (&control, reductions)) in controls
@@ -509,16 +494,14 @@ impl Engine {
                     control,
                     rate,
                     harmonic_hz,
-                    self.alpha,
-                    self.step,
+                    timing,
                     reductions,
                 ),
                 Precision::Double => self.double.regions[index].update(
                     control,
                     rate,
                     harmonic_hz,
-                    self.alpha,
-                    self.step,
+                    timing,
                     reductions,
                 ),
             }
@@ -543,7 +526,7 @@ impl Engine {
 
 /// debug-only ~-14 dBFS pink noise
 #[cfg(debug_assertions)]
-pub(crate) fn test_signal(left: &mut [f32], right: &mut [f32]) {
+pub(crate) fn test_signal<T: crate::precision::Sample>(left: &mut [T], right: &mut [T]) {
     use std::cell::Cell;
 
     thread_local! {
@@ -572,7 +555,7 @@ pub(crate) fn test_signal(left: &mut [f32], right: &mut [f32]) {
             (b0 + b1 + b2 + white * 0.1848) * 0.12
         });
 
-        *l = sample;
-        *r = sample;
+        *l = T::value(f64::from(sample));
+        *r = *l;
     }
 }

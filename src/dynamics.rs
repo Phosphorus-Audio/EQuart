@@ -16,7 +16,7 @@ use std::f32::consts::{FRAC_1_SQRT_2, PI};
 const RELATIVE_ORIGIN_DB: f32 = -24.0;
 const POWER_FLOOR: f32 = 1e-12;
 
-pub type Sidechain<'a> = [&'a [f32]; 2];
+pub type Sidechain<'a, T = f32> = [&'a [T]; 2];
 
 fn alpha(ms: f32, rate: f32, frames: usize) -> f32 {
     -(-(frames as f32) / (ms * 0.001 * rate)).exp_m1()
@@ -94,8 +94,9 @@ struct Detector {
     coefficients: Coefficients,
     /// White-noise power gain, i.e. equivalent noise bandwidth / Nyquist.
     bandwidth: f32,
-    fast: f32,
-    slow: f32,
+    first: [f32; 2],
+    power: [f32; 2],
+    sum: [f32; 2],
 }
 
 impl Detector {
@@ -105,16 +106,18 @@ impl Detector {
             state: [State::default(); 2],
             coefficients: Coefficients::identity(),
             bandwidth: 1.0,
-            fast: 0.0,
-            slow: 0.0,
+            first: [0.0; 2],
+            power: [0.0; 2],
+            sum: [0.0; 2],
         }
     }
 
     fn reset(&mut self) {
         if self.key.take().is_some() {
             self.state = [State::default(); 2];
-            self.fast = 0.0;
-            self.slow = 0.0;
+            self.first = [0.0; 2];
+            self.power = [0.0; 2];
+            self.sum = [0.0; 2];
         }
     }
 
@@ -159,8 +162,16 @@ impl Detector {
             }
         }
         let power = (input[0] * input[0] + input[1] * input[1]) * 0.5;
-        self.fast += fast * (power - self.fast);
-        self.slow += slow * (power - self.slow);
+        for (i, alpha) in [fast, slow].into_iter().enumerate() {
+            self.first[i] += alpha * (power - self.first[i]);
+            self.power[i] += alpha * (self.first[i] - self.power[i]);
+            self.sum[i] += self.power[i];
+        }
+    }
+
+    fn finish_interval(&mut self, frames: usize) -> [f32; 2] {
+        // Average before decimating to the coefficient clock to attenuate folded ripple.
+        std::mem::take(&mut self.sum).map(|sum| sum / frames as f32)
     }
 }
 
@@ -180,7 +191,8 @@ impl Dynamics {
         Self {
             detect: Detector::new(),
             relative: Detector::new(),
-            power_alphas: [alpha(5.0, rate, 1), alpha(45.0, rate, 1)],
+            // Two cascaded poles retain the nominal low-frequency delay (5 / 45 ms).
+            power_alphas: [alpha(2.5, rate, 1), alpha(22.5, rate, 1)],
             gain_clock: None,
             gain_alphas: [0.0; 2],
             level: None,
@@ -196,7 +208,7 @@ impl Dynamics {
     }
 
     pub fn retune(&mut self, rate: f32) {
-        self.power_alphas = [alpha(5.0, rate, 1), alpha(45.0, rate, 1)];
+        self.power_alphas = [alpha(2.5, rate, 1), alpha(22.5, rate, 1)];
         self.gain_clock = None;
         self.detect.reset();
         self.relative.reset();
@@ -246,18 +258,20 @@ impl Dynamics {
             self.gain_alphas = clock.0.map(|ms| alpha(ms, rate, frames));
         }
 
+        let [fast, slow] = self.detect.finish_interval(frames);
+        let [reference, _] = self.relative.finish_interval(frames);
         self.level = self.detect.key.map(|_| {
-            let absolute = power_db(self.detect.fast);
+            let absolute = power_db(fast);
             let mut level = absolute;
             if self.relative.key.is_some() {
-                let detect_density = self.detect.fast / self.detect.bandwidth;
-                let reference_density = self.relative.fast / self.relative.bandwidth;
+                let detect_density = fast / self.detect.bandwidth;
+                let reference_density = reference / self.relative.bandwidth;
                 let relative =
                     RELATIVE_ORIGIN_DB + power_db(detect_density) - power_db(reference_density);
                 level += control.relative_amount * (relative - level);
             }
             if control.onsets_amount > 0.0 {
-                let onsets = power_db((self.detect.fast - self.detect.slow).max(0.0));
+                let onsets = power_db((fast - slow).max(0.0));
                 level += control.onsets_amount * (onsets - level);
             }
             level

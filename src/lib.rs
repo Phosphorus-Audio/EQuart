@@ -18,7 +18,7 @@ mod telemetry;
 #[cfg(test)]
 mod tests;
 
-use engine::{Controls, Engine};
+use engine::{Controls, Engine, HostSample};
 use nice_plug::{editor::dpi::LogicalSize, prelude::*};
 use nice_plug_egui::{
     EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor,
@@ -178,7 +178,8 @@ impl Plugin for Equart {
         }
 
         self.engine = Engine::new(config.sample_rate);
-        self.engine.set_oversampling(self.params.oversampling.value());
+        self.engine
+            .set_oversampling(self.params.oversampling.value());
         self.reported_latency = self.engine.latency();
         context.set_latency_samples(self.reported_latency);
         self.telemetry.publish(&self.engine, true);
@@ -196,11 +197,26 @@ impl Plugin for Equart {
         auxiliary: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        self.process_audio(buffer, auxiliary, context)
+    }
+}
+
+impl Equart {
+    fn process_audio<T: HostSample>(
+        &mut self,
+        buffer: &mut Buffer<'_, T>,
+        auxiliary: &mut AuxiliaryBuffers<'_, T>,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
         let _denormal_guard = realtime::DenormalGuard::new();
         let spectrum_revision = self.engine.analyzer.revision;
         self.engine.retune(context.transport().sample_rate);
         let open = self.editor_state.is_open();
-        self.engine.delta_request = if open { self.telemetry.delta_region() } else { None };
+        self.engine.delta_request = if open {
+            self.telemetry.delta_region()
+        } else {
+            None
+        };
         self.engine.analyze = open && self.params.analyzer.load(Ordering::Relaxed);
         let settings = analyzer::AnalyzerSettings::read(&self.params);
         self.engine.analyzer.apply_settings(settings);
@@ -298,6 +314,16 @@ impl Vst3Plugin for Equart {
     const VST3_CLASS_ID: [u8; 16] = *b"PPA_EQUART__PLUG";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Fx, Vst3SubCategory::Eq];
+    const SUPPORTS_SAMPLE_64: bool = true;
+
+    fn process_f64(
+        &mut self,
+        buffer: &mut Buffer<'_, f64>,
+        auxiliary: &mut AuxiliaryBuffers<'_, f64>,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
+        self.process_audio(buffer, auxiliary, context)
+    }
 }
 
 nice_export_clap!(Equart);

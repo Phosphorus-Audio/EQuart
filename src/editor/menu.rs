@@ -169,6 +169,7 @@ pub(crate) const COMBO_SMOOTHING: u32 = 3;
 pub(crate) const COMBO_OVERSAMPLING: u32 = 4;
 pub(crate) const COMBO_TILT: u32 = 5;
 pub(crate) const COMBO_HOLD: u32 = 6;
+pub(crate) const COMBO_PHASE: u32 = 7;
 
 const COMBO_CAPTION_H: f32 = 14.0;
 pub(crate) const COMBO_BUTTON_H: f32 = 24.0;

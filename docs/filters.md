@@ -2,12 +2,6 @@
 
 Notes on what `filter.rs` uses
 
-## references
-
-- **camilladsp (`src/filters/biquad.rs`)**: standard RBJ cookbook biquads in `f64`. Used as our test baseline.
-- **lsp-dsp-units (`ButterworthFilter.cpp`)**: analytic Butterworth poles `Q_i = 1 / (2·sin(π(2i + 1)/(2n)))` (+1 real pole for odd orders).
-- **ZLEqualizer (`source/dsp/filter/`)**: Ivantsov SVF with warped `w²` to fix Nyquist cramping, spreads Q across all sections `(√2·Q)^(1/n)`.
-
 ## what we use
 
 Cytomic TPT SVF (`g = tan(π f/f_s)`, `k = 1/Q`, `mix0·x + mix1·band + mix2·low`), stable under modulation:
@@ -22,11 +16,11 @@ Cytomic TPT SVF (`g = tan(π f/f_s)`, `k = 1/Q`, `mix0·x + mix1·band + mix2·l
 
 ## measurements
 
-Compared against `src/reference.rs` via `cargo test`:
+Native VST3 processing supports both 32-bit and 64-bit host audio. And we should use f64 so...
 
-- **Single-section vs RBJ**: `worst deviation from the RBJ reference: 0.0115 dB` (just f32 rounding in stopband).
-- **Butterworth cascades** (all 9 slopes @ 48 kHz, 1 kHz): -3.01 dB at cutoff (neutral Q), ≤ 0.001 dB ripple, cutoff gain tracks `20·log10(Q)` within 0.1 dB.
-- **Resonance distribution** (96 dB/oct @ 1 kHz): spreading Q like ZLEqualizer pulls peak below cutoff and boosts it with slope, so we only scale the highest-Q section:
+Run `python docs/biquad_precision.py` to compare DF-I, TDF-II and TPT-SVF against a
+64-decimal-digit reference using the same quantized input. For the production AVX2/FMA kernel,
+run `cargo test avx2_residual_against_f64_svf -- --nocapture` on a supported CPU.
 
 | scheme | peak @ Q=1 | peak @ Q=4 |
 | --- | --- | --- |

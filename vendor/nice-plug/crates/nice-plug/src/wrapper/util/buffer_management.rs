@@ -9,69 +9,67 @@ use nice_plug_core::buffer::Buffer;
 /// Buffers created using [`create_buffers`]. At some point the main `Plugin::process()` should
 /// probably also take an argument like this instead of main+aux buffers if we also want to provide
 /// access to overflowing input channels for e.g. stereo to mono plugins.
-pub struct Buffers<'a, 'buffer: 'a> {
-    pub main_buffer: &'a mut Buffer<'buffer>,
+pub struct Buffers<'a, 'buffer: 'a, T = f32> {
+    pub main_buffer: &'a mut Buffer<'buffer, T>,
 
     // We can't use `AuxiliaryBuffers` here directly because we need different lifetimes for `'a`
     // and `'buffer` while `AuxiliaryBuffers` uses the same lifetime for both.
-    pub aux_inputs: &'a mut [Buffer<'buffer>],
-    pub aux_outputs: &'a mut [Buffer<'buffer>],
+    pub aux_inputs: &'a mut [Buffer<'buffer, T>],
+    pub aux_outputs: &'a mut [Buffer<'buffer, T>],
 }
 
 /// A helper for safely creating and initializing [`Buffer`]s based on the host's input and output
 /// buffers.
-pub struct BufferManager {
+pub struct BufferManager<T: 'static = f32> {
     // These are the storage backing the fields in `BufferSource`. The wrapper needs to set these
     // values to match the channel pointers provided by the host. If audio buffers are not provided
     // for a bus, then they should be set to `None`. This helper will then copy data to the buffers
     // or fill them with zeroes if there is no data, while also accounting for in-place main IO
     // buffers.
-    main_input_channel_pointers: Option<ChannelPointers>,
-    main_output_channel_pointers: Option<ChannelPointers>,
-    aux_input_channel_pointers: Vec<Option<ChannelPointers>>,
-    aux_output_channel_pointers: Vec<Option<ChannelPointers>>,
+    main_input_channel_pointers: Option<ChannelPointers<T>>,
+    main_output_channel_pointers: Option<ChannelPointers<T>>,
+    aux_input_channel_pointers: Vec<Option<ChannelPointers<T>>>,
+    aux_output_channel_pointers: Vec<Option<ChannelPointers<T>>>,
 
     /// The backing buffers that will be filled during `create_buffers`. This `'static` lifetime
     /// will be shortened when returning a reference to these buffers in `create_buffers` to match
     /// the function's lifetime.
-    main_buffer: Buffer<'static>,
+    main_buffer: Buffer<'static, T>,
 
-    aux_input_buffers: Vec<Buffer<'static>>,
+    aux_input_buffers: Vec<Buffer<'static, T>>,
     /// Stores the data to back `aux_input_buffers`. We need to copy the host's auxiliary input
     /// buffers to our own first because the `Buffer` API is designed around mutable buffers, and
     /// the host may reuse its input buffers between plugins.
-    aux_input_storage: Vec<Vec<Vec<f32>>>,
+    aux_input_storage: Vec<Vec<Vec<T>>>,
 
-    aux_output_buffers: Vec<Buffer<'static>>,
+    aux_output_buffers: Vec<Buffer<'static, T>>,
 }
 
 // SAFETY: The raw pointers in the `ChannelPointers` fields/vectors are only used as scratch storage
 //         inside of the `create_buffers()` function.
-unsafe impl Send for BufferManager {}
-unsafe impl Sync for BufferManager {}
+unsafe impl<T: Send> Send for BufferManager<T> {}
+unsafe impl<T: Sync> Sync for BufferManager<T> {}
 
 /// Host data that the plugin's [`Buffer`]s should be created from. Leave these fields as `None`
 /// values
 #[derive(Debug)]
-pub struct BufferSource<'a> {
-    pub main_input_channel_pointers: &'a mut Option<ChannelPointers>,
-    pub main_output_channel_pointers: &'a mut Option<ChannelPointers>,
-    pub aux_input_channel_pointers: &'a mut [Option<ChannelPointers>],
-    pub aux_output_channel_pointers: &'a mut [Option<ChannelPointers>],
+pub struct BufferSource<'a, T = f32> {
+    pub main_input_channel_pointers: &'a mut Option<ChannelPointers<T>>,
+    pub main_output_channel_pointers: &'a mut Option<ChannelPointers<T>>,
+    pub aux_input_channel_pointers: &'a mut [Option<ChannelPointers<T>>],
+    pub aux_output_channel_pointers: &'a mut [Option<ChannelPointers<T>>],
 }
 
 /// Pointers to raw multichannel audio data for this port.
 #[derive(Debug, Clone, Copy)]
-pub struct ChannelPointers {
-    /// A raw pointer to an array of f32 arrays, containing one array for each channel. `ptrs` must
-    /// contain (at least) `num_channel` `*const f32`s, and each of those inner arrays must contain
-    /// (at least) `num_samples` `f32` values.
-    pub ptrs: NonNull<*mut f32>,
+pub struct ChannelPointers<T = f32> {
+    /// A raw pointer to channel pointers, each addressing at least `num_samples` values.
+    pub ptrs: NonNull<*mut T>,
     /// The number of audio channels used for this port.
     pub num_channels: usize,
 }
 
-impl BufferManager {
+impl<T: Copy + Default> BufferManager<T> {
     /// Initialize managed buffers for a specific audio IO layout. The actual buffers can be set up
     /// using channel pointer data using [`create_buffers()`][Self::create_buffers()].
     pub fn for_audio_io_layout(max_buffer_size: usize, audio_io_layout: AudioIOLayout) -> Self {
@@ -115,7 +113,7 @@ impl BufferManager {
 
             aux_input_buffers.push(buffer);
             aux_input_storage.push(vec![
-                vec![0.0; max_buffer_size];
+                vec![T::default(); max_buffer_size];
                 num_channels.get() as usize
             ]);
         }
@@ -169,8 +167,8 @@ impl BufferManager {
         &'a mut self,
         sample_offset: usize,
         num_samples: usize,
-        set_buffer_sources: impl FnOnce(&mut BufferSource),
-    ) -> Buffers<'a, 'buffer> {
+        set_buffer_sources: impl FnOnce(&mut BufferSource<T>),
+    ) -> Buffers<'a, 'buffer, T> {
         // Make sure the caller can't forget to unset previously set values
         self.main_input_channel_pointers = None;
         self.main_output_channel_pointers = None;
@@ -242,7 +240,7 @@ impl BufferManager {
                         // If the host processes the main IO out of place then the inputs need to be
                         // copied to the output buffers. Otherwise the input should already be there.
                         if input_channel_pointer != output_channel_pointer {
-                            output_slice.copy_from_slice(std::slice::from_raw_parts_mut(
+                            output_slice.copy_from_slice(std::slice::from_raw_parts(
                                 input_channel_pointer.add(sample_offset),
                                 num_samples,
                             ))
@@ -257,7 +255,7 @@ impl BufferManager {
                 unsafe {
                     self.main_buffer.set_slices(num_samples, |output_slices| {
                         for slice in &mut output_slices[input_channel_pointers.num_channels..] {
-                            slice.fill(0.0);
+                            slice.fill(T::default());
                         }
                     });
                 }
@@ -274,9 +272,12 @@ impl BufferManager {
                     .zip(self.aux_input_buffers.iter_mut()),
             )
         {
+            for channel in input_storage.iter_mut() {
+                crate::nice_debug_assert!(num_samples <= channel.capacity());
+                channel.resize(num_samples, T::default());
+            }
             // Since these buffers are backed by our own storage, we can fill them with zeroes if
             // the pointers are missing for whatever reason that might be
-            crate::nice_debug_assert!(input_channel_pointers.is_some());
             match input_channel_pointers {
                 Some(input_channel_pointers) => {
                     crate::nice_debug_assert_eq!(
@@ -291,10 +292,8 @@ impl BufferManager {
                         let input_channel_pointer =
                             unsafe { input_channel_pointers.ptrs.as_ptr().add(channel_idx) };
 
-                        crate::nice_debug_assert!(num_samples <= channel.capacity());
-                        channel.resize(num_samples, 0.0);
                         channel.copy_from_slice(unsafe {
-                            std::slice::from_raw_parts_mut(
+                            std::slice::from_raw_parts(
                                 (*input_channel_pointer).add(sample_offset),
                                 num_samples,
                             )
@@ -307,12 +306,12 @@ impl BufferManager {
                         .iter_mut()
                         .skip(input_channel_pointers.num_channels)
                     {
-                        channel.fill(0.0);
+                        channel.fill(T::default());
                     }
                 }
                 None => {
                     for channel in input_storage.iter_mut() {
-                        channel.fill(0.0);
+                        channel.fill(T::default());
                     }
                 }
             }
@@ -326,7 +325,7 @@ impl BufferManager {
                         input_slices.iter_mut().zip(input_storage.iter_mut())
                     {
                         // SAFETY: `channel_storage` is no longer used accessed directly after this
-                        *channel_slice = &mut *(channel_storage.as_mut_slice() as *mut [f32]);
+                        *channel_slice = &mut *(channel_storage.as_mut_slice() as *mut [T]);
                     }
                 });
             }
@@ -362,7 +361,7 @@ impl BufferManager {
 
                                 // The host may not zero out the buffers, and assume the plugin always
                                 // write something there
-                                output_slice.fill(0.0);
+                                output_slice.fill(T::default());
                             }
 
                             // If the caller/host should have provided buffer pointers but didn't then
@@ -385,7 +384,7 @@ impl BufferManager {
         //         Their actual lifetimes are `'a`, so we need to shrink them here. The contents are
         //         valid for as long as the returned object is borrowed.
         unsafe {
-            std::mem::transmute::<Buffers<'a, 'static>, Buffers<'a, 'buffer>>(Buffers {
+            std::mem::transmute::<Buffers<'a, 'static, T>, Buffers<'a, 'buffer, T>>(Buffers {
                 main_buffer: &mut self.main_buffer,
                 aux_inputs: &mut self.aux_input_buffers,
                 aux_outputs: &mut self.aux_output_buffers,

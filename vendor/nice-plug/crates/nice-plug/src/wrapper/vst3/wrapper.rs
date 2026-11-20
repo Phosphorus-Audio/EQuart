@@ -9,7 +9,6 @@ use nice_plug_core::plugin::ProcessStatus;
 use std::ffi::c_void;
 use std::mem::{self, MaybeUninit};
 use std::num::NonZeroU32;
-use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -40,18 +39,16 @@ use vst3::Steinberg::{
 use vst3::{Class, ComRef};
 use widestring::U16CStr;
 
+use super::buffers::{self, SAMPLE_32, SAMPLE_64, Vst3BufferManager};
 use super::inner::{ProcessEvent, WrapperInner};
 use super::note_expressions;
 use super::util::{VST3_MIDI_CCS, VST3_MIDI_NUM_PARAMS, VST3_MIDI_PARAMS_START, u16strlcpy};
 use super::util::{VST3_MIDI_CHANNELS, VST3_MIDI_PARAMS_END};
 use crate::util::permit_alloc;
 use crate::wrapper::state;
-use crate::wrapper::util::buffer_management::{BufferManager, ChannelPointers};
 use crate::wrapper::util::{clamp_input_event_timing, process_wrapper};
 use crate::wrapper::vst3::Vst3Plugin;
 
-#[allow(clippy::unnecessary_cast)]
-const K_SYMBOLIC_SAMPLE_SIZE_32: i32 = vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32 as i32;
 #[allow(clippy::unnecessary_cast)]
 const K_MEDIA_TYPE_AUDIO: i32 = vst3::Steinberg::Vst::MediaTypes_::kAudio as i32;
 #[allow(clippy::unnecessary_cast)]
@@ -442,7 +439,8 @@ impl<P: Vst3Plugin> IComponentTrait for Wrapper<P> {
                                     // This preallocates enough space so we can transform all of the host's raw
                                     // channel pointers into a set of `Buffer` objects for the plugin's main and
                                     // auxiliary IO
-                                    *buffer_manager = BufferManager::for_audio_io_layout(
+                                    *buffer_manager = Vst3BufferManager::new(
+                                        self.inner.double_precision.load(Ordering::Relaxed),
                                         buffer_config.max_buffer_size as usize,
                                         audio_io_layout,
                                     );
@@ -985,7 +983,9 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
     }
 
     unsafe fn canProcessSampleSize(&self, symbolic_sample_size: int32) -> tresult {
-        if symbolic_sample_size == K_SYMBOLIC_SAMPLE_SIZE_32 {
+        if symbolic_sample_size == SAMPLE_32
+            || (P::SUPPORTS_SAMPLE_64 && symbolic_sample_size == SAMPLE_64)
+        {
             kResultOk
         } else {
             kResultFalse
@@ -1001,7 +1001,13 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
 
         // There's no special handling for offline processing at the moment
         let setup = unsafe { &*setup };
-        crate::nice_debug_assert_eq!(setup.symbolicSampleSize, K_SYMBOLIC_SAMPLE_SIZE_32);
+        if unsafe { self.canProcessSampleSize(setup.symbolicSampleSize) } != kResultOk {
+            return kInvalidArgument;
+        }
+        //
+        self.inner
+            .double_precision
+            .store(setup.symbolicSampleSize == SAMPLE_64, Ordering::Relaxed);
 
         // This is needed when activating the plugin and when restoring state
         self.inner.current_buffer_config.store(Some(BufferConfig {
@@ -1089,16 +1095,21 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                 .sample_rate;
 
             crate::nice_debug_assert!(data.numInputs >= 0 && data.numOutputs >= 0);
-            crate::nice_debug_assert_eq!(data.symbolicSampleSize, K_SYMBOLIC_SAMPLE_SIZE_32);
+            let negotiated = if self.inner.double_precision.load(Ordering::Relaxed) {
+                SAMPLE_64
+            } else {
+                SAMPLE_32
+            };
+
+            if data.numSamples > 0 && data.symbolicSampleSize != negotiated {
+                return kInvalidArgument;
+            }
             crate::nice_debug_assert!(data.numSamples >= 0);
 
             let total_buffer_len = data.numSamples as usize;
 
             let current_audio_io_layout = self.inner.current_audio_io_layout.load();
-            let has_main_input = current_audio_io_layout.main_input_channels.is_some();
             let has_main_output = current_audio_io_layout.main_output_channels.is_some();
-            let aux_input_start_idx = if has_main_input { 1 } else { 0 };
-            let aux_output_start_idx = if has_main_output { 1 } else { 0 };
 
             // NOTE: VST3 hosts may trigger a 'parameter flush' by calling the process function for
             //       0 input samples. If this is the case then we'll only handle events and skip all
@@ -1432,109 +1443,6 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                     // and we can start preparing audio processing
                     let block_len = block_end - block_start;
 
-                    // The buffer manager preallocated buffer slices for all the IO and storage for
-                    // any axuiliary inputs.
-                    let mut buffer_manager = self.inner.buffer_manager.borrow_mut();
-                    let buffers = unsafe {
-                        buffer_manager.create_buffers(block_start, block_len, |buffer_source| {
-                            if data.numOutputs > 0
-                                && !data.outputs.is_null()
-                                && !(*data.outputs).__field0.channelBuffers32.is_null()
-                                && has_main_output
-                            {
-                                let audio_output = &*data.outputs;
-                                let ptrs =
-                                    NonNull::new(audio_output.__field0.channelBuffers32).unwrap();
-                                let num_channels = audio_output.numChannels as usize;
-
-                                *buffer_source.main_output_channel_pointers =
-                                    Some(ChannelPointers { ptrs, num_channels });
-                            }
-
-                            if data.numInputs > 0
-                                && !data.inputs.is_null()
-                                && !(*data.inputs).__field0.channelBuffers32.is_null()
-                                && has_main_input
-                            {
-                                let audio_input = &*data.inputs;
-                                let ptrs =
-                                    NonNull::new(audio_input.__field0.channelBuffers32).unwrap();
-                                let num_channels = audio_input.numChannels as usize;
-
-                                *buffer_source.main_input_channel_pointers =
-                                    Some(ChannelPointers { ptrs, num_channels });
-                            }
-
-                            if !data.inputs.is_null() {
-                                for (aux_input_no, aux_input_channel_pointers) in buffer_source
-                                    .aux_input_channel_pointers
-                                    .iter_mut()
-                                    .enumerate()
-                                {
-                                    let aux_input_idx = aux_input_no + aux_input_start_idx;
-                                    if aux_input_idx > data.numOutputs as usize {
-                                        break;
-                                    }
-
-                                    let audio_input = &*data.inputs.add(aux_input_idx);
-                                    match NonNull::new(audio_input.__field0.channelBuffers32) {
-                                        Some(ptrs) => {
-                                            let num_channels = audio_input.numChannels as usize;
-
-                                            *aux_input_channel_pointers =
-                                                Some(ChannelPointers { ptrs, num_channels });
-                                        }
-                                        None => continue,
-                                    }
-                                }
-                            }
-
-                            if !data.outputs.is_null() {
-                                for (aux_output_no, aux_output_channel_pointers) in buffer_source
-                                    .aux_output_channel_pointers
-                                    .iter_mut()
-                                    .enumerate()
-                                {
-                                    let aux_output_idx = aux_output_no + aux_output_start_idx;
-                                    if aux_output_idx > data.numOutputs as usize {
-                                        break;
-                                    }
-
-                                    let audio_output = &*data.outputs.add(aux_output_idx);
-                                    match NonNull::new(audio_output.__field0.channelBuffers32) {
-                                        Some(ptrs) => {
-                                            let num_channels = audio_output.numChannels as usize;
-
-                                            *aux_output_channel_pointers =
-                                                Some(ChannelPointers { ptrs, num_channels });
-                                        }
-                                        None => continue,
-                                    }
-                                }
-                            }
-                        })
-                    };
-
-                    // We already checked whether the host has initiated a parameter flush, but in
-                    // case it still did something unexpected that we did not catch we'll still try
-                    // to prevent processing audio when the slices don't contain the values we
-                    // expect.
-                    let mut buffer_is_valid = true;
-                    for output_buffer_slice in
-                        buffers.main_buffer.as_slice_immutable().iter().chain(
-                            buffers
-                                .aux_outputs
-                                .iter()
-                                .flat_map(|buffer| buffer.as_slice_immutable().iter()),
-                        )
-                    {
-                        if output_buffer_slice.is_empty() {
-                            buffer_is_valid = false;
-                            break;
-                        }
-                    }
-                    crate::nice_debug_assert!(buffer_is_valid);
-
                     // Some of the fields are left empty because VST3 does not provide this
                     // information, but the methods on [`Transport`] can reconstruct these values
                     // from the other fields
@@ -1598,33 +1506,72 @@ impl<P: Vst3Plugin> IAudioProcessorTrait for Wrapper<P> {
                         }
                     }
 
-                    let result = if buffer_is_valid {
-                        // In the case the host misbehaves and tries to activate/deactive the plugin while the
-                        // process loop is still running, just return an error.
-                        if let Some(mut plugin) = self.inner.plugin.try_lock() {
-                            let mut aux = AuxiliaryBuffers {
-                                inputs: buffers.aux_inputs,
-                                outputs: buffers.aux_outputs,
-                            };
+                    let result = if let Some(mut plugin) = self.inner.plugin.try_lock() {
+                        let host_out_events = unsafe { ComRef::from_raw(data.outputEvents) };
+                        let mut context = self.inner.make_process_context(
+                            transport,
+                            host_out_events,
+                            total_buffer_len,
+                            block_start,
+                        );
 
-                            let host_out_events = unsafe { ComRef::from_raw(data.outputEvents) };
+                        let mut manager = self.inner.buffer_manager.borrow_mut();
 
-                            let mut context = self.inner.make_process_context(
-                                transport,
-                                host_out_events,
-                                total_buffer_len,
-                                block_start,
-                            );
+                        // SAFETY (maybe) : the manager and union member agree with setupProcessing()
+                        let result = unsafe {
+                            match &mut *manager {
+                                Vst3BufferManager::Single(manager) if negotiated == SAMPLE_32 => {
+                                    let buffers = buffers::prepare(
+                                        manager,
+                                        data,
+                                        block_start,
+                                        block_len,
+                                        current_audio_io_layout,
+                                        |bus| bus.__field0.channelBuffers32,
+                                    );
+                                    if buffers::valid(&buffers) {
+                                        let mut aux = AuxiliaryBuffers {
+                                            inputs: buffers.aux_inputs,
+                                            outputs: buffers.aux_outputs,
+                                        };
+                                        plugin.process(buffers.main_buffer, &mut aux, &mut context)
+                                    } else {
+                                        ProcessStatus::Error("Invalid VST3 output buffers")
+                                    }
+                                }
+                                Vst3BufferManager::Double(manager) if negotiated == SAMPLE_64 => {
+                                    let buffers = buffers::prepare(
+                                        manager,
+                                        data,
+                                        block_start,
+                                        block_len,
+                                        current_audio_io_layout,
+                                        |bus| bus.__field0.channelBuffers64,
+                                    );
 
-                            let result =
-                                plugin.process(buffers.main_buffer, &mut aux, &mut context);
-                            self.inner.last_process_status.store(result);
-                            result
-                        } else {
-                            ProcessStatus::Error("Failed to acquire plugin lock")
-                        }
+                                    if buffers::valid(&buffers) {
+                                        let mut aux = AuxiliaryBuffers {
+                                            inputs: buffers.aux_inputs,
+                                            outputs: buffers.aux_outputs,
+                                        };
+                                        plugin.process_f64(
+                                            buffers.main_buffer,
+                                            &mut aux,
+                                            &mut context,
+                                        )
+                                    } else {
+                                        ProcessStatus::Error("Invalid VST3 output buffers")
+                                    }
+                                }
+                                _ => ProcessStatus::Error(
+                                    "VST3 sample format changed without activation",
+                                ),
+                            }
+                        };
+                        self.inner.last_process_status.store(result);
+                        result
                     } else {
-                        ProcessStatus::Normal
+                        ProcessStatus::Error("Failed to acquire plugin lock")
                     };
 
                     match result {

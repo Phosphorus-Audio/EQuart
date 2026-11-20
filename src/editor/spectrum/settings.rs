@@ -223,6 +223,31 @@ impl EquartEditor {
         );
     }
 
+    pub(in crate::editor) fn phase_rows(
+        &self,
+        ui: &mut egui::Ui,
+        dropdowns: &mut menu::Dropdown,
+        group: egui::Id,
+    ) {
+        let accent = self.accent();
+        let phase = self.params.phase_curve.load(Ordering::Relaxed);
+        if menu::switch(ui, group.with("phase-curve"), "Phase curve", phase, accent) {
+            self.params.phase_curve.store(!phase, Ordering::Relaxed);
+            ui.ctx().request_repaint();
+        }
+        dropdowns.new_group();
+        let index = usize::from(self.params.phase_unwrapped.load(Ordering::Relaxed));
+        dropdowns.combo(
+            ui,
+            menu::COMBO_PHASE,
+            "Phase mode",
+            phase::Mode::LABELS[index],
+            &phase::Mode::LABELS,
+            index,
+            accent,
+        );
+    }
+
     /// save dropdown choice to params
     pub(in crate::editor) fn apply_analysis_choice(&self, key: u32, index: usize) {
         match key {
@@ -246,6 +271,10 @@ impl EquartEditor {
                 .params
                 .analyzer_hold
                 .store(index as u32, Ordering::Relaxed),
+            menu::COMBO_PHASE => self
+                .params
+                .phase_unwrapped
+                .store(index == 1, Ordering::Relaxed),
             _ => {}
         }
     }

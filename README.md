@@ -13,13 +13,7 @@ But! If something changes a parameter (like dragging a knob or running automatio
 
 `cargo test --release bench_engine_throughput -- --ignored --nocapture` (48 kHz stereo, best of 5 runs):
 
-| case | time | of one core |
-| --- | --- | --- |
-| all bands off | 16.1 ns/frame | 0.08% |
-| 8 bells | 28.2 ns/frame | 0.14% |
-| 8 cuts at 96 dB/oct (128 biquads) | 106.1 ns/frame | 0.51% |
-| same, 2x oversampling | 175.4 ns/frame | 0.84% |
-| same, 4x oversampling | 364.4 ns/frame | 1.75% |
+The performance test data looks kind of sketchy, so I left it out
 
 Oversampling latency: 0 frames (1x), 32 frames (2x), 48 frames (4x).
 

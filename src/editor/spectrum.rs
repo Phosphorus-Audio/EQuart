@@ -17,6 +17,7 @@ mod grid;
 mod keys;
 mod meter;
 mod panel_motion;
+mod phase;
 mod plot;
 mod response;
 mod settings;
@@ -430,6 +431,13 @@ impl EquartEditor {
         // eval response at oversampled rate
         let design_rate = if rate > 0.0 { rate } else { 48_000.0 }
             * self.params.oversampling.value().factor() as f32;
+        let phase_mode = self.params.phase_curve.load(Ordering::Relaxed).then(|| {
+            if self.params.phase_unwrapped.load(Ordering::Relaxed) {
+                phase::Mode::Unwrapped
+            } else {
+                phase::Mode::Wrapped
+            }
+        });
         draw_response(
             &p,
             &plot,
@@ -442,6 +450,7 @@ impl EquartEditor {
                 telemetry: &self.telemetry,
                 rate: design_rate,
                 selected: self.selected,
+                phase_mode,
             },
         );
 
@@ -456,6 +465,9 @@ impl EquartEditor {
             spectrum_highlight,
             self.accent(),
         );
+        if let Some(mode) = phase_mode {
+            phase::draw_label(&p, &plot, outer, mode);
+        }
 
         for &(index, point) in &markers {
             let selected = self.selected == Some(index);

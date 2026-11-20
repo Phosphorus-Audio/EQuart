@@ -29,8 +29,6 @@ pub(in crate::editor) fn power_icon(p: &egui::Painter, center: Pos2, color: Colo
         color,
     );
 
-    // The ring runs from 45 degrees right of top, clockwise all the way round to
-    // 45 degrees left of it, on a radius of 8 with a 2-unit line width.
     let start = 315.0_f32.to_radians();
     let points: Vec<Pos2> = (0..=72)
         .map(|i| {
@@ -619,13 +617,12 @@ impl EquartEditor {
             let setter = gui.param_setter();
             let kind = band.kind.value();
             let q = band.q.value();
-            for (other_index, other) in params.bands.iter().enumerate() {
-                if other_index == index || !self.band_exists(other_index) {
+            for (oidx, other) in params.bands.iter().enumerate() {
+                if oidx == index || !self.band_exists(oidx) {
                     continue;
                 }
-                // Preserve points inferred from pre-mask presets if copying
-                // restores the destination's default Type and Q.
-                params.mark_placed(other_index);
+
+                params.mark_placed(oidx);
                 self.set(&setter, &other.kind, kind);
                 self.set(&setter, &other.q, q);
             }

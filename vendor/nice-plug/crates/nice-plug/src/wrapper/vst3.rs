@@ -1,6 +1,7 @@
 #[macro_use]
 mod util;
 
+mod buffers;
 mod context;
 mod factory;
 mod inner;
@@ -14,7 +15,10 @@ mod view;
 
 /// Re-export for the wrapper.
 pub use factory::PluginInfo;
-use nice_plug_core::plugin::Plugin;
+use nice_plug_core::audio_setup::AuxiliaryBuffers;
+use nice_plug_core::buffer::Buffer;
+use nice_plug_core::context::process::ProcessContext;
+use nice_plug_core::plugin::{Plugin, ProcessStatus};
 pub use vst3;
 pub use wrapper::Wrapper;
 
@@ -32,6 +36,17 @@ pub trait Vst3Plugin: Plugin {
     /// (`|`). This string has a limit of 127 characters, and anything longer than that will be
     /// truncated.
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory];
+
+    const SUPPORTS_SAMPLE_64: bool = false;
+
+    fn process_f64(
+        &mut self,
+        _buffer: &mut Buffer<'_, f64>,
+        _aux: &mut AuxiliaryBuffers<'_, f64>,
+        _context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
+        ProcessStatus::Error("VST3 double-precision processing is not implemented")
+    }
 
     /// [`VST3_CLASS_ID`][Self::VST3_CLASS_ID`] in the correct order for the current platform so
     /// projects and presets can be shared between platforms. This should not be overridden.

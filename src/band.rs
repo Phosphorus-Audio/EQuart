@@ -5,7 +5,9 @@ use crate::precision::Sample;
 use nice_plug::prelude::Enum;
 
 pub const BAND_COUNT: usize = 32;
+// pub const BAND_COUNT: usize = 48;
 pub const SECTIONS: usize = 8;
+// pub const SECTIONS: usize = 8;
 pub const COEFF_FRAMES: usize = 32;
 
 /// snap threshold to switch back to block kernel
@@ -110,6 +112,9 @@ impl BandControl {
         &self,
         rate: f32,
     ) -> ([Coefficients<T>; SECTIONS], usize) {
+        // let rate = Coefficients::value(f64::from(rate));
+        // let q = Coefficients::value(f64::from(self.q));
+        // let gain = Coefficients::value(f64::from(self.gain));
         let rate = T::value(f64::from(rate));
         let q = T::value(f64::from(self.q));
         let gain = T::value(f64::from(self.gain));
@@ -178,6 +183,7 @@ impl BandControl {
 
 struct Slot<T: Sample> {
     coeff: Coefficients<T>,
+    previous: Coefficients<T>,
     kernel: T::BlockKernel,
     state: [State<T>; 2],
     block: bool,
@@ -187,6 +193,7 @@ impl<T: Sample> Slot<T> {
     fn new() -> Self {
         Self {
             coeff: Coefficients::identity(),
+            previous: Coefficients::identity(),
             kernel: T::kernel(&Coefficients::identity()),
             state: [State::zero(); 2],
             block: true,
@@ -194,17 +201,32 @@ impl<T: Sample> Slot<T> {
     }
 
     #[inline]
-    fn run(&mut self, channel: usize, buf: &mut [T]) {
+    fn run(&mut self, channel: usize, buf: &mut [T], position: usize, span: usize) {
         if self.block {
             T::run_block(&self.kernel, &self.coeff, &mut self.state[channel], buf);
         } else {
-            let coeff = self.coeff;
             let state = &mut self.state[channel];
-            for sample in buf.iter_mut() {
+            let inverse_span = T::value((span as f64).recip());
+
+            for (i, sample) in buf.iter_mut().enumerate() {
+                let frame = position + i + 1;
+                let coeff = if frame < span {
+                    self.previous
+                        .interpolate(self.coeff, T::value(frame as f64) * inverse_span)
+                } else {
+                    self.coeff
+                };
                 *sample = dsp::step(state, &coeff, *sample);
             }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CoefficientTiming {
+    pub alpha: f32,
+    pub fade_step: f32,
+    pub frames: usize,
 }
 
 pub struct Band<T: Sample = f32> {
@@ -221,6 +243,8 @@ pub struct Band<T: Sample = f32> {
     ramp_on_start: bool,
     /// true while smoothing, so steady state can skip update
     moving: bool,
+    ramp_frame: usize,
+    ramp_frames: usize,
     last: Option<BandControl>,
     pub frequency: f32,
 }
@@ -242,6 +266,8 @@ impl<T: Sample> Band<T> {
             started: false,
             ramp_on_start,
             moving: true,
+            ramp_frame: 0,
+            ramp_frames: COEFF_FRAMES,
             last: None,
             frequency: 1_000.0,
         }
@@ -250,6 +276,7 @@ impl<T: Sample> Band<T> {
     pub fn reset(&mut self) {
         for slot in &mut self.slots {
             slot.state = [State::zero(); 2];
+            slot.previous = slot.coeff;
             slot.kernel = T::kernel(&slot.coeff);
             slot.block = true;
         }
@@ -258,6 +285,7 @@ impl<T: Sample> Band<T> {
         self.sections = 1;
         self.started = false;
         self.moving = true;
+        self.ramp_frame = 0;
         self.last = None;
     }
 
@@ -270,18 +298,13 @@ impl<T: Sample> Band<T> {
         self.wet = source.wet;
         self.started = source.started;
         self.frequency = source.frequency;
+        self.ramp_frame = source.ramp_frame;
+        self.ramp_frames = source.ramp_frames;
         self.invalidate();
 
         for (slot, previous) in self.slots.iter_mut().zip(&source.slots) {
-            let coeff = previous.coeff;
-            slot.coeff = Coefficients {
-                a1: T::value(coeff.a1.double()),
-                a2: T::value(coeff.a2.double()),
-                a3: T::value(coeff.a3.double()),
-                g: T::value(coeff.g.double()),
-                k: T::value(coeff.k.double()),
-                mix: crate::precision::convert(coeff.mix),
-            };
+            slot.coeff = Coefficients::from_coefficients(previous.coeff);
+            slot.previous = Coefficients::from_coefficients(previous.previous);
             slot.state = previous.state.map(State::from_state);
             slot.block = false;
         }
@@ -294,7 +317,7 @@ impl<T: Sample> Band<T> {
     }
 
     /// smooth coeffs and enable ramp once per COEFF_FRAMES
-    pub fn update(&mut self, control: BandControl, rate: f32, alpha: f32, step: f32) {
+    pub fn update(&mut self, control: BandControl, rate: f32, timing: CoefficientTiming) {
         let changed = self.last != Some(control);
         if changed {
             self.last = Some(control);
@@ -303,6 +326,14 @@ impl<T: Sample> Band<T> {
         if !changed && !self.moving {
             return;
         }
+
+        let CoefficientTiming {
+            alpha,
+            fade_step: step,
+            frames,
+        } = timing;
+        self.ramp_frame = 0;
+        self.ramp_frames = frames;
 
         let target_wet = f32::from(control.enabled);
         let frequency = control.frequency.clamp(10.0, rate * 0.49);
@@ -325,6 +356,7 @@ impl<T: Sample> Band<T> {
 
             for (i, slot) in self.slots.iter_mut().enumerate() {
                 slot.coeff = targets[i];
+                slot.previous = targets[i];
                 slot.kernel = T::kernel(&targets[i]);
                 slot.block = true;
                 slot.state = [State::zero(); 2];
@@ -353,22 +385,26 @@ impl<T: Sample> Band<T> {
         let mut settled = true;
         for (slot, &target) in self.slots.iter_mut().zip(&targets).take(count) {
             let current = slot.coeff;
-            if close(current, target) {
-                if current != target {
-                    slot.coeff = target;
-                }
+            slot.previous = current;
+            // A moving detector target must stay on the smoothing path even inside the snap range.
+            slot.coeff = if !changed && close(current, target) {
+                target
+            } else {
+                current.approach(target, T::value(f64::from(alpha)))
+            };
+            if current == slot.coeff {
                 if !slot.block {
-                    slot.kernel = T::kernel(&target);
+                    slot.kernel = T::kernel(&slot.coeff);
                     slot.block = true;
                 }
             } else {
-                slot.coeff = current.approach(target, T::value(f64::from(alpha)));
                 slot.block = false;
                 settled = false;
             }
         }
         for slot in self.slots.iter_mut().skip(count) {
             // Switched to a shape that needs fewer sections: fade the rest out.
+            slot.previous = slot.coeff;
             slot.block = false;
         }
 
@@ -434,6 +470,7 @@ impl<T: Sample> Band<T> {
                 from_mid_side(left, right);
             }
         }
+        self.ramp_frame = (self.ramp_frame + left.len()).min(self.ramp_frames);
     }
 
     pub(crate) fn is_processing(&self) -> bool {
@@ -447,14 +484,14 @@ impl<T: Sample> Band<T> {
         let mut dry = [T::zero(); TILE];
         let mut spare = [T::zero(); TILE];
 
-        for tile in buf.chunks_mut(TILE) {
+        for (i, tile) in buf.chunks_mut(TILE).enumerate() {
             let len = tile.len();
 
             if wet < 1.0 {
                 dry[..len].copy_from_slice(tile);
             }
 
-            self.cascade(tile, channel, &mut spare[..len]);
+            self.cascade(tile, channel, &mut spare[..len], self.ramp_frame + i * TILE);
 
             if wet < 1.0 {
                 dsp::blend(&dry[..len], tile, wet);
@@ -463,9 +500,9 @@ impl<T: Sample> Band<T> {
     }
 
     /// run active sections (crossfading ones use spare buffer)
-    fn cascade(&mut self, buf: &mut [T], channel: usize, spare: &mut [T]) {
+    fn cascade(&mut self, buf: &mut [T], channel: usize, spare: &mut [T], position: usize) {
         let sections = self.sections;
-        self.slots[0].run(channel, buf);
+        self.slots[0].run(channel, buf, position, self.ramp_frames);
 
         for i in 1..sections {
             let fade = self.fade[i - 1];
@@ -474,10 +511,10 @@ impl<T: Sample> Band<T> {
             }
 
             if fade >= 1.0 {
-                self.slots[i].run(channel, buf);
+                self.slots[i].run(channel, buf, position, self.ramp_frames);
             } else {
                 spare.copy_from_slice(buf);
-                self.slots[i].run(channel, spare);
+                self.slots[i].run(channel, spare, position, self.ramp_frames);
                 for (sample, next) in buf.iter_mut().zip(spare.iter()) {
                     *sample += T::value(f64::from(fade)) * (*next - *sample);
                 }

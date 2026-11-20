@@ -129,7 +129,15 @@ fn harmonic_region_modes() {
         let mut power = 0.0;
         let step = std::f32::consts::TAU * hz / RATE;
         for frame in 0..1500 {
-            region.update(control, RATE, pitch, 0.1, 0.1, &Default::default());
+            let timing = crate::band::CoefficientTiming {
+                alpha: 0.1,
+                fade_step: 0.1,
+                frames: crate::band::COEFF_FRAMES,
+            };
+
+
+            region.update(control, RATE, pitch, timing, &Default::default());
+
             let mut left: [f32; 32] = std::array::from_fn(|_| {
                 phase = (phase + step).rem_euclid(std::f32::consts::TAU);
                 phase.sin() * 0.25

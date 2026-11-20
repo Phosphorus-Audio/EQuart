@@ -28,6 +28,7 @@ use vst3::Steinberg::Vst::{IComponentHandler, IComponentHandlerTrait, IEventList
 use vst3::Steinberg::{kInvalidArgument, kResultOk, tresult};
 use vst3::{ComPtr, ComRef};
 
+use super::buffers::Vst3BufferManager;
 use super::context::{WrapperActivateContext, WrapperProcessContext};
 use super::note_expressions::NoteExpressionController;
 use super::param_units::ParamUnits;
@@ -35,7 +36,6 @@ use super::util::{VST3_MIDI_PARAMS_END, VST3_MIDI_PARAMS_START};
 use crate::event_loop::{EventLoop, MainThreadExecutor, OsEventLoop};
 use crate::util::permit_alloc;
 use crate::wrapper::state;
-use crate::wrapper::util::buffer_management::BufferManager;
 use crate::wrapper::util::hash_param_id;
 use crate::wrapper::vst3::Vst3Plugin;
 #[cfg(feature = "editor")]
@@ -101,6 +101,7 @@ pub(crate) struct WrapperInner<P: Vst3Plugin> {
     /// The current buffer configuration, containing the sample rate and the maximum block size.
     /// Will be set in `IAudioProcessor::setupProcessing()`.
     pub current_buffer_config: AtomicCell<Option<BufferConfig>>,
+    pub double_precision: AtomicBool,
     /// The current audio processing mode. Set in `IAudioProcessor::setup_processing()`.
     pub current_process_mode: AtomicCell<ProcessMode>,
     /// The most recently reported track information. Hosts may send partial updates (e.g.
@@ -116,7 +117,7 @@ pub(crate) struct WrapperInner<P: Vst3Plugin> {
     pub current_latency: AtomicU32,
     /// A data structure that helps manage and create buffers for all of the plugin's inputs and
     /// outputs based on channel pointers provided by the host.
-    pub buffer_manager: AtomicRefCell<BufferManager>,
+    pub buffer_manager: AtomicRefCell<Vst3BufferManager>,
     /// The incoming events for the plugin, if `P::ACCEPTS_MIDI` is set. If
     /// `P::SAMPLE_ACCURATE_AUTOMATION`, this is also read in lockstep with the parameter change
     /// block splitting.
@@ -364,6 +365,7 @@ impl<P: Vst3Plugin> WrapperInner<P> {
                 P::AUDIO_IO_LAYOUTS.first().copied().unwrap_or_default(),
             ),
             current_buffer_config: AtomicCell::new(None),
+            double_precision: AtomicBool::new(false),
             current_process_mode: AtomicCell::new(ProcessMode::Realtime),
             #[cfg(feature = "editor")]
             current_track_info: AtomicRefCell::new(TrackInfo::default()),
@@ -371,7 +373,8 @@ impl<P: Vst3Plugin> WrapperInner<P> {
             current_latency: AtomicU32::new(0),
             // This is initialized just before calling `Plugin::activate()` so that during the
             // process call buffers can be initialized without any allocations
-            buffer_manager: AtomicRefCell::new(BufferManager::for_audio_io_layout(
+            buffer_manager: AtomicRefCell::new(Vst3BufferManager::new(
+                false,
                 0,
                 AudioIOLayout::default(),
             )),

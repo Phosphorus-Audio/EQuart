@@ -41,14 +41,14 @@ pub const fn new_nonzero_u32(n: u32) -> NonZeroU32 {
 }
 
 /// Contains auxiliary (sidechain) input and output buffers for a process call.
-pub struct AuxiliaryBuffers<'a> {
+pub struct AuxiliaryBuffers<'a, T = f32> {
     /// Buffers for all auxiliary (sidechain) inputs defined for this plugin. The data in these
     /// buffers can safely be overwritten. Auxiliary inputs can be defined using the
     /// [`AudioIOLayout::aux_input_ports`] field.
-    pub inputs: &'a mut [Buffer<'a>],
+    pub inputs: &'a mut [Buffer<'a, T>],
     /// Buffers for all auxiliary outputs defined for this plugin. Auxiliary outputs can be defined using the
     /// [`AudioIOLayout::aux_output_ports`] field.
-    pub outputs: &'a mut [Buffer<'a>],
+    pub outputs: &'a mut [Buffer<'a, T>],
 }
 
 /// Contains names for the ports defined in an `AudioIOLayout`. Setting these is optional, but it

@@ -80,6 +80,12 @@ pub struct EquartParams {
     #[persist = "analyzer"]
     pub analyzer: AtomicBool,
 
+    #[persist = "phase_curve"]
+    pub phase_curve: AtomicBool,
+
+    #[persist = "phase_unwrapped"]
+    pub phase_unwrapped: AtomicBool,
+
     #[persist = "meter_fade"]
     pub meter_fade: AtomicBool,
 }
@@ -123,6 +129,8 @@ impl Default for EquartParams {
             analyzer_tilt: AtomicU32::new(crate::analyzer::DEFAULT_TILT),
             analyzer_frozen: AtomicBool::new(false),
             analyzer: AtomicBool::new(true),
+            phase_curve: AtomicBool::new(false),
+            phase_unwrapped: AtomicBool::new(false),
             meter_fade: AtomicBool::new(true),
         }
     }

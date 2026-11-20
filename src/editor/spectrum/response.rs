@@ -70,6 +70,7 @@ pub(super) struct ResponseInput<'a> {
     pub(super) telemetry: &'a crate::Telemetry,
     pub(super) rate: f32,
     pub(super) selected: Option<usize>,
+    pub(super) phase_mode: Option<phase::Mode>,
 }
 
 /// draw each band's curve and the total sum line
@@ -88,6 +89,7 @@ pub(super) fn draw_response(
         telemetry,
         rate,
         selected,
+        phase_mode,
     } = input;
 
     let responses: Vec<_> = controls
@@ -112,6 +114,19 @@ pub(super) fn draw_response(
         .iter()
         .map(|band| band.sections(rate))
         .collect();
+    let phase_response = phase_mode.map(|_| {
+        phase::Response::new(
+            plot,
+            rate,
+            responses
+                .iter()
+                .zip(controls)
+                .filter(|(_, control)| control.enabled)
+                .map(|(response, _)| response.live.as_ref().unwrap_or(&response.base))
+                .chain(&region_sections)
+                .flat_map(|(coefficients, count)| &coefficients[..*count]),
+        )
+    });
     // sample along screen pixels so curves always span full width
     let step = outer.width() / (POINTS - 1) as f32;
     let mut xs: Vec<_> = (0..POINTS)
@@ -139,8 +154,10 @@ pub(super) fn draw_response(
         );
     }
     for (control, band) in controls.iter().zip(&responses) {
-        if !control.enabled || (control.gain == 0.0 && band.live.is_none() && band.range.is_none())
-        {
+        if !control.enabled {
+            continue;
+        }
+        if control.gain == 0.0 && band.live.is_none() && band.range.is_none() {
             continue;
         }
         if control.kind == FilterKind::Peak && control.slope != CutSlope::Db12 {
@@ -164,6 +181,11 @@ pub(super) fn draw_response(
             }
         }
     }
+    if let Some(response) = &phase_response {
+        for (warp, half_width) in response.features() {
+            refine(warp, half_width);
+        }
+    }
     xs.extend(
         controls
             .iter()
@@ -184,6 +206,10 @@ pub(super) fn draw_response(
                 .map(|i| left + (right - left) * (i as f32 / 8.0))
                 .filter(|x| outer.x_range().contains(*x)),
         );
+    }
+    if let Some(response) = &phase_response {
+        xs.extend([plot.rect.left(), plot.rect.right()]);
+        xs.extend(response.nulls());
     }
     xs.sort_unstable_by(f32::total_cmp);
     xs.dedup();
@@ -333,4 +359,7 @@ pub(super) fn draw_response(
         combined,
         Stroke::new(1.9, COMBINED.gamma_multiply(0.95)),
     ));
+    if let Some((mode, response)) = phase_mode.zip(phase_response) {
+        phase::draw(p, plot, mode, &response.sample(plot, &xs));
+    }
 }

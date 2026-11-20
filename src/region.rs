@@ -206,8 +206,7 @@ impl<T: Sample> Region<T> {
         control: RegionControl,
         rate: f32,
         pitch: Option<f32>,
-        alpha: f32,
-        step: f32,
+        timing: crate::band::CoefficientTiming,
         reductions: &[Reduction; REDUCTIONS],
     ) {
         let pitch = pitch.filter(|_| control.harmonic.enabled);
@@ -252,7 +251,7 @@ impl<T: Sample> Region<T> {
             let index = pending.trailing_zeros() as usize;
             pending &= pending - 1;
             let filter = &mut self.filters[index];
-            filter.update(self.targets[index], rate, alpha, step);
+            filter.update(self.targets[index], rate, timing);
             if filter.is_processing() {
                 self.active |= 1 << index;
             }

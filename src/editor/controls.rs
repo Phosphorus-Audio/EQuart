@@ -17,7 +17,7 @@ const MENU_KNOB_LABEL_GAP: f32 = knob::LABEL_GAP + 12.0;
 /// extra top clip room for raised knob labels
 const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 420.0;
-const MENU_CARD_H: f32 = 372.0;
+const MENU_CARD_H: f32 = 406.0;
 const MENU_CARD_MARGIN: f32 = 12.0;
 const MENU_CARD_GAP: f32 = 14.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -244,6 +244,10 @@ impl EquartEditor {
             if menu::row(&mut r, "Flat all", None, false, accent) {
                 self.flatten_all();
             }
+
+            menu::divider(&mut r);
+            self.phase_rows(&mut r, &mut dropdowns, group);
+
             // push version note to bottom
             menu::divider(&mut r);
             let floor = r.max_rect().bottom() - 24.0;

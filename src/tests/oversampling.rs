@@ -36,7 +36,7 @@ fn block_vs_sample_match() {
         expected.push(out);
     }
 
-    // Alternate full SIMD blocks and scalar-only host calls without resetting the state.
+    // Alternate full SIMD blocks and scalar-only host calls without resetting the state!
     let mut blocked = Engine::new(RATE);
     blocked.analyze = false;
     let mut actual = Vec::new();

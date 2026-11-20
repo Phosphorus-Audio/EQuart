@@ -16,7 +16,7 @@ pub use samples::{ChannelSamples, ChannelSamplesIter, SamplesIter};
 /// TODO: This lifetime makes zero sense because you're going to need unsafe lifetime casts to use
 ///       this either way. Maybe just get rid of it in favor for raw pointers.
 #[derive(Default)]
-pub struct Buffer<'a> {
+pub struct Buffer<'a, T = f32> {
     /// The number of samples contained within `output_slices`. This needs to be stored separately
     /// to be able to handle 0 channel IO for MIDI-only plugins.
     num_samples: usize,
@@ -28,10 +28,10 @@ pub struct Buffer<'a> {
     /// because this `Buffers` either cannot have the same lifetime as the separately stored output
     /// buffers, and it also cannot be stored in a field next to it because that would mean
     /// containing mutable references to data stored in a mutex.
-    output_slices: Vec<&'a mut [f32]>,
+    output_slices: Vec<&'a mut [T]>,
 }
 
-impl<'a> Buffer<'a> {
+impl<'a, T> Buffer<'a, T> {
     /// Returns the number of samples per channel in this buffer.
     #[inline]
     pub fn samples(&self) -> usize {
@@ -52,17 +52,47 @@ impl<'a> Buffer<'a> {
 
     /// Obtain the raw audio buffers.
     #[inline]
-    pub fn as_slice(&mut self) -> &mut [&'a mut [f32]] {
+    pub fn as_slice(&mut self) -> &mut [&'a mut [T]] {
         &mut self.output_slices
     }
 
     /// The same as [`as_slice()`][Self::as_slice()], but for a non-mutable reference. This is
     /// usually not needed.
     #[inline]
-    pub fn as_slice_immutable(&self) -> &[&'a mut [f32]] {
+    pub fn as_slice_immutable(&self) -> &[&'a mut [T]] {
         &self.output_slices
     }
 
+    /// Set the slices in the raw output slice vector. This vector needs to be resized to match the
+    /// number of output channels during the plugin's initialization. Then during audio processing,
+    /// these slices should be updated to point to the plugin's audio buffers. The `num_samples`
+    /// argument should match the length of the inner slices.
+    ///
+    /// # Safety
+    ///
+    /// The stored slices must point to live data when this object is passed to the plugins' process
+    /// function. The rest of this object also assumes all channel lengths are equal. Panics will
+    /// likely occur if this is not the case.
+    ///
+    /// written by gpt, idk
+    pub unsafe fn set_slices(
+        &mut self,
+        num_samples: usize,
+        update: impl FnOnce(&mut Vec<&'a mut [T]>),
+    ) {
+        self.num_samples = num_samples;
+        update(&mut self.output_slices);
+
+        #[cfg(debug_assertions)]
+        for slice in &self.output_slices {
+            use crate::nice_debug_assert_eq;
+
+            nice_debug_assert_eq!(slice.len(), num_samples);
+        }
+    }
+}
+
+impl<'a> Buffer<'a> {
     /// Iterate over the samples, returning a channel iterator for each sample.
     #[inline]
     pub fn iter_samples<'slice>(&'slice mut self) -> SamplesIter<'slice, 'a> {
@@ -105,32 +135,6 @@ impl<'a> Buffer<'a> {
             max_block_size,
             current_block_start: 0,
             _marker: PhantomData,
-        }
-    }
-
-    /// Set the slices in the raw output slice vector. This vector needs to be resized to match the
-    /// number of output channels during the plugin's initialization. Then during audio processing,
-    /// these slices should be updated to point to the plugin's audio buffers. The `num_samples`
-    /// argument should match the length of the inner slices.
-    ///
-    /// # Safety
-    ///
-    /// The stored slices must point to live data when this object is passed to the plugins' process
-    /// function. The rest of this object also assumes all channel lengths are equal. Panics will
-    /// likely occur if this is not the case.
-    pub unsafe fn set_slices(
-        &mut self,
-        num_samples: usize,
-        update: impl FnOnce(&mut Vec<&'a mut [f32]>),
-    ) {
-        self.num_samples = num_samples;
-        update(&mut self.output_slices);
-
-        #[cfg(debug_assertions)]
-        for slice in &self.output_slices {
-            use crate::nice_debug_assert_eq;
-
-            nice_debug_assert_eq!(slice.len(), num_samples);
         }
     }
 }

@@ -243,6 +243,30 @@ pub struct Coefficients<T = f32> {
 }
 
 impl<T: Sample> Coefficients<T> {
+    pub(crate) fn from_coefficients<S: Sample>(coeff: Coefficients<S>) -> Self {
+        Self {
+            a1: T::value(coeff.a1.double()),
+            a2: T::value(coeff.a2.double()),
+            a3: T::value(coeff.a3.double()),
+            g: T::value(coeff.g.double()),
+            k: T::value(coeff.k.double()),
+            mix: crate::precision::convert(coeff.mix),
+        }
+    }
+
+    /// Blend the discrete SVF state matrices, which are non-expansive for positive damping.
+    #[inline]
+    pub(crate) fn interpolate(self, next: Self, fraction: T) -> Self {
+        let lerp = |a, b| a + fraction * (b - a);
+        Self {
+            a1: lerp(self.a1, next.a1),
+            a2: lerp(self.a2, next.a2),
+            a3: lerp(self.a3, next.a3),
+            mix: std::array::from_fn(|i| lerp(self.mix[i], next.mix[i])),
+            ..next
+        }
+    }
+
     pub fn identity() -> Self {
         Self::new(T::one(), T::one(), [T::one(), T::zero(), T::zero()])
     }
