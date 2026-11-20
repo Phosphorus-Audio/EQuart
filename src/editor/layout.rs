@@ -11,13 +11,16 @@ impl Layout {
     pub(crate) const SPECTRUM: [f32; 4] =
         [0.0, 0.0, CANVAS_W - Self::METER_W, CANVAS_H - Self::FOOTER];
 
-    /// spectrum rect without meter and footer
-    pub(crate) fn plot_outer(canvas: Rect) -> Rect {
+    /// spectrum rect without the footer and optional meter
+    pub(crate) fn plot_outer(canvas: Rect, meter_visible: bool) -> Rect {
+        let meter_width = if meter_visible { Self::METER_W } else { 0.0 };
+
         Rect::from_min_max(
             canvas.min + Vec2::new(Self::SPECTRUM[0], Self::SPECTRUM[1]),
-            Pos2::new(canvas.max.x - Self::METER_W, canvas.max.y - Self::FOOTER),
+            Pos2::new(canvas.max.x - meter_width, canvas.max.y - Self::FOOTER),
         )
     }
+
     pub(crate) const PANEL_W: f32 = 468.0;
     pub(crate) const PANEL_H: f32 = 124.0;
     /// gap between panel bottom and spectrum bottom

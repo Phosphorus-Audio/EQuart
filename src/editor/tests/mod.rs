@@ -158,7 +158,7 @@ fn editor() -> (egui::Context, EquartEditor) {
 }
 
 fn axis_outer() -> Rect {
-    Layout::plot_outer(Rect::from_min_size(Pos2::ZERO, CANVAS))
+    Layout::plot_outer(Rect::from_min_size(Pos2::ZERO, CANVAS), true)
 }
 
 fn axis_plot() -> spectrum::Plot {

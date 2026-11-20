@@ -88,6 +88,9 @@ pub struct EquartParams {
 
     #[persist = "meter_fade"]
     pub meter_fade: AtomicBool,
+
+    #[persist = "meter_visible"]
+    pub meter_visible: AtomicBool,
 }
 
 impl Default for EquartParams {
@@ -132,6 +135,7 @@ impl Default for EquartParams {
             phase_curve: AtomicBool::new(false),
             phase_unwrapped: AtomicBool::new(false),
             meter_fade: AtomicBool::new(true),
+            meter_visible: AtomicBool::new(true),
         }
     }
 }

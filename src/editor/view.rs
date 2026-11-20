@@ -78,14 +78,17 @@ impl EquartEditor {
         }
         self.spectrum(ui, canvas, values.sample_rate, snapshot.frame());
         self.spectrum_snapshot = snapshot;
-        // draw meter before bars
-        spectrum::draw_level_meter(
-            &p,
-            canvas,
-            &values,
-            self.spectrum_range(),
-            self.meter_fade(),
-        );
+
+        // keep the meter under the header and footer
+        if self.meter_visible() {
+            spectrum::draw_level_meter(
+                &p,
+                canvas,
+                &values,
+                self.spectrum_range(),
+                self.meter_fade(),
+            );
+        }
 
         // top header bar
         let header = Rect::from_min_max(at(0.0, 0.0), at(canvas.width(), Layout::HEADER));

@@ -17,7 +17,9 @@ const MENU_KNOB_LABEL_GAP: f32 = knob::LABEL_GAP + 12.0;
 /// extra top clip room for raised knob labels
 const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 420.0;
-const MENU_CARD_H: f32 = 406.0;
+const MENU_CARD_H: f32 = 372.0;
+const LAYOUT_CARD_W: f32 = 220.0;
+const LAYOUT_CARD_H: f32 = 184.0;
 const MENU_CARD_MARGIN: f32 = 12.0;
 const MENU_CARD_GAP: f32 = 14.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -34,13 +36,13 @@ impl EquartEditor {
 
     /// true if any footer popup is open (so plot won't treat clicks as blank)
     pub(super) fn footer_menu_is_up(&self) -> bool {
-        self.settings.is_up() || self.scale.is_up()
+        self.settings.is_up() || self.scale.is_up() || self.layout.is_up()
     }
 
-    /// bottom bar with icons and sample rate
+    /// bottom bar with icons
     pub(super) fn footer(&mut self, ui: &mut egui::Ui, rect: Rect, values: &MeterReadings) {
         let at = |x: f32, y: f32| rect.min + Vec2::new(x, y);
-        let p = ui.painter_at(rect);
+
         let accent = self.accent();
 
         let Some(gui) = &self.gui else { return };
@@ -134,14 +136,106 @@ impl EquartEditor {
         }
         self.settings = card_life;
 
-        // sample rate readout on right
-        p.text(
-            at(rect.width() - 14.0, rect.height() * 0.5),
-            egui::Align2::RIGHT_CENTER,
-            format!("{:.1} kHz", values.sample_rate / 1_000.0),
-            FontId::monospace(9.5),
-            Color32::from_gray(132),
+        let layout = icon_button(
+            ui,
+            ("footer-layout", 0),
+            row(rect.width() - 14.0 - FOOTER_GLYPH * 0.5),
+            icons::Glyph::Layout,
+            self.layout.is_up(),
+            accent,
+        )
+        .on_hover_text("Layout");
+
+        let mut life = self.layout;
+
+        if layout.clicked() {
+            if life.is_up() {
+                life.release(now);
+            } else {
+                life.open(now);
+            }
+        }
+
+        let group = egui::Id::unique("equart-layout-dropdowns");
+        let dismissed = Self::animated_card(
+            settings_card(&layout)
+                .align(egui::emath::RectAlign::TOP_END)
+                .width(LAYOUT_CARD_W),
+            &mut life,
+            now,
+            Some(layout.rect.right_top()),
+            |ui, progress, flash, fall| {
+                self.layout_menu(ui, group, progress, flash, fall);
+                false
+            },
         );
+
+        if dismissed && !layout.clicked() {
+            life.release(now);
+        }
+
+        if !life.is_shown() {
+            ui.ctx().data_mut(|d| d.remove::<u32>(group.with("open")));
+        }
+
+        self.layout = life;
+    }
+
+    fn layout_menu(
+        &self,
+        ui: &mut egui::Ui,
+        group: egui::Id,
+        progress: f32,
+        flash: f32,
+        fall: Option<Fall>,
+    ) {
+        let accent = self.accent();
+        let card = Rect::from_min_size(ui.cursor().min, Vec2::new(LAYOUT_CARD_W, LAYOUT_CARD_H));
+
+        menu::LabelFlash::begin(ui, card, flash);
+        ui.allocate_rect(card, Sense::hover());
+        card_plate(ui, card, progress.clamp(0.0, 1.0), accent);
+
+        let mut content =
+            ui.new_child(egui::UiBuilder::new().max_rect(card.shrink(MENU_CARD_MARGIN)));
+        menu::body(&mut content);
+        menu::section(&mut content, "LAYOUT");
+
+        let visible = self.params.meter_visible.load(Ordering::Relaxed);
+
+        if menu::switch(
+            &mut content,
+            group.with("meter-visible"),
+            "Show meter",
+            visible,
+            accent,
+        ) {
+            self.params.meter_visible.store(!visible, Ordering::Relaxed);
+            ui.ctx().request_repaint();
+        }
+
+        let fade = self.meter_fade();
+
+        if menu::switch(
+            &mut content,
+            group.with("meter-fade"),
+            "Meter fade",
+            fade,
+            accent,
+        ) {
+            self.params.meter_fade.store(!fade, Ordering::Relaxed);
+            ui.ctx().request_repaint();
+        }
+
+        let mut dropdowns = menu::Dropdown::new(ui.ctx(), group);
+        self.phase_rows(&mut content, &mut dropdowns, group);
+
+        if fall.is_none()
+            && let Some((key, index)) = dropdowns.finish(ui, card, accent)
+        {
+            self.apply_analysis_choice(key, index);
+            ui.ctx().request_repaint();
+        }
     }
 
     /// ui scale popup
@@ -202,10 +296,6 @@ impl EquartEditor {
             menu::section(&mut r, "LEVEL");
             self.level_controls(&mut r);
             self.level_readout(&mut r, values);
-            let fade = self.meter_fade();
-            if menu::switch(&mut r, group.with("meter-fade"), "Meter fade", fade, accent) {
-                self.params.meter_fade.store(!fade, Ordering::Relaxed);
-            }
 
             menu::divider(&mut r);
             dropdowns.new_group();
@@ -230,8 +320,13 @@ impl EquartEditor {
 
             let double = self.params.precision.value() == crate::precision::Precision::Double;
 
-            if menu::switch(&mut r, group.with("dsp-precision"), "64-bit DSP", double, accent)
-                && let Some(gui) = &self.gui
+            if menu::switch(
+                &mut r,
+                group.with("dsp-precision"),
+                "64-bit DSP",
+                double,
+                accent,
+            ) && let Some(gui) = &self.gui
             {
                 let precision = if double {
                     crate::precision::Precision::Single
@@ -244,9 +339,6 @@ impl EquartEditor {
             if menu::row(&mut r, "Flat all", None, false, accent) {
                 self.flatten_all();
             }
-
-            menu::divider(&mut r);
-            self.phase_rows(&mut r, &mut dropdowns, group);
 
             // push version note to bottom
             menu::divider(&mut r);

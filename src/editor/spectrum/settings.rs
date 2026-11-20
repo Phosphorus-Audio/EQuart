@@ -22,6 +22,10 @@ impl EquartEditor {
         self.params.meter_fade.load(Ordering::Relaxed)
     }
 
+    pub(in crate::editor) fn meter_visible(&self) -> bool {
+        self.params.meter_visible.load(Ordering::Relaxed)
+    }
+
     /// analyzer resolution index
     pub(in crate::editor) fn resolution(&self) -> u32 {
         self.params.analyzer_index(AnalyzerOption::Resolution)

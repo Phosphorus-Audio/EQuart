@@ -80,7 +80,7 @@ impl EquartEditor {
         rate: f32,
         spectrum: &SpectrumFrame,
     ) {
-        let outer = Layout::plot_outer(canvas);
+        let outer = Layout::plot_outer(canvas, self.meter_visible());
         let p = ui.painter_at(outer);
 
         let plot = Plot::with_ranges(outer, rate, self.axis_range(), self.spectrum_range());

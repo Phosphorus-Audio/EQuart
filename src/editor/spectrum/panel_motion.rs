@@ -67,7 +67,7 @@ impl EquartEditor {
             return canvas.center().x;
         }
 
-        let outer = Layout::plot_outer(canvas);
+        let outer = Layout::plot_outer(canvas, self.meter_visible());
         let plot = Plot::new(outer, self.telemetry.sample_rate());
         plot.x(control.frequency)
     }

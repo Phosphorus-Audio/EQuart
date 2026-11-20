@@ -15,10 +15,11 @@ pub(crate) enum Glyph {
     ModifierMenu,
     ToRegion,
     ToBand,
+    Layout,
 }
 
 impl Glyph {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Bypass,
         Self::Scale,
         Self::Options,
@@ -28,6 +29,7 @@ impl Glyph {
         Self::ModifierMenu,
         Self::ToRegion,
         Self::ToBand,
+        Self::Layout,
     ];
 
     fn name(self) -> &'static str {
@@ -41,6 +43,7 @@ impl Glyph {
             Self::ModifierMenu => "equart-icon-modifier-menu",
             Self::ToRegion => "equart-icon-to-region",
             Self::ToBand => "equart-icon-to-band",
+            Self::Layout => "equart-icon-layout",
         }
     }
 
@@ -57,6 +60,7 @@ impl Glyph {
                 include_bytes!("../../assets/icons/align-center-horizontal-simple-bold.alpha")
             }
             Self::ToBand => include_bytes!("../../assets/icons/circle-bold.alpha"),
+            Self::Layout => include_bytes!("../../assets/icons/layout-bold.alpha"),
         }
     }
 }

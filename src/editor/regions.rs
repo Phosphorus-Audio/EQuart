@@ -337,8 +337,10 @@ impl EquartEditor {
         if !control.enabled {
             return None;
         }
+
         let [low, high] = control.bounds();
-        let plot = Plot::new(Layout::plot_outer(canvas), rate);
+
+        let plot = Plot::new(Layout::plot_outer(canvas, self.meter_visible()), rate);
         Some(Layout::panel_with_width(
             canvas,
             plot.x((low * high).sqrt()),

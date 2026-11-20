@@ -59,7 +59,7 @@ pub(in crate::editor) fn draw_level_meter(
     fade_foot: bool,
 ) {
     let plot = Plot::with_ranges(
-        Layout::plot_outer(canvas),
+        Layout::plot_outer(canvas, true),
         values.sample_rate,
         DEFAULT_AXIS_RANGE as f32,
         spectrum_range,

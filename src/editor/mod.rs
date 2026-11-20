@@ -169,6 +169,7 @@ pub struct EquartEditor {
     notice: Option<Notice>,
     settings: controls::CardLife,
     scale: controls::CardLife,
+    layout: controls::CardLife,
     band_dropdowns: [controls::CardLife; 3],
     band_dropdown_owner: Option<usize>,
     modifier_picker: Option<modifiers::Picker>,
@@ -206,6 +207,7 @@ impl EquartEditor {
             notice: None,
             settings: controls::CardLife::SHUT,
             scale: controls::CardLife::SHUT,
+            layout: controls::CardLife::SHUT,
             band_dropdowns: [controls::CardLife::SHUT; 3],
             band_dropdown_owner: None,
             modifier_picker: None,
@@ -278,6 +280,7 @@ impl NiceEguiApp for EquartEditor {
         self.telemetry.set_delta_region(self.held_delta.filter(|&i| self.selected_region == Some(i)));
         // full framerate when animating, 60fps when idle
         let animated = self.settings.is_shown()
+            || self.layout.is_shown()
             || self.scale.is_shown()
             || self.dial.is_shown()
             || self.drag.is_some()
