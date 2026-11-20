@@ -1,10 +1,12 @@
 use crate::analyzer::Analyzer;
-use crate::band::{BAND_COUNT, Band, BandControl, COEFF_FRAMES};
+use crate::audio_path::{AudioPath, OutputMix};
+use crate::band::{BAND_COUNT, BandControl, COEFF_FRAMES};
 use crate::dsp;
 use crate::dynamics::{Dynamics, Sidechain};
-use crate::oversample::{DownsamplePath, HIGH, Oversampling, Resampler};
+use crate::oversample::Oversampling;
 use crate::pitch::PitchRack;
-use crate::region::{REGION_COUNT, Region, RegionControl};
+use crate::precision::Precision;
+use crate::region::{REGION_COUNT, RegionControl};
 
 pub struct Controls {
     pub bands: [BandControl; BAND_COUNT],
@@ -13,13 +15,15 @@ pub struct Controls {
     pub mix: f32,
     pub bypass: bool,
     pub oversampling: Oversampling,
+    pub precision: Precision,
 }
 
 pub struct Engine {
     /// Sample rate the host runs at.
     pub rate: f32,
-    bands: [Band; BAND_COUNT],
-    regions: [Region; REGION_COUNT],
+    single: Box<AudioPath<f32>>,
+    double: Box<AudioPath<f64>>,
+    precision: Precision,
     /// Two detector envelopes per band, and the dB offset they last produced.
     /// The detectors watch the dry input; the offsets are folded into the
     /// coefficient targets once per COEFF_FRAMES.
@@ -33,10 +37,6 @@ pub struct Engine {
     pub(crate) delta_request: Option<usize>,
     delta_region: Option<usize>,
     delta_mix: f32,
-    /// Smoothed linear output gain, and the value it is heading for.
-    output_gain: f32,
-    target_gain: f32,
-    target_db: f32,
     mix: f32,
     initialize_mix: bool,
     /// Frames since the last coefficient update.
@@ -53,7 +53,6 @@ pub struct Engine {
     pub output_analyzer: Analyzer,
     /// Set when a non-finite sample is seen, so the host can be told.
     pub fault: Option<&'static str>,
-    resampler: Resampler,
     /// Debug builds only: synthesise input so the analyser can be inspected
     /// without a host. Enabled by touching `target/test-signal`. Tests feed
     /// their own signals, so they never take this path.
@@ -65,8 +64,9 @@ impl Engine {
     pub fn new(rate: f32) -> Self {
         Self {
             rate,
-            bands: std::array::from_fn(|_| Band::new()),
-            regions: std::array::from_fn(|_| Region::new()),
+            single: Box::new(AudioPath::new()),
+            double: Box::new(AudioPath::new()),
+            precision: Precision::Single,
             dynamics: std::array::from_fn(|_| Dynamics::new(rate)),
             dynamic_gains: [0.0; BAND_COUNT],
             detectors_live: false,
@@ -77,9 +77,6 @@ impl Engine {
             delta_request: None,
             delta_region: None,
             delta_mix: 0.0,
-            output_gain: 1.0,
-            target_gain: 1.0,
-            target_db: 0.0,
             mix: 1.0,
             initialize_mix: true,
             frame: 0,
@@ -94,7 +91,6 @@ impl Engine {
             analyzer: Analyzer::new(rate),
             output_analyzer: Analyzer::new(rate),
             fault: None,
-            resampler: Resampler::default(),
             #[cfg(all(debug_assertions, not(test)))]
             test_signal: std::path::Path::new(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -105,12 +101,8 @@ impl Engine {
     }
 
     pub fn reset(&mut self) {
-        for band in &mut self.bands {
-            band.reset();
-        }
-        for region in &mut self.regions {
-            region.reset();
-        }
+        self.single.reset();
+        self.double.reset();
         for dynamic in &mut self.dynamics {
             dynamic.reset();
         }
@@ -125,7 +117,6 @@ impl Engine {
         self.detector_frames = 0;
         self.analyzer.reset();
         self.output_analyzer.reset();
-        self.resampler.reset();
         self.frame = 0;
         self.initialize_mix = true;
         self.fault = None;
@@ -154,9 +145,8 @@ impl Engine {
         self.step = COEFF_FRAMES as f32 / (0.008 * rate);
         self.decay = (-(COEFF_FRAMES as f32) / (0.35 * rate)).exp();
 
-        for band in &mut self.bands {
-            band.invalidate();
-        }
+        self.single.invalidate_bands();
+        self.double.invalidate_bands();
         for dynamic in &mut self.dynamics {
             dynamic.retune(rate);
         }
@@ -167,16 +157,34 @@ impl Engine {
 
     /// Latency of the oversampled path, in frames of the host's rate.
     pub fn latency(&self) -> u32 {
-        self.resampler.latency()
+        match self.precision {
+            Precision::Single => self.single.resampler.latency(),
+            Precision::Double => self.double.resampler.latency(),
+        }
     }
 
     pub(crate) fn set_oversampling(&mut self, mode: Oversampling) {
-        if self.resampler.set_mode(mode) {
-            for band in &mut self.bands {
-                band.invalidate();
-            }
+        let changed = match self.precision {
+            Precision::Single => self.single.set_oversampling(mode),
+            Precision::Double => self.double.set_oversampling(mode),
+        };
+
+        if changed {
             self.frame = 0;
         }
+    }
+
+    fn set_precision(&mut self, precision: Precision) {
+        if self.precision == precision {
+            return;
+        }
+
+        match precision {
+            Precision::Single => self.single.transfer_from(&self.double),
+            Precision::Double => self.double.transfer_from(&self.single),
+        }
+
+        self.precision = precision;
     }
 
     pub fn harmonic_hz(&self, index: usize) -> Option<f32> {
@@ -193,10 +201,14 @@ impl Engine {
     }
 
     pub fn pitch_levels(&self) -> impl Iterator<Item = (Option<f32>, Option<f32>)> + '_ {
-        self.bands.iter().enumerate().map(|(i, band)| {
+        (0..BAND_COUNT).map(|i| {
+            let frequency = match self.precision {
+                Precision::Single => self.single.bands[i].frequency,
+                Precision::Double => self.double.bands[i].frequency,
+            };
             (
                 self.pitch.detected_band(i),
-                self.pitch.band_target(i).map(|_| band.frequency),
+                self.pitch.band_target(i).map(|_| frequency),
             )
         })
     }
@@ -266,8 +278,13 @@ impl Engine {
                 .bands
                 .iter()
                 .any(|band| band.enabled && band.kind.has_gain() && band.dynamics.enabled);
-        let resonance_live = !controls.bypass && controls.regions.iter().any(|r|
-            r.enabled && !r.bypass && r.resonance.enabled && r.resonance.depth > 0.0);
+
+        let resonance_live = !controls.bypass
+            && controls
+                .regions
+                .iter()
+                .any(|r| r.enabled && !r.bypass && r.resonance.enabled && r.resonance.depth > 0.0);
+
         if self.resonance_live && !resonance_live {
             self.resonance.reset();
         }
@@ -279,24 +296,19 @@ impl Engine {
             controls.regions.map(RegionControl::harmonic_detection),
         );
         let analyze = self.analyze;
-        let oversampling = controls.oversampling;
-        let factor = oversampling.factor();
-        self.set_oversampling(oversampling);
 
-        // Wide buffers, written by the interpolator before the biquads see them.
-        let mut wide_left = [0.0_f32; HIGH];
-        let mut wide_right = [0.0_f32; HIGH];
-        let mut dry_left = [0.0; COEFF_FRAMES];
-        let mut dry_right = [0.0; COEFF_FRAMES];
-        let mut delta_wide_l = [0.0; HIGH];
-        let mut delta_wide_r = [0.0; HIGH];
-        let mut delta_left = [0.0; COEFF_FRAMES];
-        let mut delta_right = [0.0; COEFF_FRAMES];
+        self.set_precision(controls.precision);
+        self.set_oversampling(controls.oversampling);
         let requested = self.delta_request.filter(|&index| {
-            !controls.bypass && controls.regions.get(index)
-                .is_some_and(|r| r.enabled && !r.bypass && r.resonance.enabled)
+            !controls.bypass
+                && controls
+                    .regions
+                    .get(index)
+                    .is_some_and(|r| r.enabled && !r.bypass && r.resonance.enabled)
         });
+
         let fade_step = 1.0 / (0.005 * self.rate);
+
         if controls.bypass {
             self.delta_region = None;
             self.delta_mix = 0.0;
@@ -315,8 +327,10 @@ impl Engine {
             }
             self.pitch.process(left, right);
             if resonance_live {
-                self.resonance.push(left, right, self.rate, &controls.regions);
+                self.resonance
+                    .push(left, right, self.rate, &controls.regions);
             }
+
             if detects || self.detectors_live {
                 let sidechain = sidechain.map(|[l, r]| [&l[offset..end], &r[offset..end]]);
                 self.detect(left, right, sidechain, controls);
@@ -330,79 +344,60 @@ impl Engine {
 
             let input_peak = dsp::peak(left, right);
 
-            let wet = if controls.bypass { 0.0 } else { self.mix };
-            let dry_l = &mut dry_left[..len];
-            let dry_r = &mut dry_right[..len];
-            if oversampling != Oversampling::Off || wet < 1.0 {
-                self.resampler.delayed_dry(left, right, dry_l, dry_r);
-            }
-
             if self.delta_mix == 0.0 && self.delta_region != requested {
                 self.delta_region = requested;
                 if requested.is_some() {
-                    self.resampler.reset_delta();
+                    match self.precision {
+                        Precision::Single => self.single.resampler.reset_delta(),
+                        Precision::Double => self.double.resampler.reset_delta(),
+                    }
                 }
             }
-            let monitor = self.delta_region;
-            // Keep filter and FIR history continuous across dry/wet transitions.
-            if oversampling == Oversampling::Off {
-                let tap = monitor.map(|i| (i, &mut delta_left[..len], &mut delta_right[..len]));
-                self.process_filters(left, right, &controls.bands, tap);
-            } else {
-                let wide = len * factor;
-                self.resampler
-                    .upsample(left, right, &mut wide_left, &mut wide_right);
-                let tap = monitor.map(|i| (i, &mut delta_wide_l[..wide], &mut delta_wide_r[..wide]));
-                self.process_filters(
-                    &mut wide_left[..wide],
-                    &mut wide_right[..wide],
-                    &controls.bands,
-                    tap,
-                );
-                self.resampler.downsample(
-                    DownsamplePath::Main,
-                    &wide_left[..wide],
-                    &wide_right[..wide],
-                    left,
-                    right,
-                    len,
-                );
-                if monitor.is_some() {
-                    self.resampler.downsample(
-                        DownsamplePath::Delta,
-                        &delta_wide_l[..wide],
-                        &delta_wide_r[..wide],
-                        &mut delta_left[..len],
-                        &mut delta_right[..len],
-                        len,
-                    );
-                }
-            }
-
-            if wet == 0.0 {
-                left.copy_from_slice(dry_l);
-                right.copy_from_slice(dry_r);
-            } else {
-                if self.output_gain != 1.0 {
-                    dsp::scale(left, self.output_gain);
-                    dsp::scale(right, self.output_gain);
-                }
-                if wet < 1.0 {
-                    dsp::blend(dry_l, left, wet);
-                    dsp::blend(dry_r, right, wet);
-                }
-            }
-
-            if monitor.is_some() {
-                let step = if requested == monitor { fade_step } else { -fade_step };
-                for i in 0..len {
-                    self.delta_mix = (self.delta_mix + step).clamp(0.0, 1.0);
-                    if self.delta_mix == 1.0 {
-                        left[i] = delta_left[i];
-                        right[i] = delta_right[i];
+            let output = OutputMix {
+                wet: if controls.bypass { 0.0 } else { self.mix },
+                delta: self.delta_region.map(|index| {
+                    let step = if requested == self.delta_region {
+                        fade_step
                     } else {
-                        left[i] += self.delta_mix * (delta_left[i] - left[i]);
-                        right[i] += self.delta_mix * (delta_right[i] - right[i]);
+                        -fade_step
+                    };
+                    (index, step)
+                }),
+            };
+
+            match self.precision {
+                Precision::Single => {
+                    self.single
+                        .process(left, right, &controls.bands, output, &mut self.delta_mix)
+                }
+                Precision::Double => {
+                    let mut double_left = [0.0_f64; COEFF_FRAMES];
+                    let mut double_right = [0.0_f64; COEFF_FRAMES];
+                    let double_left = &mut double_left[..len];
+                    let double_right = &mut double_right[..len];
+
+                    for (wide, sample) in double_left
+                        .iter_mut()
+                        .chain(double_right.iter_mut())
+                        .zip(left.iter().chain(right.iter()))
+                    {
+                        *wide = f64::from(*sample);
+                    }
+
+                    self.double.process(
+                        double_left,
+                        double_right,
+                        &controls.bands,
+                        output,
+                        &mut self.delta_mix,
+                    );
+
+                    for (sample, wide) in left
+                        .iter_mut()
+                        .chain(right.iter_mut())
+                        .zip(double_left.iter().chain(double_right.iter()))
+                    {
+                        *sample = *wide as f32;
                     }
                 }
             }
@@ -433,31 +428,6 @@ impl Engine {
             }
 
             offset = end;
-        }
-    }
-
-    fn process_filters(
-        &mut self,
-        left: &mut [f32],
-        right: &mut [f32],
-        controls: &[BandControl; BAND_COUNT],
-        tap: Option<(usize, &mut [f32], &mut [f32])>,
-    ) {
-        for (band, control) in self.bands.iter_mut().zip(controls) {
-            band.process(left, right, control.channel);
-        }
-        let remaining = if let Some((index, delta_l, delta_r)) = tap {
-            let (before, from_target) = self.regions.split_at_mut(index);
-            for region in before {
-                region.process(left, right);
-            }
-            from_target[0].process_with_delta(left, right, delta_l, delta_r);
-            &mut from_target[1..]
-        } else {
-            &mut self.regions[..]
-        };
-        for region in remaining {
-            region.process(left, right);
         }
     }
 
@@ -497,9 +467,14 @@ impl Engine {
     }
 
     fn refresh(&mut self, controls: &Controls) {
-        let rate = self.rate * self.resampler.mode().factor() as f32;
+        let mode = match self.precision {
+            Precision::Single => self.single.resampler.mode(),
+            Precision::Double => self.double.resampler.mode(),
+        };
 
-        for (i, (band, &control)) in self.bands.iter_mut().zip(&controls.bands).enumerate() {
+        let rate = self.rate * mode.factor() as f32;
+
+        for (i, &control) in controls.bands.iter().enumerate() {
             let mut control = control;
             if let Some(hz) = self
                 .pitch
@@ -510,27 +485,53 @@ impl Engine {
             if control.kind.has_gain() {
                 control.gain += self.dynamic_gains[i];
             }
-            band.update(control, rate, self.alpha, self.step);
+            match self.precision {
+                Precision::Single => {
+                    self.single.bands[i].update(control, rate, self.alpha, self.step)
+                }
+                Precision::Double => {
+                    self.double.bands[i].update(control, rate, self.alpha, self.step)
+                }
+            }
         }
-        for (index, ((region, &control), reductions)) in self
+        for (index, (&control, reductions)) in controls
             .regions
-            .iter_mut()
-            .zip(&controls.regions)
+            .iter()
             .zip(self.resonance.reductions())
             .enumerate()
         {
             let harmonic_hz =
-                self.pitch.refresh_harmonic(index, control.harmonic_detection(), self.rate);
-            region.update(control, rate, harmonic_hz, self.alpha, self.step, reductions);
+                self.pitch
+                    .refresh_harmonic(index, control.harmonic_detection(), self.rate);
+
+            match self.precision {
+                Precision::Single => self.single.regions[index].update(
+                    control,
+                    rate,
+                    harmonic_hz,
+                    self.alpha,
+                    self.step,
+                    reductions,
+                ),
+                Precision::Double => self.double.regions[index].update(
+                    control,
+                    rate,
+                    harmonic_hz,
+                    self.alpha,
+                    self.step,
+                    reductions,
+                ),
+            }
         }
 
-        // `powf` only when the target actually moves, not once per block.
-        if controls.output_db != self.target_db {
-            self.target_db = controls.output_db;
-            self.target_gain = 10.0_f32.powf(self.target_db / 20.0);
+        match self.precision {
+            Precision::Single => self
+                .single
+                .refresh_output_gain(controls.output_db, self.alpha),
+            Precision::Double => self
+                .double
+                .refresh_output_gain(controls.output_db, self.alpha),
         }
-
-        self.output_gain += self.alpha * (self.target_gain - self.output_gain);
         if self.initialize_mix {
             self.mix = controls.mix;
             self.initialize_mix = false;

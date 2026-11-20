@@ -227,6 +227,20 @@ impl EquartEditor {
                 current,
                 accent,
             );
+
+            let double = self.params.precision.value() == crate::precision::Precision::Double;
+
+            if menu::switch(&mut r, group.with("dsp-precision"), "64-bit DSP", double, accent)
+                && let Some(gui) = &self.gui
+            {
+                let precision = if double {
+                    crate::precision::Precision::Single
+                } else {
+                    crate::precision::Precision::Double
+                };
+                self.set(&gui.param_setter(), &self.params.precision, precision);
+            }
+
             if menu::row(&mut r, "Flat all", None, false, accent) {
                 self.flatten_all();
             }

@@ -1,26 +1,43 @@
 //! Block SIMD kernel for static TPT SVF sections (unrolled affine recurrence, falls back to step() when moving)
 
 use crate::filter::Coefficients;
+use crate::precision::Sample;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Frames per SIMD block. Must match the lane count of the widest kernel.
 pub const BLOCK: usize = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct State {
-    pub ic1: f32,
-    pub ic2: f32,
+pub struct State<T = f32> {
+    pub ic1: T,
+    pub ic2: T,
+}
+
+impl<T: Sample> State<T> {
+    pub(crate) fn from_state<S: Sample>(state: State<S>) -> Self {
+        Self {
+            ic1: T::value(state.ic1.double()),
+            ic2: T::value(state.ic2.double()),
+        }
+    }
+
+    pub(crate) fn zero() -> Self {
+        Self {
+            ic1: T::zero(),
+            ic2: T::zero(),
+        }
+    }
 }
 
 /// One sample through one section.
 #[inline(always)]
-pub fn step(state: &mut State, c: &Coefficients, x: f32) -> f32 {
+pub fn step<T: Sample>(state: &mut State<T>, c: &Coefficients<T>, x: T) -> T {
     let v3 = x - state.ic2;
     let v1 = c.a1 * state.ic1 + c.a2 * v3;
     let v2 = state.ic2 + c.a2 * state.ic1 + c.a3 * v3;
 
-    state.ic1 = 2.0 * v1 - state.ic1;
-    state.ic2 = 2.0 * v2 - state.ic2;
+    state.ic1 = T::value(2.0) * v1 - state.ic1;
+    state.ic2 = T::value(2.0) * v2 - state.ic2;
 
     c.mix[0] * x + c.mix[1] * v1 + c.mix[2] * v2
 }
@@ -361,9 +378,10 @@ unsafe fn scale_avx2(buf: &mut [f32], gain: f32) {
     }
 }
 
-/// `out = dry + (wet - dry) * amount`, eight lanes at a time.
-pub fn blend(dry: &[f32], wet: &mut [f32], amount: f32) {
-    for (w, d) in wet.iter_mut().zip(dry) {
+/// `out = dry + (wet - dry) * amount`.
+pub fn blend<T: Sample>(dry: &[T], wet: &mut [T], amount: f32) {
+    let amount = T::value(f64::from(amount));
+    for (w, &d) in wet.iter_mut().zip(dry) {
         *w = d + (*w - d) * amount;
     }
 }

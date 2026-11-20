@@ -1,6 +1,73 @@
 use super::*;
 
 #[test]
+fn precision_switch_preserves_audio_history() {
+    use crate::oversample::Oversampling;
+    use crate::precision::Precision;
+
+    let mut bands = flat_bands();
+    bands[0] = band(330.0, 0.0, 0.707, FilterKind::Highpass);
+    bands[1] = band(1_400.0, 8.0, 3.0, FilterKind::Peak);
+    bands[1].channel = ChannelMode::Mid;
+
+    for mode in Oversampling::ALL {
+        let mut reference = controls(bands);
+        reference.oversampling = mode;
+        reference.precision = Precision::Double;
+        reference.mix = 0.7;
+        reference.output_db = 3.0;
+        reference.regions[0].enabled = true;
+        reference.regions[0].gain = -6.0;
+        reference.regions[0].resonance.enabled = true;
+
+        let mut switching = Controls { ..reference };
+
+        let mut engine = Engine::new(RATE);
+        let mut fixed = Engine::new(RATE);
+        engine.analyze = false;
+        fixed.analyze = false;
+        engine.set_oversampling(mode);
+        let latency = engine.latency();
+        let mut changed_samples = 0;
+        const FRAMES: usize = 127;
+        for block in 0..96 {
+            switching.precision = if block % 3 == 1 {
+                Precision::Single
+            } else {
+                Precision::Double
+            };
+            engine.delta_request = (32..64).contains(&block).then_some(0);
+            fixed.delta_request = engine.delta_request;
+            let phase = |i| (block * FRAMES + i) as f32 * std::f32::consts::TAU / RATE;
+            let mut left: [f32; FRAMES] = std::array::from_fn(|i| (phase(i) * 937.5).sin() * 0.3);
+            let mut right: [f32; FRAMES] = std::array::from_fn(|i| (phase(i) * 829.0).cos() * 0.2);
+            let mut expected_left = left;
+            let mut expected_right = right;
+            fixed.process_block(&mut expected_left, &mut expected_right, &reference);
+            nice_assert_no_alloc::assert_no_alloc(|| {
+                engine.process_block(&mut left, &mut right, &switching);
+            });
+            assert_eq!(engine.latency(), latency);
+            for (actual, expected) in left
+                .into_iter()
+                .chain(right)
+                .zip(expected_left.into_iter().chain(expected_right))
+            {
+                changed_samples += usize::from(actual != expected);
+                assert!(
+                    (actual - expected).abs() < 1e-4,
+                    "{mode:?}, block {block}: {actual} vs {expected}"
+                );
+            }
+        }
+        assert!(
+            changed_samples > 0,
+            "{mode:?}: switching should change the arithmetic"
+        );
+    }
+}
+
+#[test]
 fn bypass_is_transparent() {
     let mut bands = flat_bands();
     bands[2] = band(1_000.0, 12.0, 4.0, FilterKind::Peak);

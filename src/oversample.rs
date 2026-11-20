@@ -1,6 +1,7 @@
 //! 2x/4x linear-phase FIR oversampling for the EQ stage (stack-only, no alloc)
 
 use crate::band::COEFF_FRAMES;
+use crate::precision::{Sample, convert};
 use nice_plug::prelude::Enum;
 
 pub const TAPS: usize = 65;
@@ -52,17 +53,17 @@ impl Oversampling {
 }
 
 /// Kaiser-windowed half-band sinc (center=0.5, odd taps sum to 0.5)
-fn design() -> [f32; TAPS] {
-    const BETA: f32 = 8.6;
+fn design<T: Sample>() -> [T; TAPS] {
+    let beta = T::value(8.6);
 
-    let mut taps = [0.0; TAPS];
-    let mut odd_sum = 0.0;
+    let mut taps = [T::zero(); TAPS];
+    let mut odd_sum = T::zero();
 
     for (n, tap) in taps.iter_mut().enumerate() {
-        let t = n as f32 - DELAY as f32;
+        let t = T::value(n as f64) - T::value(DELAY as f64);
 
-        if t == 0.0 {
-            *tap = 0.5;
+        if t == T::zero() {
+            *tap = T::value(0.5);
             continue;
         }
 
@@ -71,17 +72,18 @@ fn design() -> [f32; TAPS] {
             continue;
         }
 
-        let x = t / DELAY as f32;
-        let window = bessel_i0(BETA * (1.0 - x * x).max(0.0).sqrt()) / bessel_i0(BETA);
-        let angle = std::f32::consts::FRAC_PI_2 * t;
-        let value = 0.5 * (angle.sin() / angle) * window;
+        let x = t / T::value(DELAY as f64);
+        let window = bessel_i0(beta * (T::one() - x * x).max(T::zero()).sqrt()) / bessel_i0(beta);
+        let angle = T::FRAC_PI_2() * t;
+        let value = T::value(0.5) * (angle.sin() / angle) * window;
 
         *tap = value;
         odd_sum += value;
     }
 
     // Half the DC gain sits on the centre tap, half on the odd taps.
-    let scale = 0.5 / odd_sum;
+    let scale = T::value(0.5) / odd_sum;
+
     for n in (1..TAPS).step_by(2) {
         taps[n] *= scale;
     }
@@ -89,13 +91,13 @@ fn design() -> [f32; TAPS] {
     taps
 }
 
-fn bessel_i0(x: f32) -> f32 {
-    let half = x * 0.5;
-    let mut term = 1.0;
-    let mut sum = 1.0;
+fn bessel_i0<T: Sample>(x: T) -> T {
+    let half = x * T::value(0.5);
+    let mut term = T::one();
+    let mut sum = T::one();
 
     for k in 1..32 {
-        let ratio = half / k as f32;
+        let ratio = half / T::value(k as f64);
         term *= ratio * ratio;
         sum += term;
     }
@@ -104,28 +106,28 @@ fn bessel_i0(x: f32) -> f32 {
 }
 
 /// taps laid out for forward dot product (even phase is just delay)
-struct Design {
-    center: f32,
-    odd: [f32; ODD],
-    down: [f32; TAPS],
+struct Design<T: Sample> {
+    center: T,
+    odd: [T; ODD],
+    down: [T; TAPS],
 }
 
-impl Design {
+impl<T: Sample> Design<T> {
     fn new() -> Self {
         let taps = design();
 
-        let mut odd = [0.0; ODD];
+        let mut odd = [T::zero(); ODD];
         for (i, tap) in odd.iter_mut().enumerate() {
             *tap = taps[2 * (ODD - 1 - i) + 1];
         }
 
-        let mut down = [0.0; TAPS];
+        let mut down = [T::zero(); TAPS];
         for (i, tap) in down.iter_mut().enumerate() {
             *tap = taps[TAPS - 1 - i];
         }
 
         Self {
-            center: 2.0 * taps[DELAY],
+            center: T::value(2.0) * taps[DELAY],
             odd,
             down,
         }
@@ -135,10 +137,10 @@ impl Design {
 /// Four accumulators, because a 65 tap sum would otherwise serialise on its own
 /// latency.
 #[inline]
-fn dot(taps: &[f32], window: &[f32]) -> f32 {
+fn dot<T: Sample>(taps: &[T], window: &[T]) -> T {
     debug_assert_eq!(taps.len(), window.len());
 
-    let mut acc = [0.0_f32; 4];
+    let mut acc = [T::zero(); 4];
     for (t, w) in taps.chunks_exact(4).zip(window.chunks_exact(4)) {
         acc[0] += t[0] * w[0];
         acc[1] += t[1] * w[1];
@@ -146,7 +148,7 @@ fn dot(taps: &[f32], window: &[f32]) -> f32 {
         acc[3] += t[3] * w[3];
     }
 
-    let mut tail = 0.0;
+    let mut tail = T::zero();
     for k in (taps.len() / 4) * 4..taps.len() {
         tail += taps[k] * window[k];
     }
@@ -155,24 +157,24 @@ fn dot(taps: &[f32], window: &[f32]) -> f32 {
 }
 
 /// Zero-stuff and lowpass: one input sample becomes two.
-struct Up2 {
-    history: [f32; UP_HISTORY],
-    padded: [f32; UP_PAD],
+struct Up2<T: Sample> {
+    history: [T; UP_HISTORY],
+    padded: [T; UP_PAD],
 }
 
-impl Up2 {
+impl<T: Sample> Up2<T> {
     fn new() -> Self {
         Self {
-            history: [0.0; UP_HISTORY],
-            padded: [0.0; UP_PAD],
+            history: [T::zero(); UP_HISTORY],
+            padded: [T::zero(); UP_PAD],
         }
     }
 
     fn reset(&mut self) {
-        self.history = [0.0; UP_HISTORY];
+        self.history = [T::zero(); UP_HISTORY];
     }
 
-    fn process(&mut self, design: &Design, input: &[f32], output: &mut [f32]) {
+    fn process(&mut self, design: &Design<T>, input: &[T], output: &mut [T]) {
         let n = input.len();
         self.padded[..UP_HISTORY].copy_from_slice(&self.history);
         self.padded[UP_HISTORY..UP_HISTORY + n].copy_from_slice(input);
@@ -184,13 +186,13 @@ impl Up2 {
             // delayed input sample, not a 33 tap dot product of mostly zeros.
             pair[0] = design.center * self.padded[base - EVEN_DELAY];
             // Zero stuffing halves the energy; the factor of two restores it.
-            pair[1] = 2.0 * dot(&design.odd, &self.padded[base + 1 - ODD..=base]);
+            pair[1] = T::value(2.0) * dot(&design.odd, &self.padded[base + 1 - ODD..=base]);
         }
 
         self.remember(input);
     }
 
-    fn remember(&mut self, input: &[f32]) {
+    fn remember(&mut self, input: &[T]) {
         let len = input.len();
         if len >= UP_HISTORY {
             self.history.copy_from_slice(&input[len - UP_HISTORY..]);
@@ -202,24 +204,24 @@ impl Up2 {
 }
 
 /// Lowpass and throw away every other sample.
-struct Down2 {
-    history: [f32; DOWN_HISTORY],
-    padded: [f32; DOWN_PAD],
+struct Down2<T: Sample> {
+    history: [T; DOWN_HISTORY],
+    padded: [T; DOWN_PAD],
 }
 
-impl Down2 {
+impl<T: Sample> Down2<T> {
     fn new() -> Self {
         Self {
-            history: [0.0; DOWN_HISTORY],
-            padded: [0.0; DOWN_PAD],
+            history: [T::zero(); DOWN_HISTORY],
+            padded: [T::zero(); DOWN_PAD],
         }
     }
 
     fn reset(&mut self) {
-        self.history = [0.0; DOWN_HISTORY];
+        self.history = [T::zero(); DOWN_HISTORY];
     }
 
-    fn process(&mut self, design: &Design, input: &[f32], output: &mut [f32]) {
+    fn process(&mut self, design: &Design<T>, input: &[T], output: &mut [T]) {
         let n = output.len();
         let wide = 2 * n;
 
@@ -247,13 +249,13 @@ pub(crate) enum DownsamplePath {
     Delta,
 }
 
-struct Chain {
-    up: [Up2; 2],
-    down: [Down2; 2],
-    delta: [Down2; 2],
+struct Chain<T: Sample> {
+    up: [Up2<T>; 2],
+    down: [Down2<T>; 2],
+    delta: [Down2<T>; 2],
 }
 
-impl Chain {
+impl<T: Sample> Chain<T> {
     fn new() -> Self {
         Self {
             up: std::array::from_fn(|_| Up2::new()),
@@ -272,29 +274,29 @@ impl Chain {
     }
 }
 
-pub struct Resampler {
-    design: Design,
-    chains: [Chain; 2],
+pub struct Resampler<T: Sample = f32> {
+    design: Design<T>,
+    chains: [Chain<T>; 2],
     /// Scratch between the two stages, per channel.
-    scratch: [[f32; HIGH]; 2],
+    scratch: [[T; HIGH]; 2],
     mode: Oversampling,
-    dry_history: [[f32; 2]; MAX_LATENCY],
+    dry_history: [[T; 2]; MAX_LATENCY],
     dry_position: usize,
 }
 
-impl Default for Resampler {
+impl<T: Sample> Default for Resampler<T> {
     fn default() -> Self {
         Self::new(Oversampling::Off)
     }
 }
 
-impl Resampler {
+impl<T: Sample> Resampler<T> {
     pub fn new(mode: Oversampling) -> Self {
         Self {
             design: Design::new(),
             chains: std::array::from_fn(|_| Chain::new()),
-            scratch: [[0.0; HIGH]; 2],
-            dry_history: [[0.0; 2]; MAX_LATENCY],
+            scratch: [[T::zero(); HIGH]; 2],
+            dry_history: [[T::zero(); 2]; MAX_LATENCY],
             dry_position: 0,
             mode,
         }
@@ -316,12 +318,33 @@ impl Resampler {
         self.mode
     }
 
+    pub(crate) fn transfer_from<S: Sample>(&mut self, source: &Resampler<S>) {
+        self.mode = source.mode;
+        self.dry_history = source.dry_history.map(convert);
+        self.dry_position = source.dry_position;
+
+        for (chain, previous) in self.chains.iter_mut().zip(&source.chains) {
+            for (stage, old) in chain.up.iter_mut().zip(&previous.up) {
+                stage.history = convert(old.history);
+            }
+
+            for (stage, old) in chain
+                .down
+                .iter_mut()
+                .chain(&mut chain.delta)
+                .zip(previous.down.iter().chain(&previous.delta))
+            {
+                stage.history = convert(old.history);
+            }
+        }
+    }
+
     pub fn reset(&mut self) {
         for chain in &mut self.chains {
             chain.reset();
         }
-        self.scratch = [[0.0; HIGH]; 2];
-        self.dry_history.fill([0.0; 2]);
+        self.scratch = [[T::zero(); HIGH]; 2];
+        self.dry_history.fill([T::zero(); 2]);
         self.dry_position = 0;
     }
 
@@ -335,7 +358,7 @@ impl Resampler {
     }
 
     /// Produce the dry signal at the same group delay as the wet path.
-    pub fn delayed_dry(&mut self, left: &[f32], right: &[f32], dry_l: &mut [f32], dry_r: &mut [f32]) {
+    pub fn delayed_dry(&mut self, left: &[T], right: &[T], dry_l: &mut [T], dry_r: &mut [T]) {
         let delay = self.latency() as usize;
         if delay == 0 {
             dry_l.copy_from_slice(left);
@@ -353,13 +376,7 @@ impl Resampler {
     }
 
     /// Expand `left`/`right` (`n` frames) into the high-rate buffers.
-    pub fn upsample(
-        &mut self,
-        left: &[f32],
-        right: &[f32],
-        out_left: &mut [f32],
-        out_right: &mut [f32],
-    ) {
+    pub fn upsample(&mut self, left: &[T], right: &[T], out_left: &mut [T], out_right: &mut [T]) {
         let design = &self.design;
         let n = left.len();
 
@@ -395,10 +412,10 @@ impl Resampler {
     pub(crate) fn downsample(
         &mut self,
         path: DownsamplePath,
-        left: &[f32],
-        right: &[f32],
-        out_left: &mut [f32],
-        out_right: &mut [f32],
+        left: &[T],
+        right: &[T],
+        out_left: &mut [T],
+        out_right: &mut [T],
         n: usize,
     ) {
         let design = &self.design;
@@ -415,9 +432,7 @@ impl Resampler {
             };
 
             match self.mode {
-                Oversampling::X2 => {
-                    down[0].process(design, &input[..2 * n], &mut output[..n])
-                }
+                Oversampling::X2 => down[0].process(design, &input[..2 * n], &mut output[..n]),
                 Oversampling::X4 => {
                     let middle = &mut self.scratch[channel];
                     down[1].process(design, &input[..4 * n], &mut middle[..2 * n]);
@@ -472,7 +487,7 @@ mod tests {
     /// The lowpass must pass the audio band and reject the images.
     #[test]
     fn fir_flat_and_steep() {
-        let taps = design();
+        let taps = design::<f32>();
         let response = |hz: f32| {
             let rate = 96_000.0_f32;
             let mut real = 0.0;
@@ -514,7 +529,7 @@ mod tests {
             let factor = mode.factor();
             let input = impulse(256);
             let output = round_trip(mode, &input);
-            let latency = Resampler::new(mode).latency() as usize;
+            let latency = Resampler::<f32>::new(mode).latency() as usize;
 
             let peak = output
                 .iter()

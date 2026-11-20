@@ -6,6 +6,7 @@ pub use harmonic::{FundamentalSource, HarmonicControl, HarmonicMode, MAX_HARMONI
 use crate::band::{Band, BandControl, SECTIONS};
 use crate::filter::{CutSlope, FilterKind, bell_bandwidth};
 use crate::params::{FREQUENCY_MAX_HZ, Q_MAX, Q_MIN};
+use crate::precision::Sample;
 use nice_plug::prelude::*;
 use resonance::{REDUCTIONS, Reduction};
 use std::f32::consts::{PI, SQRT_2};
@@ -51,7 +52,7 @@ impl RegionControl {
             && self.gain != 0.0
             && self.harmonic.enabled
             && self.harmonic.source == FundamentalSource::Tracked)
-        .then_some(self.harmonic.detection)
+            .then_some(self.harmonic.detection)
     }
 
     pub fn bounds(self) -> [f32; 2] {
@@ -162,14 +163,14 @@ fn slope_softness(slope: CutSlope) -> f32 {
     (8 - slope.biquad_count().max(2)) as f32 * (100.0 / 6.0)
 }
 
-pub struct Region {
-    filters: Box<[Band]>,
+pub struct Region<T: Sample = f32> {
+    filters: Box<[Band<T>]>,
     targets: Box<[BandControl]>,
     last: Option<(RegionControl, f32, Option<f32>)>,
     active: u32,
 }
 
-impl Region {
+impl<T: Sample> Region<T> {
     pub fn new() -> Self {
         Self {
             filters: (0..2)
@@ -189,6 +190,15 @@ impl Region {
         }
         self.last = None;
         self.active = 0;
+    }
+
+    pub(crate) fn transfer_from<S: Sample>(&mut self, source: &Region<S>) {
+        self.targets.copy_from_slice(&source.targets);
+        self.last = source.last;
+        self.active = source.active;
+        for (filter, previous) in self.filters.iter_mut().zip(&source.filters) {
+            filter.transfer_from(previous);
+        }
     }
 
     pub fn update(
@@ -249,29 +259,34 @@ impl Region {
         }
     }
 
-    pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+    pub fn process(&mut self, left: &mut [T], right: &mut [T]) {
         self.process_mask(self.active, left, right);
     }
 
     /// Capture only what the resonance filters remove, after the region and harmonic EQ.
     pub(crate) fn process_with_delta(
         &mut self,
-        left: &mut [f32],
-        right: &mut [f32],
-        delta_l: &mut [f32],
-        delta_r: &mut [f32],
+        left: &mut [T],
+        right: &mut [T],
+        delta_l: &mut [T],
+        delta_r: &mut [T],
     ) {
         const BASE_MASK: u32 = (1 << BASE_FILTERS) - 1;
         self.process_mask(self.active & BASE_MASK, left, right);
         delta_l.copy_from_slice(left);
         delta_r.copy_from_slice(right);
         self.process_mask(self.active & !BASE_MASK, left, right);
-        for (delta, processed) in delta_l.iter_mut().zip(left).chain(delta_r.iter_mut().zip(right)) {
+
+        for (delta, processed) in delta_l
+            .iter_mut()
+            .zip(left)
+            .chain(delta_r.iter_mut().zip(right))
+        {
             *delta -= *processed;
         }
     }
 
-    fn process_mask(&mut self, mut active: u32, left: &mut [f32], right: &mut [f32]) {
+    fn process_mask(&mut self, mut active: u32, left: &mut [T], right: &mut [T]) {
         while active != 0 {
             let index = active.trailing_zeros() as usize;
             active &= active - 1;

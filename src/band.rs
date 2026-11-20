@@ -1,8 +1,8 @@
-use crate::dsp::{self, Kernel, State};
+use crate::dsp::{self, State};
 use crate::dynamics::DynamicControl;
 use crate::filter::{Coefficients, CutSlope, FLAT_TILT_SECTIONS, FilterKind};
+use crate::precision::Sample;
 use nice_plug::prelude::Enum;
-use std::f32::consts::PI;
 
 pub const BAND_COUNT: usize = 32;
 pub const SECTIONS: usize = 8;
@@ -103,84 +103,100 @@ impl BandControl {
 
     /// compute biquad coeffs and section count (cuts use Butterworth, steep bells use transformed low shelf)
     pub fn sections(&self, rate: f32) -> ([Coefficients; SECTIONS], usize) {
-        let frequency = self.frequency.clamp(10.0, rate * 0.49);
+        self.sections_for(rate)
+    }
+
+    pub(crate) fn sections_for<T: Sample>(
+        &self,
+        rate: f32,
+    ) -> ([Coefficients<T>; SECTIONS], usize) {
+        let rate = T::value(f64::from(rate));
+        let q = T::value(f64::from(self.q));
+        let gain = T::value(f64::from(self.gain));
+        let frequency =
+            T::value(f64::from(self.frequency)).clamp(T::value(10.0), rate * T::value(0.49));
         let count = self.section_count();
         let mut sections = [Coefficients::identity(); SECTIONS];
 
         if self.kind.is_cut() {
             let (_, first_order) = self.slope.sections();
-            let base = self.slope.section_q();
-            let resonance = (std::f32::consts::SQRT_2 * self.q).clamp(0.05, 40.0);
-            let g = (PI * frequency / rate).tan();
+            let base = self.slope.section_q::<T>();
+            let resonance = (T::SQRT_2() * q).clamp(T::value(0.05), T::value(40.0));
+            let g = (T::PI() * frequency / rate).tan();
 
             for i in 0..count {
                 let is_first_order = first_order && i == count - 1;
                 let q = if is_first_order {
-                    0.0
+                    T::zero()
                 } else if i == 0 {
-                    (base[0] * resonance).clamp(0.05, 40.0)
+                    (base[0] * resonance).clamp(T::value(0.05), T::value(40.0))
                 } else {
                     base[i]
                 };
                 sections[i] = Coefficients::cut_section(g, q, self.kind, is_first_order);
             }
         } else if self.kind == FilterKind::Peak && count > 1 {
-            let g = (PI * frequency / rate).tan();
-            Coefficients::bell_sections(g, self.q, self.gain, &mut sections[..count]);
+            let g = (T::PI() * frequency / rate).tan();
+            Coefficients::bell_sections(g, q, gain, &mut sections[..count]);
         } else if self.kind.is_shelf() && self.slope != CutSlope::Db12 {
             let (pairs, first_order) = self.slope.sections();
-            let base = self.slope.section_q();
-            // split gain across order; calibrate Q in log space
-            let db_per_order = self.gain / self.slope.order() as f32;
-            let resonance = self.q.powf(0.46);
+            let base = self.slope.section_q::<T>();
+            let db_per_order = gain / T::value(self.slope.order() as f64);
+            let resonance = q.powf(T::value(0.46));
             for (i, section) in sections.iter_mut().take(pairs).enumerate() {
                 let q = if i == 0 { base[i] * resonance } else { base[i] };
-                *section =
-                    Coefficients::for_kind(rate, frequency, q, 2.0 * db_per_order, self.kind);
+                *section = Coefficients::for_kind(
+                    rate,
+                    frequency,
+                    q,
+                    T::value(2.0) * db_per_order,
+                    self.kind,
+                );
             }
+
             if first_order {
-                let g = (PI * frequency / rate).tan();
+                let g = (T::PI() * frequency / rate).tan();
                 sections[pairs] = Coefficients::first_order_shelf(g, db_per_order, self.kind);
             }
         } else if matches!(self.kind, FilterKind::Notch | FilterKind::BandPass) {
-            let g = (PI * frequency / rate).tan();
-            Coefficients::band_filter_sections(g, self.q, self.kind, &mut sections[..count]);
+            let g = (T::PI() * frequency / rate).tan();
+            Coefficients::band_filter_sections(g, q, self.kind, &mut sections[..count]);
         } else if self.kind == FilterKind::FlatTilt {
-            Coefficients::flat_tilt_sections(rate, frequency, self.gain, &mut sections[..count]);
+            Coefficients::flat_tilt_sections(rate, frequency, gain, &mut sections[..count]);
         } else {
             let q = if self.kind == FilterKind::TiltShelf {
-                self.q * std::f32::consts::FRAC_1_SQRT_2
+                q * T::FRAC_1_SQRT_2()
             } else {
-                self.q
+                q
             };
-            sections[0] = Coefficients::for_kind(rate, frequency, q, self.gain, self.kind);
+            sections[0] = Coefficients::for_kind(rate, frequency, q, gain, self.kind);
         }
 
         (sections, count)
     }
 }
 
-struct Slot {
-    coeff: Coefficients,
-    kernel: Kernel,
-    state: [State; 2],
+struct Slot<T: Sample> {
+    coeff: Coefficients<T>,
+    kernel: T::BlockKernel,
+    state: [State<T>; 2],
     block: bool,
 }
 
-impl Slot {
+impl<T: Sample> Slot<T> {
     fn new() -> Self {
         Self {
             coeff: Coefficients::identity(),
-            kernel: Kernel::new(&Coefficients::identity()),
-            state: [State::default(); 2],
+            kernel: T::kernel(&Coefficients::identity()),
+            state: [State::zero(); 2],
             block: true,
         }
     }
 
     #[inline]
-    fn run(&mut self, channel: usize, buf: &mut [f32]) {
+    fn run(&mut self, channel: usize, buf: &mut [T]) {
         if self.block {
-            self.kernel.apply_slice(&mut self.state[channel], buf);
+            T::run_block(&self.kernel, &self.coeff, &mut self.state[channel], buf);
         } else {
             let coeff = self.coeff;
             let state = &mut self.state[channel];
@@ -191,9 +207,9 @@ impl Slot {
     }
 }
 
-pub struct Band {
+pub struct Band<T: Sample = f32> {
     /// heap-allocated so 32 bands won't blow up host stack on init
-    slots: Box<[Slot]>,
+    slots: Box<[Slot<T>]>,
     /// fade-in for sections 1..
     fade: [f32; SECTIONS - 1],
     sections: usize,
@@ -209,7 +225,7 @@ pub struct Band {
     pub frequency: f32,
 }
 
-impl Band {
+impl<T: Sample> Band<T> {
     pub fn new() -> Self {
         Self::with_rack(SECTIONS, false)
     }
@@ -233,8 +249,8 @@ impl Band {
 
     pub fn reset(&mut self) {
         for slot in &mut self.slots {
-            slot.state = [State::default(); 2];
-            slot.kernel = Kernel::new(&slot.coeff);
+            slot.state = [State::zero(); 2];
+            slot.kernel = T::kernel(&slot.coeff);
             slot.block = true;
         }
         self.fade.fill(0.0);
@@ -243,6 +259,32 @@ impl Band {
         self.started = false;
         self.moving = true;
         self.last = None;
+    }
+
+    pub(crate) fn transfer_from<S: Sample>(&mut self, source: &Band<S>) {
+        self.fade = source.fade;
+        self.sections = source.sections;
+        self.log_frequency = source.log_frequency;
+        self.gain = source.gain;
+        self.q = source.q;
+        self.wet = source.wet;
+        self.started = source.started;
+        self.frequency = source.frequency;
+        self.invalidate();
+
+        for (slot, previous) in self.slots.iter_mut().zip(&source.slots) {
+            let coeff = previous.coeff;
+            slot.coeff = Coefficients {
+                a1: T::value(coeff.a1.double()),
+                a2: T::value(coeff.a2.double()),
+                a3: T::value(coeff.a3.double()),
+                g: T::value(coeff.g.double()),
+                k: T::value(coeff.k.double()),
+                mix: crate::precision::convert(coeff.mix),
+            };
+            slot.state = previous.state.map(State::from_state);
+            slot.block = false;
+        }
     }
 
     /// force coeff rebuild on next update
@@ -264,7 +306,7 @@ impl Band {
 
         let target_wet = f32::from(control.enabled);
         let frequency = control.frequency.clamp(10.0, rate * 0.49);
-        let (targets, count) = control.sections(rate);
+        let (targets, count) = control.sections_for::<T>(rate);
         assert!(count <= self.slots.len(), "filter exceeds its section rack");
 
         if !self.started {
@@ -283,9 +325,9 @@ impl Band {
 
             for (i, slot) in self.slots.iter_mut().enumerate() {
                 slot.coeff = targets[i];
-                slot.kernel = Kernel::new(&targets[i]);
+                slot.kernel = T::kernel(&targets[i]);
                 slot.block = true;
-                slot.state = [State::default(); 2];
+                slot.state = [State::zero(); 2];
             }
 
             self.fade.fill(0.0);
@@ -316,11 +358,11 @@ impl Band {
                     slot.coeff = target;
                 }
                 if !slot.block {
-                    slot.kernel = Kernel::new(&target);
+                    slot.kernel = T::kernel(&target);
                     slot.block = true;
                 }
             } else {
-                slot.coeff = current.approach(target, alpha);
+                slot.coeff = current.approach(target, T::value(f64::from(alpha)));
                 slot.block = false;
                 settled = false;
             }
@@ -341,7 +383,7 @@ impl Band {
                 settled = false;
             }
             if *fade == 0.0 && i >= count {
-                self.slots[i].state = [State::default(); 2];
+                self.slots[i].state = [State::zero(); 2];
             }
             if *fade > 0.0 {
                 sections = i + 1;
@@ -354,7 +396,7 @@ impl Band {
         if self.wet == 0.0 && target_wet == 0.0 {
             // Fully closed: drop stale state so re-enabling starts clean.
             for slot in &mut self.slots {
-                slot.state = [State::default(); 2];
+                slot.state = [State::zero(); 2];
                 slot.block = false;
             }
             self.fade.fill(0.0);
@@ -368,7 +410,7 @@ impl Band {
     }
 
     /// filter stereo channels (handles Mid/Side here)
-    pub fn process(&mut self, left: &mut [f32], right: &mut [f32], route: ChannelMode) {
+    pub fn process(&mut self, left: &mut [T], right: &mut [T], route: ChannelMode) {
         if self.wet == 0.0 {
             return;
         }
@@ -398,12 +440,12 @@ impl Band {
         self.wet != 0.0
     }
 
-    fn run(&mut self, buf: &mut [f32], channel: usize) {
+    fn run(&mut self, buf: &mut [T], channel: usize) {
         const TILE: usize = 64;
 
         let wet = self.wet;
-        let mut dry = [0.0_f32; TILE];
-        let mut spare = [0.0_f32; TILE];
+        let mut dry = [T::zero(); TILE];
+        let mut spare = [T::zero(); TILE];
 
         for tile in buf.chunks_mut(TILE) {
             let len = tile.len();
@@ -421,7 +463,7 @@ impl Band {
     }
 
     /// run active sections (crossfading ones use spare buffer)
-    fn cascade(&mut self, buf: &mut [f32], channel: usize, spare: &mut [f32]) {
+    fn cascade(&mut self, buf: &mut [T], channel: usize, spare: &mut [T]) {
         let sections = self.sections;
         self.slots[0].run(channel, buf);
 
@@ -437,30 +479,30 @@ impl Band {
                 spare.copy_from_slice(buf);
                 self.slots[i].run(channel, spare);
                 for (sample, next) in buf.iter_mut().zip(spare.iter()) {
-                    *sample += fade * (next - *sample);
+                    *sample += T::value(f64::from(fade)) * (*next - *sample);
                 }
             }
         }
     }
 }
 
-impl Default for Band {
+impl<T: Sample> Default for Band<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 /// Split both channels into mid (left) and side (right).
-fn to_mid_side(left: &mut [f32], right: &mut [f32]) {
+fn to_mid_side<T: Sample>(left: &mut [T], right: &mut [T]) {
     for (l, r) in left.iter_mut().zip(right.iter_mut()) {
         let (lv, rv) = (*l, *r);
-        *l = (lv + rv) * 0.5;
-        *r = (lv - rv) * 0.5;
+        *l = (lv + rv) * T::value(0.5);
+        *r = (lv - rv) * T::value(0.5);
     }
 }
 
 /// Put mid (left) and side (right) back together.
-fn from_mid_side(left: &mut [f32], right: &mut [f32]) {
+fn from_mid_side<T: Sample>(left: &mut [T], right: &mut [T]) {
     for (l, r) in left.iter_mut().zip(right.iter_mut()) {
         let (m, s) = (*l, *r);
         *l = m + s;
@@ -469,8 +511,8 @@ fn from_mid_side(left: &mut [f32], right: &mut [f32]) {
 }
 
 /// Two coefficients are the same up to float rounding.
-fn close(a: Coefficients, b: Coefficients) -> bool {
-    let scale = |reference: f32| reference.abs().max(1.0) * SNAP;
+fn close<T: Sample>(a: Coefficients<T>, b: Coefficients<T>) -> bool {
+    let scale = |reference: T| reference.abs().max(T::one()) * T::value(f64::from(SNAP));
 
     (a.g - b.g).abs() <= scale(b.g)
         && (a.k - b.k).abs() <= scale(b.k)

@@ -84,6 +84,7 @@ fn bench_engine_throughput() {
         mix: 1.0,
         bypass: false,
         oversampling: crate::oversample::Oversampling::Off,
+        precision: Default::default(),
     };
 
     println!();
@@ -100,6 +101,7 @@ fn bench_engine_throughput() {
         mix: 1.0,
         bypass: false,
         oversampling,
+        precision: Default::default(),
     };
     bench_case(
         "8 cuts, 2x",

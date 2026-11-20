@@ -4,6 +4,7 @@ use crate::dynamics::DynamicParams;
 use crate::filter::{CutSlope, FilterKind};
 use crate::oversample::Oversampling;
 use crate::pitch::PitchParams;
+use crate::precision::Precision;
 use nice_plug::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -46,6 +47,8 @@ pub struct EquartParams {
     /// 2x/4x oversampling to reduce high-freq bilinear warping
     #[id = "oversampling"]
     pub oversampling: EnumParam<Oversampling>,
+    #[id = "dsp_precision"]
+    pub(crate) precision: EnumParam<Precision>,
 
     #[persist = "ui_scale_percent"]
     pub ui_scale_percent: AtomicU32,
@@ -109,6 +112,7 @@ impl Default for EquartParams {
             .with_value_to_string(formatters::v2s_f32_rounded(0)),
             bypass: BoolParam::new("Bypass", false).make_bypass(),
             oversampling: EnumParam::new("Oversampling", Oversampling::Off),
+            precision: EnumParam::new("DSP Precision", Precision::default()),
             ui_scale_percent: AtomicU32::new(100),
             axis_range_db: AtomicU32::new(DEFAULT_AXIS_RANGE),
             spectrum_range_db: AtomicU32::new(DEFAULT_SPECTRUM_RANGE),
@@ -366,6 +370,7 @@ mod tests {
 
         let ids: std::collections::HashSet<_> =
             params.param_map().into_iter().map(|(id, _, _)| id).collect();
+        assert!(ids.contains("dsp_precision"));
 
         for key in [
             "algorithm", "profile", "tracking", "gate", "clarity", "target", "minimum", "maximum",

@@ -1,6 +1,6 @@
+use crate::precision::Sample;
 use nice_plug::prelude::*;
-use realfft::num_complex::Complex32;
-use std::f32::consts::PI;
+use realfft::num_complex::Complex;
 
 pub const FLAT_TILT_SECTIONS: usize = 8;
 
@@ -219,75 +219,89 @@ impl CutSlope {
     }
 
     /// Butterworth pole Qs for each biquad (odd orders have an extra real pole at -1)
-    pub fn section_q(self) -> [f32; 8] {
+    pub fn section_q<T: Sample>(self) -> [T; 8] {
         let order = self.order();
         std::array::from_fn(|i| {
             if i < order / 2 {
-                1.0 / (2.0 * (PI * (2 * i + 1) as f32 / (2 * order) as f32).sin())
+                let angle = T::PI() * T::value((2 * i + 1) as f64) / T::value((2 * order) as f64);
+                (T::value(2.0) * angle.sin()).recip()
             } else {
-                0.0
+                T::zero()
             }
         })
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Coefficients {
-    pub(crate) a1: f32,
-    pub(crate) a2: f32,
-    pub(crate) a3: f32,
-    pub g: f32,
-    pub k: f32,
-    pub mix: [f32; 3],
+pub struct Coefficients<T = f32> {
+    pub(crate) a1: T,
+    pub(crate) a2: T,
+    pub(crate) a3: T,
+    pub g: T,
+    pub k: T,
+    pub mix: [T; 3],
 }
 
-impl Coefficients {
+impl<T: Sample> Coefficients<T> {
     pub fn identity() -> Self {
-        Self::new(1.0, 1.0, [1.0, 0.0, 0.0])
+        Self::new(T::one(), T::one(), [T::one(), T::zero(), T::zero()])
     }
 
     /// Butterworth sections with highest-Q controlled by Q knob (1/sqrt(2) = flat)
-    pub fn cut_section(g: f32, q: f32, kind: FilterKind, first_order: bool) -> Self {
+    pub fn cut_section(g: T, q: T, kind: FilterKind, first_order: bool) -> Self {
         if first_order {
             // Exact pole-zero cancellation realizes a first-order TPT section.
             let mix = if kind == FilterKind::Highpass {
-                [1.0, -1.0, -1.0]
+                [T::one(), -T::one(), -T::one()]
             } else {
-                [0.0, 1.0, 1.0]
+                [T::zero(), T::one(), T::one()]
             };
-            return Self::new(g, 2.0, mix);
+            return Self::new(g, T::value(2.0), mix);
         }
 
-        let k = 1.0 / q;
+        let k = T::one() / q;
         let mix = if kind == FilterKind::Highpass {
-            [1.0, -k, -1.0]
+            [T::one(), -k, -T::one()]
         } else {
-            [0.0, 0.0, 1.0]
+            [T::zero(), T::zero(), T::one()]
         };
+
         Self::new(g, k, mix)
     }
 
-    pub fn first_order_shelf(g: f32, db: f32, kind: FilterKind) -> Self {
+    pub fn first_order_shelf(g: T, db: T, kind: FilterKind) -> Self {
         let db = if kind == FilterKind::TiltShelf {
-            2.0 * db
+            T::value(2.0) * db
         } else {
             db
         };
-        let a = 10.0_f32.powf(db / 40.0);
+
+        let a = T::value(10.0).powf(db / T::value(40.0));
+
         let gain = a * a;
         // The numerator cancels one of the two identical SVF poles.
         match kind {
-            FilterKind::LowShelf => Self::new(g / a, 2.0, [1.0, gain - 1.0, gain - 1.0]),
-            FilterKind::TiltShelf => Self::new(g * a, 2.0, [a, a.recip() - a, a.recip() - a]),
-            _ => Self::new(g * a, 2.0, [gain, 1.0 - gain, 1.0 - gain]),
+            FilterKind::LowShelf => Self::new(
+                g / a,
+                T::value(2.0),
+                [T::one(), gain - T::one(), gain - T::one()],
+            ),
+            FilterKind::TiltShelf => {
+                Self::new(g * a, T::value(2.0), [a, a.recip() - a, a.recip() - a])
+            }
+            _ => Self::new(
+                g * a,
+                T::value(2.0),
+                [gain, T::one() - gain, T::one() - gain],
+            ),
         }
     }
 
     /// transform Butterworth low shelf into a bell via s_lp = (Q/sqrt(2))*(s^2+1)/s
-    pub fn bell_sections(g: f32, q: f32, db: f32, sections: &mut [Self]) {
+    pub fn bell_sections(g: T, q: T, db: T, sections: &mut [Self]) {
         let order = sections.len();
         let width = bell_bandwidth(q);
-        let a = 10.0_f32.powf(db / (40.0 * order as f32));
+        let a = T::value(10.0).powf(db / (T::value(40.0) * T::value(order as f64)));
         let mut pairs = sections.chunks_exact_mut(2);
         for (i, pair) in pairs.by_ref().enumerate() {
             let half = band_half_pole(order, i, width);
@@ -298,17 +312,21 @@ impl Coefficients {
                 .iter_mut()
                 .zip([(g / pole, ratio.recip()), (g * pole, ratio)])
             {
-                *section = Self::new(g, k, [1.0, zero_k * ratio - k, ratio * ratio - 1.0]);
+                *section = Self::new(
+                    g,
+                    k,
+                    [T::one(), zero_k * ratio - k, ratio * ratio - T::one()],
+                );
             }
         }
         if let [last] = pairs.into_remainder() {
             let k = width / a;
-            *last = Self::new(g, k, [1.0, width * a - k, 0.0]);
+            *last = Self::new(g, k, [T::one(), width * a - k, T::zero()]);
         }
     }
 
     /// transform Nth-order Butterworth LP into N band-pass/stop biquads
-    pub fn band_filter_sections(g: f32, q: f32, kind: FilterKind, sections: &mut [Self]) {
+    pub fn band_filter_sections(g: T, q: T, kind: FilterKind, sections: &mut [Self]) {
         let order = sections.len();
         let inverse_q = q.recip();
         let mut pairs = sections.chunks_exact_mut(2);
@@ -333,40 +351,45 @@ impl Coefficients {
             *last = Self::new(
                 g,
                 inverse_q,
-                band_filter_mix(kind, inverse_q, inverse_q, 1.0),
+                band_filter_mix(kind, inverse_q, inverse_q, T::one()),
             );
         }
     }
 
     /// octave-spaced shelves for tilt
-    pub fn flat_tilt_sections(rate: f32, frequency: f32, db: f32, sections: &mut [Self]) {
-        let db_per_octave = db / 5.0;
-        let a = 10.0_f32.powf(db_per_octave / 40.0);
-        let pivot = (PI * frequency / rate).tan();
-        let mut corner = PI * 2.5 / rate;
-        let mut level = 1.0;
+    pub fn flat_tilt_sections(rate: T, frequency: T, db: T, sections: &mut [Self]) {
+        let db_per_octave = db / T::value(5.0);
+        let a = T::value(10.0).powf(db_per_octave / T::value(40.0));
+        let pivot = (T::PI() * frequency / rate).tan();
+        let mut corner = T::PI() * T::value(2.5) / rate;
+        let mut level = T::one();
+
         for section in sections.iter_mut() {
             // Pair two adjacent real poles in one SVF section.
-            let [p1, p2] = [(corner * a).tanh(), (2.0 * corner * a).tanh()];
-            let [z1, z2] = [(corner / a).tanh(), (2.0 * corner / a).tanh()];
+            let [p1, p2] = [(corner * a).tanh(), (T::value(2.0) * corner * a).tanh()];
+            let [z1, z2] = [(corner / a).tanh(), (T::value(2.0) * corner / a).tanh()];
             let g = (p1 * p2).sqrt();
             let k = (p1 + p2) / g;
             let high_gain = (p1 * p2) / (z1 * z2);
             *section = Self::new(
                 g,
                 k,
-                [high_gain, high_gain * ((z1 + z2) / g - k), 1.0 - high_gain],
+                [
+                    high_gain,
+                    high_gain * ((z1 + z2) / g - k),
+                    T::one() - high_gain,
+                ],
             );
             level *= high_gain
                 * (pivot.hypot(z1) / pivot.hypot(p1))
                 * (pivot.hypot(z2) / pivot.hypot(p2));
-            corner *= 4.0;
+            corner *= T::value(4.0);
         }
         sections[0].mix = sections[0].mix.map(|tap| tap / level);
     }
 
-    pub fn new(g: f32, k: f32, mix: [f32; 3]) -> Self {
-        let a1 = 1.0 / (1.0 + g * (g + k));
+    pub fn new(g: T, k: T, mix: [T; 3]) -> Self {
+        let a1 = T::one() / (T::one() + g * (g + k));
 
         Self {
             a1,
@@ -379,41 +402,41 @@ impl Coefficients {
     }
 
     /// Cytomic TPT SVF output mixes; shelf prewarping keeps the midpoint at fc.
-    pub fn for_kind(rate: f32, frequency: f32, q: f32, db: f32, kind: FilterKind) -> Self {
-        let a = 10.0_f32.powf(db / 40.0);
-        let mut g = (PI * frequency / rate).tan();
-        let mut k = 1.0 / q;
+    pub fn for_kind(rate: T, frequency: T, q: T, db: T, kind: FilterKind) -> Self {
+        let a = T::value(10.0).powf(db / T::value(40.0));
+        let mut g = (T::PI() * frequency / rate).tan();
+        let mut k = T::one() / q;
 
         let mix = match kind {
             FilterKind::Peak => {
                 k /= a;
-                [1.0, k * (a * a - 1.0), 0.0]
+                [T::one(), k * (a * a - T::one()), T::zero()]
             }
             FilterKind::LowShelf => {
                 g /= a.sqrt();
-                [1.0, k * (a - 1.0), a * a - 1.0]
+                [T::one(), k * (a - T::one()), a * a - T::one()]
             }
             FilterKind::HighShelf => {
                 g *= a.sqrt();
-                [a * a, k * (1.0 - a) * a, 1.0 - a * a]
+                [a * a, k * (T::one() - a) * a, T::one() - a * a]
             }
             FilterKind::TiltShelf => {
                 // A high shelf of twice the band gain, centered around 0 dB.
                 g *= a;
                 let gain = a * a;
-                [gain, k * (1.0 - gain), gain.recip() - gain]
+                [gain, k * (T::one() - gain), gain.recip() - gain]
             }
-            FilterKind::Highpass => [1.0, -k, -1.0],
-            FilterKind::Lowpass => [0.0, 0.0, 1.0],
-            FilterKind::Notch => [1.0, -k, 0.0],
-            FilterKind::BandPass => [0.0, k, 0.0],
+            FilterKind::Highpass => [T::one(), -k, -T::one()],
+            FilterKind::Lowpass => [T::zero(), T::zero(), T::one()],
+            FilterKind::Notch => [T::one(), -k, T::zero()],
+            FilterKind::BandPass => [T::zero(), k, T::zero()],
             FilterKind::FlatTilt => unreachable!("flat tilt is designed as a cascade"),
         };
 
         Self::new(g, k, mix)
     }
 
-    pub fn approach(self, target: Self, alpha: f32) -> Self {
+    pub fn approach(self, target: Self, alpha: T) -> Self {
         Self::new(
             self.g + alpha * (target.g - self.g),
             self.k + alpha * (target.k - self.k),
@@ -421,38 +444,39 @@ impl Coefficients {
         )
     }
 
-    pub fn response(self, rate: f32, frequency: f32) -> Complex32 {
-        let r = (PI * frequency / rate).tan() / self.g;
-        let denominator = Complex32::new(1.0 - r * r, self.k * r);
+    pub fn response(self, rate: T, frequency: T) -> Complex<T> {
+        let r = (T::PI() * frequency / rate).tan() / self.g;
+        let denominator = Complex::new(T::one() - r * r, self.k * r);
 
-        Complex32::new(self.mix[0], 0.0)
-            + (Complex32::new(self.mix[2], self.mix[1] * r) / denominator)
+        Complex::new(self.mix[0], T::zero())
+            + (Complex::new(self.mix[2], self.mix[1] * r) / denominator)
     }
 }
 
-fn band_half_pole(order: usize, index: usize, width: f32) -> Complex32 {
-    let angle = PI * (2 * index + 1) as f32 / (2 * order) as f32;
+fn band_half_pole<T: Sample>(order: usize, index: usize, width: T) -> Complex<T> {
+    let angle = T::PI() * T::value((2 * index + 1) as f64) / T::value((2 * order) as f64);
     let (sin, cos) = angle.sin_cos();
-    Complex32::new(-sin, -cos) * (0.5 * width)
+    Complex::new(-sin, -cos) * (T::value(0.5) * width)
 }
 
 /// Half-gain bandwidth in the prewarped domain, relative to the center.
-pub(crate) fn bell_bandwidth(q: f32) -> f32 {
-    std::f32::consts::SQRT_2 / q
+pub(crate) fn bell_bandwidth<T: Sample>(q: T) -> T {
+    T::SQRT_2() / q
 }
 
 /// solve s^2 - 2*half*s + 1 = 0
-fn band_pole(half: Complex32) -> (f32, f32) {
-    let outer = half - (half * half - 1.0).sqrt();
+fn band_pole<T: Sample>(half: Complex<T>) -> (T, T) {
+    let outer = half - (half * half - T::one()).sqrt();
     let radius = outer.norm();
-    (radius, -2.0 * outer.re / radius)
+
+    (radius, -T::value(2.0) * outer.re / radius)
 }
 
-fn band_filter_mix(kind: FilterKind, inverse_q: f32, k: f32, ratio_squared: f32) -> [f32; 3] {
+fn band_filter_mix<T: Sample>(kind: FilterKind, inverse_q: T, k: T, ratio_squared: T) -> [T; 3] {
     if kind == FilterKind::BandPass {
-        [0.0, inverse_q, 0.0]
+        [T::zero(), inverse_q, T::zero()]
     } else {
-        [1.0, -k, ratio_squared - 1.0]
+        [T::one(), -k, ratio_squared - T::one()]
     }
 }
 

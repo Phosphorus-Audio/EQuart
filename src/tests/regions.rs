@@ -58,6 +58,10 @@ fn legacy_parameter_migration() {
     };
     crate::Equart::filter_state(&mut state);
     assert!(matches!(
+        state.params.get("dsp_precision"),
+        Some(ParamValue::String(id)) if id == "f32"
+    ));
+    assert!(matches!(
         state.params.get("region_gain_1"),
         Some(ParamValue::F32(-9.0))
     ));
@@ -91,6 +95,16 @@ fn legacy_parameter_migration() {
     assert!(matches!(
         state.params.get("harmonic_pitch_profile_1"),
         Some(ParamValue::I32(index)) if *index as usize == crate::pitch::DetectionRange::Low.to_index()
+    ));
+    state
+        .params
+        .insert("dsp_precision".into(), ParamValue::String("f64".into()));
+
+    crate::Equart::filter_state(&mut state);
+
+    assert!(matches!(
+        state.params.get("dsp_precision"),
+        Some(ParamValue::String(id)) if id == "f64"
     ));
 }
 

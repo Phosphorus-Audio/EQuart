@@ -1,4 +1,5 @@
 mod analyzer;
+mod audio_path;
 mod band;
 mod dsp;
 mod dynamics;
@@ -8,6 +9,7 @@ mod filter;
 mod oversample;
 mod params;
 mod pitch;
+mod precision;
 mod realtime;
 #[cfg(test)]
 mod reference;
@@ -67,6 +69,7 @@ impl Equart {
             mix: self.params.mix.value() * 0.01,
             bypass: self.params.bypass.value(),
             oversampling: self.params.oversampling.value(),
+            precision: self.params.precision.value(),
         }
     }
 }
@@ -116,6 +119,11 @@ impl Plugin for Equart {
 
     fn filter_state(state: &mut PluginState) {
         use nice_plug::plugin::ParamValue;
+
+        state
+            .params
+            .entry("dsp_precision".into())
+            .or_insert_with(|| ParamValue::String("f32".into()));
 
         // Depth was stored as a positive attenuation. Gain uses signed dB.
         for index in 1..=region::REGION_COUNT {
