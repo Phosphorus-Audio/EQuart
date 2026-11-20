@@ -317,10 +317,11 @@ impl EquartEditor {
 
                     let strongest = self
                         .telemetry
-                        .resonance_peaks(index)
+                        .resonance_reductions(index)
                         .into_iter()
-                        .filter(|peak| peak.band(control).enabled)
-                        .max_by(|a, b| a.excess.total_cmp(&b.excess));
+                        .map(|cut| cut.band(control))
+                        .filter(|band| band.enabled)
+                        .min_by(|a, b| a.gain.total_cmp(&b.gain));
                     let active = !bypassed && !region.bypass.value() && !self.params.bypass.value();
 
                     ui.horizontal(|ui| {
@@ -339,8 +340,8 @@ impl EquartEditor {
 
                         if !active {
                             ui.label("Bypassed");
-                        } else if let Some(peak) = strongest {
-                            ui.label(format!("{:.0} Hz  {:.1} dB", peak.hz, peak.band(control).gain));
+                        } else if let Some(cut) = strongest {
+                            ui.label(format!("{:.0} Hz  {:.1} dB", cut.frequency, cut.gain));
                         } else {
                             ui.label("No active peaks");
                         }

@@ -86,7 +86,7 @@ fn harmonic_region_modes() {
         let mut power = 0.0;
         let step = std::f32::consts::TAU * hz / RATE;
         for frame in 0..1500 {
-            region.update(control, RATE, pitch, 0.1, 0.1);
+            region.update(control, RATE, pitch, 0.1, 0.1, &Default::default());
             let mut left: [f32; 32] = std::array::from_fn(|_| {
                 phase = (phase + step).rem_euclid(std::f32::consts::TAU);
                 phase.sin() * 0.25
@@ -172,6 +172,75 @@ fn resonance_delta_audition() {
             assert!(peak > 0.01, "expected an audible resonance cut");
         }
     }
+}
+
+#[test]
+fn resonance_does_not_sweep_between_competing_peaks() {
+    const FRAMES: usize = 112 * 512;
+    const PROBE_HZ: f64 = 2_625.0;
+    const PROBE_AMPLITUDE: f64 = 0.001;
+    const TONES: [f64; 5] = [843.75, 1_171.875, 1_593.75, 2_109.375, 3_093.75];
+
+    let mut settings = controls(flat_bands());
+    let region = &mut settings.regions[0];
+    region.enabled = true;
+    region.low = 650.0;
+    region.high = 3_450.0;
+    region.gain = 0.0;
+    region.resonance.enabled = true;
+
+    let render = |probe_direction: f64| {
+        let mut engine = Engine::new(RATE);
+        engine.analyze = false;
+        let mut left: Vec<_> = (0..FRAMES)
+            .map(|i| {
+                let phase = std::f64::consts::TAU * i as f64 / f64::from(RATE);
+                let swing = (6.0 * phase).sin();
+                let competitors = TONES
+                    .into_iter()
+                    .zip([0.20, 0.19, 0.21, 0.08 + 0.05 * swing, 0.08 - 0.05 * swing])
+                    .map(|(hz, amplitude)| amplitude * (hz * phase).sin())
+                    .sum::<f64>();
+                (competitors + probe_direction * PROBE_AMPLITUDE * (PROBE_HZ * phase).sin()) as f32
+            })
+            .collect();
+        let mut right = left.clone();
+        let mut overlap = false;
+        nice_assert_no_alloc::assert_no_alloc(|| {
+            for (left, right) in left.chunks_mut(512).zip(right.chunks_mut(512)) {
+                engine.process_block(left, right, &settings);
+                let cuts = &engine.resonance.reductions()[0];
+                overlap |= TONES[3..].iter().all(|&hz| {
+                    cuts.iter()
+                        .any(|cut| (f64::from(cut.hz) - hz).abs() < 2.0 && cut.attenuation_db > 1.0)
+                });
+            }
+        });
+        assert!(
+            overlap,
+            "the departing peak should release while its replacement attacks"
+        );
+        left
+    };
+
+    let positive = render(1.0);
+    let negative = render(-1.0);
+    let deepest = positive[4_096..]
+        .chunks_exact(128)
+        .zip(negative[4_096..].chunks_exact(128))
+        .map(|(positive, negative)| {
+            let power: f64 = positive
+                .iter()
+                .zip(negative)
+                .map(|(&a, &b)| (f64::from(a - b) / (2.0 * PROBE_AMPLITUDE)).powi(2))
+                .sum();
+            10.0 * (power / 64.0).log10()
+        })
+        .fold(0.0_f64, f64::min);
+    assert!(
+        deepest > -1.5,
+        "{PROBE_HZ} Hz probe fell to {deepest:.2} dB"
+    );
 }
 
 #[test]

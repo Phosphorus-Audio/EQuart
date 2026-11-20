@@ -100,9 +100,14 @@ pub(super) fn draw_response(
     let region_bands: Vec<_> = regions
         .iter()
         .enumerate()
-        .flat_map(|(i, &region)| region.filter_plan(rate, harmonic_hz).chain(
-            telemetry.resonance_peaks(i).into_iter().map(move |peak| peak.band(region))
-        ))
+        .flat_map(|(i, &region)| {
+            region.filter_plan(rate, harmonic_hz).chain(
+                telemetry
+                    .resonance_reductions(i)
+                    .into_iter()
+                    .map(move |cut| cut.band(region)),
+            )
+        })
         .filter(|band| band.enabled)
         .collect();
     let region_sections: Vec<_> = region_bands

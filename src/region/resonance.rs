@@ -1,13 +1,16 @@
+mod reduction;
+
 use super::{REGION_COUNT, RegionControl};
-use crate::band::{BandControl, ChannelMode};
-use crate::filter::CutSlope;
+use crate::band::ChannelMode;
 use nice_plug::prelude::*;
 use realfft::{RealFftPlanner, RealToComplex, num_complex::Complex32};
 use std::{f32::consts::TAU, sync::Arc};
 
+pub(crate) use reduction::{REDUCTIONS, Reduction};
+
 const WINDOW: usize = 2048;
 const HOP: usize = WINDOW / 4;
-pub(crate) const PEAKS: usize = 4;
+const PEAKS: usize = 4;
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct ResonanceControl {
@@ -143,31 +146,10 @@ impl ResonanceParams {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Peak {
-    pub hz: f32,
-    pub excess: f32,
-    pub channel: ChannelMode,
-}
-
-impl Peak {
-    pub(crate) fn band(self, region: RegionControl) -> BandControl {
-        let res = region.resonance;
-        let [low, high] = region.bounds();
-        let cut = ((self.excess - res.threshold) * (res.ratio * 0.01)).clamp(0.0, res.depth);
-        BandControl {
-            enabled: region.enabled
-                && !region.bypass
-                && res.enabled
-                && cut > 0.0
-                && (low..=high).contains(&self.hz),
-            frequency: self.hz,
-            gain: -cut,
-            q: res.q,
-            slope: CutSlope::Db12,
-            channel: self.channel,
-            ..BandControl::default()
-        }
-    }
+struct Candidate {
+    hz: f32,
+    prominence_db: f32,
+    channel: ChannelMode,
 }
 
 pub(crate) struct Detector {
@@ -183,7 +165,7 @@ pub(crate) struct Detector {
     sum_db: [Vec<f64>; 3],
     cursor: usize,
     remaining: usize,
-    pub peaks: [[Peak; PEAKS]; REGION_COUNT],
+    reductions: [[Reduction; REDUCTIONS]; REGION_COUNT],
 }
 
 impl Detector {
@@ -205,7 +187,7 @@ impl Detector {
             sum_db: [vec![0.0; bins + 1], vec![0.0; bins + 1], vec![0.0; bins + 1]],
             cursor: 0,
             remaining: WINDOW,
-            peaks: Default::default(),
+            reductions: Default::default(),
         }
     }
 
@@ -213,7 +195,11 @@ impl Detector {
         self.cursor = 0;
         self.remaining = WINDOW;
         self.power.iter_mut().for_each(|p| p.fill(0.0));
-        self.peaks = Default::default();
+        self.reductions = Default::default();
+    }
+
+    pub(crate) fn reductions(&self) -> &[[Reduction; REDUCTIONS]; REGION_COUNT] {
+        &self.reductions
     }
 
     pub(crate) fn push(
@@ -270,8 +256,7 @@ impl Detector {
             self.sum_db[2][i + 1] = self.sum_db[2][i] + f64::from(mid_db);
         }
 
-        let previous = self.peaks;
-        let mut candidates: [[Peak; PEAKS]; REGION_COUNT] = Default::default();
+        let mut candidates: [[Candidate; PEAKS]; REGION_COUNT] = Default::default();
         let bin_hz = rate / WINDOW as f32;
 
         // scan union of active regions once
@@ -373,91 +358,42 @@ impl Detector {
                     (ex, ch)
                 };
 
-                let excess = (excess_raw + octaves * (res.bias * 0.01) * 3.0).max(0.0);
-                if excess <= res.threshold {
+                let prominence_db = (excess_raw + octaves * (res.bias * 0.01) * 3.0).max(0.0);
+                if prominence_db <= res.threshold {
                     continue;
                 }
+                let candidate = Candidate {
+                    hz,
+                    prominence_db,
+                    channel,
+                };
 
                 if let Some(near) = slots
                     .iter()
                     .position(|p| p.hz > 0.0 && (p.hz - hz).abs() < min_gap)
                 {
-                    if excess > slots[near].excess {
-                        slots[near] = Peak { hz, excess, channel };
-                        slots.sort_by(|a, b| b.excess.total_cmp(&a.excess));
+                    if prominence_db > slots[near].prominence_db {
+                        slots[near] = candidate;
+                        slots.sort_by(|a, b| b.prominence_db.total_cmp(&a.prominence_db));
                     }
                     continue;
                 }
 
-                if let Some(at) = slots.iter().position(|peak| excess > peak.excess) {
+                if let Some(at) = slots
+                    .iter()
+                    .position(|peak| prominence_db > peak.prominence_db)
+                {
                     slots[at..].rotate_right(1);
-                    slots[at] = Peak { hz, excess, channel };
+                    slots[at] = candidate;
                 }
             }
         }
 
-        for ((slots, ranked), (old, region)) in self
-            .peaks
-            .iter_mut()
-            .zip(candidates)
-            .zip(previous.iter().zip(regions))
-        {
-            let res = region.resonance;
-            if !region.enabled || region.bypass || !res.enabled {
-                *slots = Default::default();
-                continue;
-            }
-
-            let att = 1.0 - (-(HOP as f32) / (0.001 * res.attack_ms.max(0.5) * rate)).exp();
-            let rel = 1.0 - (-(HOP as f32) / (0.001 * res.release_ms.max(1.0) * rate)).exp();
-
-            *slots = Default::default();
-            let mut matched = [false; PEAKS];
-            for (i, peak) in ranked.iter().enumerate().filter(|(_, p)| p.hz > 0.0) {
-                let nearest = (0..PEAKS)
-                    .filter(|&j| slots[j].hz == 0.0 && old[j].hz > 0.0)
-                    .map(|j| (j, (peak.hz - old[j].hz).abs()))
-                    .filter(|&(_, distance)| distance <= (peak.hz * 0.1).max(bin_hz))
-                    .min_by(|a, b| a.1.total_cmp(&b.1));
-                if let Some((j, _)) = nearest {
-                    let prev_ex = old[j].excess;
-                    let alpha = if peak.excess > prev_ex { att } else { rel };
-                    slots[j] = Peak {
-                        hz: peak.hz,
-                        excess: prev_ex + alpha * (peak.excess - prev_ex),
-                        channel: peak.channel,
-                    };
-                    matched[i] = true;
-                }
-            }
-
-            let mut free = slots.iter_mut().filter(|p| p.hz == 0.0);
-            for (peak, _) in ranked
-                .into_iter()
-                .zip(matched)
-                .filter(|(p, used)| p.hz > 0.0 && !used)
-            {
-                if let Some(slot) = free.next() {
-                    let start = res.threshold;
-                    *slot = Peak {
-                        hz: peak.hz,
-                        excess: start + att * (peak.excess - start),
-                        channel: peak.channel,
-                    };
-                }
-            }
-
-            for j in 0..PEAKS {
-                if slots[j].hz == 0.0 && old[j].hz > 0.0 && old[j].excess > res.threshold {
-                    let next_ex = old[j].excess + rel * (0.0 - old[j].excess);
-                    if next_ex > res.threshold {
-                        slots[j] = Peak {
-                            hz: old[j].hz,
-                            excess: next_ex,
-                            channel: old[j].channel,
-                        };
-                    }
-                }
+        for ((cuts, ranked), region) in self.reductions.iter_mut().zip(candidates).zip(regions) {
+            if region.enabled && !region.bypass && region.resonance.enabled {
+                reduction::update(cuts, ranked, region.resonance, HOP as f32 / rate);
+            } else {
+                *cuts = Default::default();
             }
         }
     }

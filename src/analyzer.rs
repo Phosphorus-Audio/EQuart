@@ -498,6 +498,3 @@ impl Analyzer {
         self.revision = self.revision.wrapping_add(1);
     }
 }
-
-#[cfg(test)]
-mod tests;

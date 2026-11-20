@@ -7,11 +7,15 @@ use crate::band::{Band, BandControl, SECTIONS};
 use crate::filter::{CutSlope, FilterKind, bell_bandwidth};
 use crate::params::{FREQUENCY_MAX_HZ, Q_MAX, Q_MIN};
 use nice_plug::prelude::*;
+use resonance::{REDUCTIONS, Reduction};
 use std::f32::consts::{PI, SQRT_2};
 
 pub const REGION_COUNT: usize = 6;
 pub const DEFAULT_SOFTNESS: f32 = 35.0;
 pub const DEFAULT_GAIN: f32 = -6.0;
+const BASE_FILTERS: usize = 2 + MAX_HARMONIC;
+const FILTERS: usize = BASE_FILTERS + REDUCTIONS;
+const _: () = assert!(FILTERS <= u32::BITS as usize);
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct RegionControl {
@@ -154,7 +158,6 @@ pub struct Region {
     targets: Box<[BandControl]>,
     last: Option<(RegionControl, f32, Option<f32>)>,
     active: u32,
-    pub(crate) peaks: [resonance::Peak; resonance::PEAKS],
 }
 
 impl Region {
@@ -163,10 +166,9 @@ impl Region {
             filters: (0..2)
                 .map(|_| Band::with_rack(SECTIONS, true))
                 .chain((0..MAX_HARMONIC).map(|_| Band::with_rack(harmonic::MASK_SECTIONS, true)))
-                .chain((0..resonance::PEAKS).map(|_| Band::with_rack(1, true)))
+                .chain((0..REDUCTIONS).map(|_| Band::with_rack(1, true)))
                 .collect(),
-            targets: vec![harmonic::inactive(); 2 + MAX_HARMONIC + resonance::PEAKS].into_boxed_slice(),
-            peaks: Default::default(),
+            targets: vec![harmonic::inactive(); FILTERS].into_boxed_slice(),
             last: None,
             active: 0,
         }
@@ -176,7 +178,6 @@ impl Region {
         for filter in &mut self.filters {
             filter.reset();
         }
-        self.peaks = Default::default();
         self.last = None;
         self.active = 0;
     }
@@ -188,6 +189,7 @@ impl Region {
         pitch: Option<f32>,
         alpha: f32,
         step: f32,
+        reductions: &[Reduction; REDUCTIONS],
     ) {
         let pitch = pitch.filter(|_| control.harmonic.enabled);
         let mut pending = self.active;
@@ -212,12 +214,13 @@ impl Region {
             }
             self.last = Some((control, rate, pitch));
         }
-        for (slot, peak) in self.peaks.iter().enumerate() {
-            let index = 2 + MAX_HARMONIC + slot;
+        for (slot, cut) in reductions.iter().enumerate() {
+            let index = BASE_FILTERS + slot;
             let target = &mut self.targets[index];
-            if peak.hz > 0.0 && control.resonance.enabled {
-                let next = peak.band(control);
-                if next.enabled {
+            if cut.hz > 0.0 {
+                let next = cut.band(control);
+                let same_cut = target.frequency == next.frequency && target.channel == next.channel;
+                if next.enabled && (same_cut || !self.filters[index].is_processing()) {
                     *target = next;
                     pending |= 1 << index;
                     continue;
@@ -249,7 +252,7 @@ impl Region {
         delta_l: &mut [f32],
         delta_r: &mut [f32],
     ) {
-        const BASE_MASK: u32 = (1 << (2 + MAX_HARMONIC)) - 1;
+        const BASE_MASK: u32 = (1 << BASE_FILTERS) - 1;
         self.process_mask(self.active & BASE_MASK, left, right);
         delta_l.copy_from_slice(left);
         delta_r.copy_from_slice(right);

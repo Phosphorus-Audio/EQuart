@@ -1,7 +1,10 @@
 use crate::analyzer::{MAX_SPECTRUM_BINS, SpectrumFrame};
 use crate::band::BAND_COUNT;
 use crate::engine::Engine;
-use crate::region::{REGION_COUNT, resonance::{PEAKS, Peak}};
+use crate::region::{
+    REGION_COUNT,
+    resonance::{REDUCTIONS, Reduction},
+};
 use std::sync::atomic::{AtomicU32, Ordering, fence};
 
 /// Meter readings and frequency scale used to draw an editor frame.
@@ -60,7 +63,7 @@ pub(crate) struct Telemetry {
     harmonic_hz: AtomicU32,
     /// Momentary editor request. Zero means normal output.
     delta_region: AtomicU32,
-    resonance: [[AtomicU32; PEAKS]; REGION_COUNT],
+    resonance: [[AtomicU32; REDUCTIONS]; REGION_COUNT],
 }
 
 impl Default for Telemetry {
@@ -149,11 +152,11 @@ impl Telemetry {
             self.detected_pitch[i].store(detected.unwrap_or(0.0).to_bits(), Ordering::Relaxed);
             self.tracked_frequency[i].store(tracked.unwrap_or(0.0).to_bits(), Ordering::Relaxed);
         }
-        for (row, peaks) in self.resonance.iter().zip(&engine.resonance.peaks) {
-            for (atomic, peak) in row.iter().zip(peaks) {
-                let hz = peak.hz.round() as u16;
-                let db = ((peak.excess * 128.0).round() as u32).min(0x3FFF);
-                let ch = match peak.channel {
+        for (row, cuts) in self.resonance.iter().zip(engine.resonance.reductions()) {
+            for (atomic, cut) in row.iter().zip(cuts) {
+                let hz = cut.hz.round() as u16;
+                let db = ((cut.attenuation_db * 128.0).round() as u32).min(0x3FFF);
+                let ch = match cut.channel {
                     crate::band::ChannelMode::Left => 1u32,
                     crate::band::ChannelMode::Right => 2u32,
                     _ => 0u32,
@@ -244,7 +247,7 @@ impl Telemetry {
         self.tracked_frequency[index].store(hz.to_bits(), Ordering::Relaxed);
     }
 
-    pub(crate) fn resonance_peaks(&self, index: usize) -> [Peak; PEAKS] {
+    pub(crate) fn resonance_reductions(&self, index: usize) -> [Reduction; REDUCTIONS] {
         std::array::from_fn(|i| {
             let bits = self.resonance[index][i].load(Ordering::Relaxed);
             let channel = match bits >> 30 {
@@ -252,9 +255,9 @@ impl Telemetry {
                 2 => crate::band::ChannelMode::Right,
                 _ => crate::band::ChannelMode::Stereo,
             };
-            Peak {
+            Reduction {
                 hz: (bits as u16) as f32,
-                excess: ((bits >> 16) & 0x3FFF) as f32 / 128.0,
+                attenuation_db: ((bits >> 16) & 0x3FFF) as f32 / 128.0,
                 channel,
             }
         })

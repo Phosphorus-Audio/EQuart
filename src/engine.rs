@@ -517,9 +517,13 @@ impl Engine {
             band.update(control, rate, self.alpha, self.step);
         }
         let harmonic_hz = self.pitch.refresh_harmonic(self.rate);
-        for (i, (region, &control)) in self.regions.iter_mut().zip(&controls.regions).enumerate() {
-            region.peaks = self.resonance.peaks[i];
-            region.update(control, rate, harmonic_hz, self.alpha, self.step);
+        for ((region, &control), reductions) in self
+            .regions
+            .iter_mut()
+            .zip(&controls.regions)
+            .zip(self.resonance.reductions())
+        {
+            region.update(control, rate, harmonic_hz, self.alpha, self.step, reductions);
         }
 
         // `powf` only when the target actually moves, not once per block.
