@@ -1,10 +1,10 @@
 use super::*;
 use crate::dynamics::DetectorMode;
 use crate::params::BandParams;
-use crate::pitch::{DetectionMode, DetectionRange, TargetMode};
-use crate::region::{HarmonicMode, MAX_HARMONIC};
+use crate::pitch::{DetectionMode, DetectionRange, PitchDetectionParams, TargetMode};
 
 mod dynamics;
+mod harmonic;
 
 const HEADER_WIDTH: f32 = 36.0;
 const HEADER_BUTTON_OFFSET: f32 = 43.0;
@@ -13,7 +13,6 @@ const THRESHOLD_WIDTH: f32 = 78.0;
 const COLUMN_GAP: f32 = 10.0;
 const DYNAMIC_WIDTH: f32 = 808.0 + HEADER_WIDTH + THRESHOLD_WIDTH + COLUMN_GAP;
 const PITCH_WIDTH: f32 = HEADER_WIDTH + 2.0 * 10.0 + 160.0 + 135.0 + 145.0 + 2.0 * COLUMN_GAP;
-const HARMONIC_WIDTH: f32 = 220.0;
 const RESONANCE_WIDTH: f32 = HEADER_WIDTH + 2.0 * 10.0 + 145.0 + 140.0 + 140.0 + 2.0 * COLUMN_GAP;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,8 +56,15 @@ impl Modifier {
         match self {
             Self::Dynamic => DYNAMIC_WIDTH,
             Self::Pitch => PITCH_WIDTH,
-            Self::Harmonic => HARMONIC_WIDTH,
+            Self::Harmonic => harmonic::width(crate::region::FundamentalSource::Tracked),
             Self::Resonance => RESONANCE_WIDTH,
+        }
+    }
+
+    pub(super) fn region_width(self, region: &crate::region::RegionParams) -> f32 {
+        match self {
+            Self::Harmonic => harmonic::width(region.harmonic.source.value()),
+            _ => self.width(),
         }
     }
 
@@ -354,72 +360,6 @@ impl EquartEditor {
         }
     }
 
-    fn harmonic_modifier(&self, ui: &mut egui::Ui, rect: Rect, index: usize) {
-        let Some(gui) = &self.gui else { return };
-        let setter = gui.param_setter();
-        let region = &self.params.regions[index];
-        let harmonic = &region.harmonic;
-        let bypassed = harmonic.bypassed.value();
-        let accent = regions::REGION_COLOR;
-        let header = Rect::from_min_size(rect.min, Vec2::new(HEADER_WIDTH, rect.height()));
-        let (toggle, remove) = modifier_header(ui, header, index, "HARMONIC", !bypassed, accent);
-        if toggle {
-            self.set(&setter, &harmonic.bypassed, !bypassed);
-        }
-        if remove {
-            self.set(&setter, &harmonic.enabled, false);
-            return;
-        }
-
-        let inner = Rect::from_min_max(
-            rect.min + Vec2::new(HEADER_WIDTH + 10.0, 10.0),
-            rect.max - Vec2::splat(8.0),
-        );
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .id_salt(("harmonic-modifier", index))
-                .max_rect(inner)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-            |ui| {
-                ui.horizontal(|ui| {
-                    for (mode, name, help) in [
-                        (HarmonicMode::Only, "Only", "Apply the region gain to the selected harmonics."),
-                        (HarmonicMode::Protect, "Protect", "Preserve the selected harmonics and cut the rest of the region by the absolute Gain."),
-                    ] {
-                        if ui.selectable_label(harmonic.mode.value() == mode, name)
-                            .on_hover_text(help).clicked()
-                        {
-                            self.set(&setter, &harmonic.mode, mode);
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Harmonics");
-                    let number = |ui: &mut egui::Ui, param: &IntParam, label| {
-                        let mut number = param.value();
-                        if ui.add(egui::DragValue::new(&mut number).range(1..=MAX_HARMONIC as i32))
-                            .on_hover_text(label).changed()
-                        {
-                            self.set(&setter, param, number);
-                        }
-                    };
-                    number(ui, &harmonic.first, "First harmonic");
-                    ui.label("–");
-                    number(ui, &harmonic.last, "Last harmonic");
-                });
-                if bypassed || region.bypass.value() || self.params.bypass.value() {
-                    ui.label("Bypassed");
-                } else if region.gain.value() == 0.0 {
-                    ui.label("Gain is 0 dB");
-                } else if let Some(hz) = self.telemetry.harmonic_hz() {
-                    ui.colored_label(accent, format!("Fundamental {hz:.1} Hz"));
-                } else {
-                    ui.label("Waiting for pitch");
-                }
-            },
-        );
-    }
-
     fn pitch_modifier(&self, ui: &mut egui::Ui, rect: Rect, index: usize) {
         let Some(gui) = &self.gui else { return };
         let setter = gui.param_setter();
@@ -449,20 +389,7 @@ impl EquartEditor {
                 ui.spacing_mut().item_spacing = Vec2::new(COLUMN_GAP, 4.0);
                 column(ui, 160.0, |ui| {
                     ui.strong("Detection");
-                    self.pitch_choice(
-                        ui,
-                        &setter,
-                        &pitch.algorithm,
-                        &DetectionMode::ALL,
-                        DetectionMode::label,
-                    );
-                    self.pitch_choice(
-                        ui,
-                        &setter,
-                        &pitch.profile,
-                        &DetectionRange::ALL,
-                        DetectionRange::label,
-                    );
+                    self.pitch_detection_choices(ui, &setter, &pitch.detection);
                     let detected = (active && band.enabled.value() && !self.params.bypass.value())
                         .then(|| self.telemetry.detected_pitch(index))
                         .flatten();
@@ -476,39 +403,83 @@ impl EquartEditor {
                     }
                 });
                 column(ui, 135.0, |ui| {
-                    ui.strong("Tracking");
-                    self.dynamic_number(ui, &setter, "Time", &pitch.tracking, 0.5)
-                        .on_hover_text(
-                            "Smooths note changes and the return to the band frequency.",
-                        );
-                    self.dynamic_number(ui, &setter, "Gate", &pitch.gate, 0.25)
-                        .on_hover_text("Minimum detector RMS level.");
-                    self.dynamic_number(ui, &setter, "Clarity", &pitch.clarity, 0.25)
-                        .on_hover_text("Minimum pitch confidence.");
-                });
-                column(ui, 145.0, |ui| {
-                    ui.strong("Target");
-                    self.pitch_choice(
+                    self.pitch_tracking_controls(
                         ui,
                         &setter,
-                        &pitch.target,
-                        &TargetMode::ALL,
-                        TargetMode::label,
+                        &pitch.detection,
+                        "Smooths note changes and the return to the band frequency.",
                     );
-                    match pitch.target.value() {
-                        TargetMode::Auto => {}
-                        TargetMode::Range => {
-                            self.dynamic_number(ui, &setter, "Min", &pitch.minimum, 1.0);
-                            self.dynamic_number(ui, &setter, "Max", &pitch.maximum, 1.0);
-                        }
-                        TargetMode::Reference => {
-                            self.dynamic_number(ui, &setter, "Freq", &pitch.reference, 1.0);
-                            self.dynamic_number(ui, &setter, "Tolerance", &pitch.tolerance, 0.1);
-                        }
-                    }
+                });
+                column(ui, 145.0, |ui| {
+                    self.pitch_target_controls(ui, &setter, &pitch.detection);
                 });
             },
         );
+    }
+
+    fn pitch_detection_choices(
+        &self,
+        ui: &mut egui::Ui,
+        setter: &ParamSetter<'_>,
+        detection: &PitchDetectionParams,
+    ) {
+        self.pitch_choice(
+            ui,
+            setter,
+            &detection.algorithm,
+            &DetectionMode::ALL,
+            DetectionMode::label,
+        );
+        self.pitch_choice(
+            ui,
+            setter,
+            &detection.profile,
+            &DetectionRange::ALL,
+            DetectionRange::label,
+        );
+    }
+
+    fn pitch_tracking_controls(
+        &self,
+        ui: &mut egui::Ui,
+        setter: &ParamSetter<'_>,
+        detection: &PitchDetectionParams,
+        time_help: &str,
+    ) {
+        ui.strong("Tracking");
+        self.dynamic_number(ui, setter, "Time", &detection.tracking, 0.5)
+            .on_hover_text(time_help);
+        self.dynamic_number(ui, setter, "Gate", &detection.gate, 0.25)
+            .on_hover_text("Minimum detector RMS level.");
+        self.dynamic_number(ui, setter, "Clarity", &detection.clarity, 0.25)
+            .on_hover_text("Minimum pitch confidence.");
+    }
+
+    fn pitch_target_controls(
+        &self,
+        ui: &mut egui::Ui,
+        setter: &ParamSetter<'_>,
+        detection: &PitchDetectionParams,
+    ) {
+        ui.strong("Target");
+        self.pitch_choice(
+            ui,
+            setter,
+            &detection.target,
+            &TargetMode::ALL,
+            TargetMode::label,
+        );
+        match detection.target.value() {
+            TargetMode::Auto => {}
+            TargetMode::Range => {
+                self.dynamic_number(ui, setter, "Min", &detection.minimum, 1.0);
+                self.dynamic_number(ui, setter, "Max", &detection.maximum, 1.0);
+            }
+            TargetMode::Reference => {
+                self.dynamic_number(ui, setter, "Freq", &detection.reference, 1.0);
+                self.dynamic_number(ui, setter, "Tolerance", &detection.tolerance, 0.1);
+            }
+        }
     }
 
     fn pitch_choice<T: nice_plug::prelude::Enum + Copy + PartialEq + 'static>(

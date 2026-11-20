@@ -363,5 +363,16 @@ mod tests {
         for name in &names {
             assert!(unique.insert(name.as_str()), "{name:?} is used twice");
         }
+
+        let ids: std::collections::HashSet<_> =
+            params.param_map().into_iter().map(|(id, _, _)| id).collect();
+
+        for key in [
+            "algorithm", "profile", "tracking", "gate", "clarity", "target", "minimum", "maximum",
+            "reference", "tolerance",
+        ] {
+            assert!(ids.contains(&format!("pitch_{key}_1")));
+            assert!(ids.contains(&format!("harmonic_pitch_{key}_1")));
+        }
     }
 }

@@ -1,12 +1,13 @@
-use super::pool::{HARMONIC_SOURCE, PitchBank, PitchKey};
-use super::{DetectionRange, PitchControl};
+use super::PitchControl;
+use super::pool::{HARMONIC_SOURCE, PitchBank, SOURCES};
 use crate::band::{BAND_COUNT, BandControl, COEFF_FRAMES};
+use crate::region::REGION_COUNT;
 
 /// shares detector input across matching requests, keeps per-band smoothing
 pub(crate) struct PitchRack {
     bank: PitchBank,
     bands: [PitchVoice; BAND_COUNT],
-    harmonic: PitchVoice,
+    harmonics: [PitchVoice; REGION_COUNT],
 }
 
 impl PitchRack {
@@ -14,14 +15,14 @@ impl PitchRack {
         Self {
             bank: PitchBank::new(rate),
             bands: [PitchVoice::default(); BAND_COUNT],
-            harmonic: PitchVoice::default(),
+            harmonics: [PitchVoice::default(); REGION_COUNT],
         }
     }
 
     pub(crate) fn reset(&mut self) {
         self.bank.reset();
         self.bands.fill(PitchVoice::default());
-        self.harmonic.clear();
+        self.harmonics.fill(PitchVoice::default());
     }
 
     pub(crate) fn configure(
@@ -29,20 +30,18 @@ impl PitchRack {
         rate: f32,
         bands: &[BandControl; BAND_COUNT],
         bypass: bool,
-        tracks_harmonics: bool,
+        harmonics: [Option<PitchControl>; REGION_COUNT],
     ) {
-        let mut requests = [None; BAND_COUNT + 1];
+        let mut requests = [None; SOURCES];
         if !bypass {
             for (request, band) in requests.iter_mut().zip(bands) {
                 *request = (band.enabled && band.pitch.enabled).then(|| band.pitch.into());
             }
+
+            for (request, harmonic) in requests[HARMONIC_SOURCE..].iter_mut().zip(harmonics) {
+                *request = harmonic.map(Into::into);
+            }
         }
-        requests[HARMONIC_SOURCE] = tracks_harmonics.then(|| {
-            PitchKey::from(PitchControl {
-                profile: DetectionRange::Low,
-                ..PitchControl::default()
-            })
-        });
         self.bank.configure(rate, requests);
     }
 
@@ -71,14 +70,21 @@ impl PitchRack {
         voice.target()
     }
 
-    pub(crate) fn refresh_harmonic(&mut self, rate: f32) -> Option<f32> {
-        if let Some(hz) = self.bank.detected(HARMONIC_SOURCE) {
-            self.harmonic
-                .advance(Some(hz), hz, PitchControl::default().tracking_ms, rate);
+    pub(crate) fn refresh_harmonic(
+        &mut self,
+        index: usize,
+        detection: Option<PitchControl>,
+        rate: f32,
+    ) -> Option<f32> {
+        let voice = &mut self.harmonics[index];
+        if let Some(settings) = detection
+            && let Some(hz) = self.bank.detected(HARMONIC_SOURCE + index)
+        {
+            voice.advance(Some(hz), hz, settings.tracking_ms, rate);
         } else {
-            self.harmonic.clear();
+            voice.clear();
         }
-        self.harmonic.target()
+        voice.target()
     }
 
     pub(crate) fn band_target(&self, index: usize) -> Option<f32> {
@@ -89,8 +95,8 @@ impl PitchRack {
         self.bank.detected(index)
     }
 
-    pub(crate) fn harmonic_hz(&self) -> Option<f32> {
-        self.harmonic.target()
+    pub(crate) fn harmonic_hz(&self, index: usize) -> Option<f32> {
+        self.harmonics[index].target()
     }
 }
 

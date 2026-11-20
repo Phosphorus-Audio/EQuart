@@ -439,7 +439,6 @@ impl EquartEditor {
                 controls: &display_controls,
                 offsets: &self.telemetry.dynamics(),
                 regions: &regions,
-                harmonic_hz: self.telemetry.harmonic_hz(),
                 telemetry: &self.telemetry,
                 rate: design_rate,
                 selected: self.selected,

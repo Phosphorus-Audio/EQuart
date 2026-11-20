@@ -86,9 +86,69 @@ fn plot_menu_bands_and_regions() {
         editor.params.regions[0].harmonic.mode.value(),
         crate::region::HarmonicMode::Protect
     );
+
+    let tracked_panel = editor
+        .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 0.0)
+        .unwrap();
+
+    let target = find_text(&mut editor, 5.03, "Auto");
+
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+            time: Some(5.04),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.draw(ui),
+    );
+
+    let target_button = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(shape) if shape.rect.contains(target) && shape.rect.height() < 50.0 => {
+                Some(shape.rect)
+            }
+            _ => None,
+        })
+        .min_by(|a, b| a.area().total_cmp(&b.area()))
+        .expect("Target selector draws a button");
+
+    assert!(
+        tracked_panel.contains_rect(target_button),
+        "Target button {target_button:?} overflows Tracked panel {tracked_panel:?}"
+    );
+
+    click(&ctx, &mut editor, 5.05, target);
+
+    let reference = find_text(&mut editor, 5.12, "Reference");
+
+    click(&ctx, &mut editor, 5.13, reference);
+    assert_eq!(
+        editor.params.regions[0].harmonic.detection.target.value(),
+        crate::pitch::TargetMode::Reference
+    );
+
+    let source = find_text(&mut editor, 5.20, "Tracked");
+    click(&ctx, &mut editor, 5.22, source);
+
+    let fixed = find_text(&mut editor, 5.29, "Fixed");
+    click(&ctx, &mut editor, 5.31, fixed);
+
+    assert_eq!(
+        editor.params.regions[0].harmonic.source.value(),
+        crate::region::FundamentalSource::Fixed
+    );
+
     let expanded = editor
         .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 0.0)
         .unwrap();
+    assert!(
+        expanded.width() < tracked_panel.width(),
+        "Fixed should size the panel to its two visible columns"
+    );
+
     let action = |y| Pos2::new(expanded.left() + panel.width() - 18.0, expanded.top() + y);
     click(&ctx, &mut editor, 5.4, action(15.5));
     assert_eq!(editor.selected_region, None);

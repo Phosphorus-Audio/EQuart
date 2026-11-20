@@ -179,8 +179,8 @@ impl Engine {
         }
     }
 
-    pub fn harmonic_hz(&self) -> Option<f32> {
-        self.pitch.harmonic_hz()
+    pub fn harmonic_hz(&self, index: usize) -> Option<f32> {
+        self.pitch.harmonic_hz(index)
     }
 
     /// live dB offset per band for UI
@@ -272,15 +272,11 @@ impl Engine {
             self.resonance.reset();
         }
         self.resonance_live = resonance_live;
-        let tracks_harmonics = !controls.bypass
-            && controls.regions.iter().any(|region| {
-                region.enabled && !region.bypass && region.harmonic.enabled && region.gain != 0.0
-            });
         self.pitch.configure(
             self.rate,
             &controls.bands,
             controls.bypass,
-            tracks_harmonics,
+            controls.regions.map(RegionControl::harmonic_detection),
         );
         let analyze = self.analyze;
         let oversampling = controls.oversampling;
@@ -516,13 +512,15 @@ impl Engine {
             }
             band.update(control, rate, self.alpha, self.step);
         }
-        let harmonic_hz = self.pitch.refresh_harmonic(self.rate);
-        for ((region, &control), reductions) in self
+        for (index, ((region, &control), reductions)) in self
             .regions
             .iter_mut()
             .zip(&controls.regions)
             .zip(self.resonance.reductions())
+            .enumerate()
         {
+            let harmonic_hz =
+                self.pitch.refresh_harmonic(index, control.harmonic_detection(), self.rate);
             region.update(control, rate, harmonic_hz, self.alpha, self.step, reductions);
         }
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::params::FREQUENCY_MAX_HZ;
-use crate::region::RegionControl;
+use crate::region::{HarmonicControl, RegionControl};
 use spectrum::Plot;
 
 pub(super) const REGION_COLOR: Color32 = Color32::from_rgb(113, 161, 225);
@@ -239,12 +239,21 @@ impl EquartEditor {
         self.set(setter, &res.smooth, control.resonance.smooth);
         self.set(setter, &res.stereo_link, control.resonance.stereo_link);
         self.set(setter, &res.bias, control.resonance.bias);
-        self.set(setter, &region.harmonic.enabled, control.harmonic.enabled);
-        self.set(setter, &region.harmonic.bypassed, false);
-        self.set(setter, &region.harmonic.mode, control.harmonic.mode);
-        self.set(setter, &region.harmonic.first, control.harmonic.first);
-        self.set(setter, &region.harmonic.last, control.harmonic.last);
+        self.write_harmonic(setter, index, control.harmonic);
         self.set(setter, &region.enabled, control.enabled);
+    }
+
+    fn write_harmonic(&self, setter: &ParamSetter<'_>, index: usize, control: HarmonicControl) {
+        let harmonic = &self.params.regions[index].harmonic;
+        self.set(setter, &harmonic.enabled, control.enabled);
+        self.set(setter, &harmonic.bypassed, false);
+        self.set(setter, &harmonic.mode, control.mode);
+        self.set(setter, &harmonic.first, control.first);
+        self.set(setter, &harmonic.last, control.last);
+        self.set(setter, &harmonic.width, control.width_percent);
+        self.set(setter, &harmonic.source, control.source);
+        self.set(setter, &harmonic.fixed_hz, control.fixed_hz);
+        self.write_pitch_detection(setter, &harmonic.detection, control.detection);
     }
 
     fn conversion_rate(&self) -> f32 {
@@ -299,16 +308,7 @@ impl EquartEditor {
         self.set(setter, &region.bypass, false);
         self.set(setter, &region.resonance.enabled, false);
         self.set(setter, &region.resonance.bypassed, false);
-        let harmonic = &region.harmonic;
-        self.set(setter, &harmonic.enabled, false);
-        self.set(setter, &harmonic.bypassed, false);
-        self.set(setter, &harmonic.mode, harmonic.mode.default_plain_value());
-        self.set(
-            setter,
-            &harmonic.first,
-            harmonic.first.default_plain_value(),
-        );
-        self.set(setter, &harmonic.last, harmonic.last.default_plain_value());
+        self.write_harmonic(setter, index, HarmonicControl::default());
         for param in [
             &region.low,
             &region.high,
@@ -347,10 +347,12 @@ impl EquartEditor {
     }
 
     fn region_panel_width(&self, index: usize) -> f32 {
+        let region = &self.params.regions[index];
         REGION_PANEL_WIDTH
             + modifiers::Modifier::REGION.into_iter()
-                .filter(|m| m.attached_to_region(&self.params.regions[index]))
-                .map(modifiers::Modifier::width).sum::<f32>()
+                .filter(|m| m.attached_to_region(region))
+                .map(|modifier| modifier.region_width(region))
+                .sum::<f32>()
     }
 
     pub(super) fn region_panel(&mut self, ui: &mut egui::Ui, canvas: Rect, rate: f32) {
@@ -420,7 +422,10 @@ impl EquartEditor {
         self.show_modifier_picker(&add, target);
         let mut origin = base.right_top();
         for modifier in modifiers::Modifier::REGION.into_iter().filter(|m| m.attached_to_region(region)) {
-            let module = Rect::from_min_size(origin, Vec2::new(modifier.width(), panel.height()));
+            let module = Rect::from_min_size(
+                origin,
+                Vec2::new(modifier.region_width(region), panel.height()),
+            );
             origin = module.right_top();
             if self.reveal_modifier == Some((index, modifier)) {
                 ui.scroll_to_rect(module, Some(egui::Align::Max));

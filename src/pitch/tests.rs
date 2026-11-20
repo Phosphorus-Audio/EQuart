@@ -1,4 +1,4 @@
-use super::pool::{HARMONIC_SOURCE, PitchBank, PitchInput, PitchKey};
+use super::pool::{HARMONIC_SOURCE, PitchBank, PitchInput, PitchKey, SOURCES};
 use super::{DetectionMode, DetectionRange, TargetMode};
 use crate::band::{BAND_COUNT, BandControl};
 use crate::engine::{Controls, Engine};
@@ -116,7 +116,7 @@ fn pool_shares_and_keeps_lock() {
     settings.tracking_ms = 100.0;
     settings.target.reference = 500.0; // Unused in Auto.
     assert_eq!(PitchKey::from(settings), original);
-    let mut requests = [None; BAND_COUNT + 1];
+    let mut requests = [None; SOURCES];
     requests[0] = Some(original);
     requests[1] = Some(settings.into());
     requests[HARMONIC_SOURCE] = Some(original);

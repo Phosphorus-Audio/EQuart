@@ -1,8 +1,9 @@
 use super::{DetectionMode, DetectionRange, Detector, PitchControl, Target, TargetMode};
 use crate::band::BAND_COUNT;
+use crate::region::REGION_COUNT;
 
 pub(super) const HARMONIC_SOURCE: usize = BAND_COUNT;
-const SOURCES: usize = BAND_COUNT + 1;
+pub(super) const SOURCES: usize = BAND_COUNT + REGION_COUNT;
 const _: () = assert!(SOURCES <= u64::BITS as usize);
 
 /// only settings that affect pitch detection (tracking/unused target fields don't split groups)

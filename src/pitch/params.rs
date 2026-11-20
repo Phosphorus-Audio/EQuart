@@ -7,6 +7,12 @@ pub struct PitchParams {
     pub enabled: BoolParam,
     #[id = "pitch_bypassed"]
     pub bypassed: BoolParam,
+    #[nested]
+    pub detection: PitchDetectionParams,
+}
+
+#[derive(Params)]
+pub struct PitchDetectionParams {
     #[id = "pitch_algorithm"]
     pub algorithm: EnumParam<DetectionMode>,
     #[id = "pitch_profile"]
@@ -31,8 +37,24 @@ pub struct PitchParams {
 
 impl PitchParams {
     pub fn new(band: &str) -> Self {
-        let defaults = PitchControl::default();
-        let name = |label| format!("{band} Pitch {label}");
+        Self {
+            enabled: BoolParam::new(format!("{band} Pitch Enabled"), false),
+            bypassed: BoolParam::new(format!("{band} Pitch Bypassed"), false),
+            detection: PitchDetectionParams::new(&format!("{band} Pitch"), PitchControl::default()),
+        }
+    }
+
+    pub fn control(&self) -> PitchControl {
+        if !self.enabled.value() || self.bypassed.value() {
+            return PitchControl::default();
+        }
+        self.detection.control()
+    }
+}
+
+impl PitchDetectionParams {
+    pub fn new(prefix: &str, defaults: PitchControl) -> Self {
+        let name = |label| format!("{prefix} {label}");
         let linear = |label, default, min, max, unit| {
             FloatParam::new(name(label), default, FloatRange::Linear { min, max }).with_unit(unit)
         };
@@ -48,8 +70,6 @@ impl PitchParams {
             .with_unit(" Hz")
         };
         Self {
-            enabled: BoolParam::new(name("Enabled"), false),
-            bypassed: BoolParam::new(name("Bypassed"), false),
             algorithm: EnumParam::new(name("Algorithm"), defaults.algorithm),
             profile: EnumParam::new(name("Detection Range"), defaults.profile),
             tracking: FloatParam::new(
@@ -73,9 +93,6 @@ impl PitchParams {
     }
 
     pub fn control(&self) -> PitchControl {
-        if !self.enabled.value() || self.bypassed.value() {
-            return PitchControl::default();
-        }
         PitchControl {
             enabled: true,
             algorithm: self.algorithm.value(),

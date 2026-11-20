@@ -128,6 +128,7 @@ impl Plugin for Equart {
                     .or_insert(ParamValue::F32(-depth));
             }
         }
+        region::HarmonicControl::migrate_state(state);
     }
 
     fn editor(&mut self, _: AsyncExecutor<Self>) -> Option<Self::Editor> {

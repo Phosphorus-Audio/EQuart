@@ -10,7 +10,7 @@ mod target;
 mod tests;
 mod tracker;
 
-pub use params::PitchParams;
+pub use params::{PitchDetectionParams, PitchParams};
 pub(crate) use rack::PitchRack;
 pub use range::DetectionRange;
 pub use target::{Target, TargetMode};

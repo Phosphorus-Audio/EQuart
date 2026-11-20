@@ -1,7 +1,7 @@
 mod harmonic;
 pub(crate) mod resonance;
 
-pub use harmonic::{HarmonicControl, HarmonicMode, MAX_HARMONIC};
+pub use harmonic::{FundamentalSource, HarmonicControl, HarmonicMode, MAX_HARMONIC};
 
 use crate::band::{Band, BandControl, SECTIONS};
 use crate::filter::{CutSlope, FilterKind, bell_bandwidth};
@@ -45,6 +45,15 @@ impl Default for RegionControl {
 }
 
 impl RegionControl {
+    pub(crate) fn harmonic_detection(self) -> Option<crate::pitch::PitchControl> {
+        (self.enabled
+            && !self.bypass
+            && self.gain != 0.0
+            && self.harmonic.enabled
+            && self.harmonic.source == FundamentalSource::Tracked)
+        .then_some(self.harmonic.detection)
+    }
+
     pub fn bounds(self) -> [f32; 2] {
         [self.low.min(self.high), self.low.max(self.high)]
     }

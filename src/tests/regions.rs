@@ -40,8 +40,9 @@ fn region_boost_and_cut() {
 }
 
 #[test]
-fn region_depth_migration() {
+fn region_parameter_migration() {
     use nice_plug::plugin::{ParamValue, Plugin, PluginState};
+    use nice_plug::prelude::Enum;
 
     let mut state = PluginState {
         version: String::new(),
@@ -49,6 +50,7 @@ fn region_depth_migration() {
             ("region_depth_1".into(), ParamValue::F32(9.0)),
             ("region_depth_6".into(), ParamValue::F32(5.0)),
             ("region_gain_6".into(), ParamValue::F32(3.0)),
+            ("harmonic_width_6".into(), ParamValue::F32(35.0)),
         ]
         .into(),
         fields: Default::default(),
@@ -63,6 +65,22 @@ fn region_depth_migration() {
         Some(ParamValue::F32(3.0))
     ));
     assert!(!state.params.contains_key("region_depth_1"));
+    assert!(matches!(
+        state.params.get("harmonic_width_1"),
+        Some(ParamValue::F32(20.0))
+    ));
+    assert!(matches!(
+        state.params.get("harmonic_width_6"),
+        Some(ParamValue::F32(35.0))
+    ));
+    assert!(matches!(
+        state.params.get("harmonic_source_1"),
+        Some(ParamValue::I32(0))
+    ));
+    assert!(matches!(
+        state.params.get("harmonic_pitch_profile_1"),
+        Some(ParamValue::I32(index)) if *index as usize == crate::pitch::DetectionRange::Low.to_index()
+    ));
 }
 
 #[test]
@@ -105,6 +123,13 @@ fn harmonic_region_modes() {
 
     let f0 = Some(110.0);
     assert!(measure_harmonic(control, 440.0, f0) < -6.0);
+    let mut wide = control;
+    wide.harmonic.width_percent = 80.0;
+    assert!(measure_harmonic(wide, 455.0, f0) < measure_harmonic(control, 455.0, f0) - 3.0);
+    let mut fixed = control;
+    fixed.harmonic.source = crate::region::FundamentalSource::Fixed;
+    fixed.harmonic.fixed_hz = 110.0;
+    assert!(measure_harmonic(fixed, 440.0, None) < -6.0);
     assert!(measure_harmonic(control, 880.0, f0) < -5.0);
     assert!(measure_harmonic(control, 495.0, f0).abs() < 0.3);
     assert!(measure_harmonic(control, 990.0, f0).abs() < 0.1);
@@ -250,6 +275,13 @@ fn harmonic_tracks_dry() {
     let mut settings = controls(flat_bands());
     settings.regions[0].enabled = true;
     settings.regions[0].harmonic.enabled = true;
+    settings.regions[1] = settings.regions[0];
+    settings.regions[1].harmonic.detection.target = crate::pitch::Target {
+        mode: crate::pitch::TargetMode::Range,
+        minimum: 300.0,
+        maximum: 320.0,
+        ..Default::default()
+    };
     let mut left: Vec<f32> = (0..48_000)
         .map(|i| {
             let phase = std::f32::consts::TAU * 220.0 * i as f32 / RATE;
@@ -261,8 +293,9 @@ fn harmonic_tracks_dry() {
         engine.process_block(&mut left, &mut right, &settings)
     });
     let detected = engine
-        .harmonic_hz()
+        .harmonic_hz(0)
         .expect("Harmonic should lock to the dry input");
     assert!((detected - 220.0).abs() < 2.0, "detected {detected} Hz");
+    assert_eq!(engine.harmonic_hz(1), None);
     assert_eq!(engine.latency(), 0);
 }

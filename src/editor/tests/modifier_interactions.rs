@@ -137,7 +137,7 @@ fn modifier_picker_add() {
             let pyin = find_text(&mut editor, 2.15, "pYIN");
             click(&ctx, &mut editor, 2.2, pyin);
             assert_eq!(
-                params.band(0).pitch.algorithm.value(),
+                params.band(0).pitch.detection.algorithm.value(),
                 crate::pitch::DetectionMode::Pyin
             );
             assert!(!params.band(0).dynamics.enabled.value());

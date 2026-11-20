@@ -67,7 +67,6 @@ pub(super) struct ResponseInput<'a> {
     pub(super) controls: &'a [BandControl; BAND_COUNT],
     pub(super) offsets: &'a [f32; BAND_COUNT],
     pub(super) regions: &'a [RegionControl],
-    pub(super) harmonic_hz: Option<f32>,
     pub(super) telemetry: &'a crate::Telemetry,
     pub(super) rate: f32,
     pub(super) selected: Option<usize>,
@@ -86,7 +85,6 @@ pub(super) fn draw_response(
         controls,
         offsets,
         regions,
-        harmonic_hz,
         telemetry,
         rate,
         selected,
@@ -101,7 +99,7 @@ pub(super) fn draw_response(
         .iter()
         .enumerate()
         .flat_map(|(i, &region)| {
-            region.filter_plan(rate, harmonic_hz).chain(
+            region.filter_plan(rate, telemetry.harmonic_hz(i)).chain(
                 telemetry
                     .resonance_reductions(i)
                     .into_iter()

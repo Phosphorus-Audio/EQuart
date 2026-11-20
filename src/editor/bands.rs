@@ -1,4 +1,5 @@
 use super::*;
+use crate::pitch::{PitchControl, PitchDetectionParams};
 
 impl EquartEditor {
     /// Make one band the whole selection, panel and all.
@@ -73,21 +74,7 @@ impl EquartEditor {
         self.set(setter, &band.dynamics.below_enabled, false);
         self.set(setter, &band.pitch.enabled, false);
         self.set(setter, &band.pitch.bypassed, false);
-        self.set(
-            setter,
-            &band.pitch.algorithm,
-            band.pitch.algorithm.default_plain_value(),
-        );
-        self.set(
-            setter,
-            &band.pitch.profile,
-            band.pitch.profile.default_plain_value(),
-        );
-        self.set(
-            setter,
-            &band.pitch.target,
-            band.pitch.target.default_plain_value(),
-        );
+        self.write_pitch_detection(setter, &band.pitch.detection, PitchControl::default());
         for detector in [&band.dynamics.detect, &band.dynamics.relative] {
             self.set(setter, &detector.mode, detector.mode.default_plain_value());
             self.set(
@@ -114,13 +101,6 @@ impl EquartEditor {
             &band.dynamics.relative.q,
             &band.dynamics.relative_amount,
             &band.dynamics.onsets_amount,
-            &band.pitch.tracking,
-            &band.pitch.gate,
-            &band.pitch.clarity,
-            &band.pitch.minimum,
-            &band.pitch.maximum,
-            &band.pitch.reference,
-            &band.pitch.tolerance,
         ] {
             let default = param.default_plain_value();
             if param.value() != default {
@@ -128,6 +108,30 @@ impl EquartEditor {
             }
         }
         self.params.clear_placed(index);
+    }
+
+    pub(super) fn write_pitch_detection(
+        &self,
+        setter: &ParamSetter<'_>,
+        detection: &PitchDetectionParams,
+        control: PitchControl,
+    ) {
+        self.set(setter, &detection.algorithm, control.algorithm);
+        self.set(setter, &detection.profile, control.profile);
+        self.set(setter, &detection.target, control.target.mode);
+        for (param, value) in [
+            (&detection.tracking, control.tracking_ms),
+            (&detection.gate, control.gate_db),
+            (&detection.clarity, control.clarity * 100.0),
+            (&detection.minimum, control.target.minimum),
+            (&detection.maximum, control.target.maximum),
+            (&detection.reference, control.target.reference),
+            (&detection.tolerance, control.target.tolerance),
+        ] {
+            if param.value() != value {
+                self.set(setter, param, value);
+            }
+        }
     }
 
     /// Reset all existing bands and active regions back to 0 dB.

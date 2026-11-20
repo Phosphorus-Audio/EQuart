@@ -60,7 +60,7 @@ pub(crate) struct Telemetry {
     dynamic_levels: [AtomicU32; BAND_COUNT],
     detected_pitch: [AtomicU32; BAND_COUNT],
     tracked_frequency: [AtomicU32; BAND_COUNT],
-    harmonic_hz: AtomicU32,
+    harmonic_hz: [AtomicU32; REGION_COUNT],
     /// Momentary editor request. Zero means normal output.
     delta_region: AtomicU32,
     resonance: [[AtomicU32; REDUCTIONS]; REGION_COUNT],
@@ -83,7 +83,7 @@ impl Default for Telemetry {
             dynamic_levels: std::array::from_fn(|_| AtomicU32::new(f32::NEG_INFINITY.to_bits())),
             detected_pitch: std::array::from_fn(|_| AtomicU32::new(0)),
             tracked_frequency: std::array::from_fn(|_| AtomicU32::new(0)),
-            harmonic_hz: AtomicU32::new(0),
+            harmonic_hz: Default::default(),
             delta_region: AtomicU32::new(0),
             resonance: Default::default(),
         }
@@ -164,10 +164,12 @@ impl Telemetry {
                 atomic.store(u32::from(hz) | (db << 16) | (ch << 30), Ordering::Relaxed);
             }
         }
-        self.harmonic_hz.store(
-            engine.harmonic_hz().unwrap_or(0.0).to_bits(),
-            Ordering::Relaxed,
-        );
+        for (index, hz) in self.harmonic_hz.iter().enumerate() {
+            hz.store(
+                engine.harmonic_hz(index).unwrap_or(0.0).to_bits(),
+                Ordering::Relaxed,
+            );
+        }
     }
 
     pub(crate) fn meters(&self) -> MeterReadings {
@@ -263,8 +265,8 @@ impl Telemetry {
         })
     }
 
-    pub(crate) fn harmonic_hz(&self) -> Option<f32> {
-        let hz = f32::from_bits(self.harmonic_hz.load(Ordering::Relaxed));
+    pub(crate) fn harmonic_hz(&self, index: usize) -> Option<f32> {
+        let hz = f32::from_bits(self.harmonic_hz[index].load(Ordering::Relaxed));
         (hz > 0.0).then_some(hz)
     }
 }
