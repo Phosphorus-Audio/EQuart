@@ -11,7 +11,7 @@ Static SVF sections run on an AVX2 block kernel (8 frames at a time via short co
 
 But! If something changes a parameter (like dragging a knob or running automation), it falls back to per-sample processing only while it's moving.
 
-`cargo test --release bench_engine_throughput` (48 kHz stereo, best of 5 runs):
+`cargo test --release bench_engine_throughput -- --ignored --nocapture` (48 kHz stereo, best of 5 runs):
 
 | case | time | of one core |
 | --- | --- | --- |

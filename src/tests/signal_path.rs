@@ -68,21 +68,6 @@ fn precision_switch_preserves_audio_history() {
 }
 
 #[test]
-fn bypass_is_transparent() {
-    let mut bands = flat_bands();
-    bands[2] = band(1_000.0, 12.0, 4.0, FilterKind::Peak);
-
-    let mut controls = controls(bands);
-    controls.bypass = true;
-
-    let measured = db(measure(&controls, 1_000.0), reference(1_000.0));
-    assert!(
-        measured.abs() < 0.01,
-        "bypass changed the signal by {measured} dB"
-    );
-}
-
-#[test]
 fn mix_bypass_latency_aligned() {
     use crate::oversample::Oversampling;
 

@@ -36,15 +36,18 @@ fn block_vs_sample_match() {
         expected.push(out);
     }
 
-    // odd block size 97 (not aligned to block/coeff intervals)
+    // Alternate full SIMD blocks and scalar-only host calls without resetting the state.
     let mut blocked = Engine::new(RATE);
     blocked.analyze = false;
     let mut actual = Vec::new();
     let mut left = vec![0.0_f32; 97];
     let mut right = vec![0.0_f32; 97];
     let mut offset = 0;
-    while offset < total {
-        let len = (total - offset).min(97);
+    for requested in [97, 1, 7].into_iter().cycle() {
+        if offset == total {
+            break;
+        }
+        let len = (total - offset).min(requested);
         for i in 0..len {
             left[i] = input[offset + i];
             right[i] = input[offset + i] * 0.8;

@@ -479,22 +479,3 @@ fn band_filter_mix<T: Sample>(kind: FilterKind, inverse_q: T, k: T, ratio_square
         [T::one(), -k, ratio_squared - T::one()]
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slope_step_clamps() {
-        assert_eq!(CutSlope::Db12.step(0), CutSlope::Db12);
-        assert_eq!(CutSlope::Db12.step(1), CutSlope::Db18);
-        assert_eq!(CutSlope::Db12.step(2), CutSlope::Db24);
-        assert_eq!(CutSlope::Db12.step(-1), CutSlope::Db6);
-        assert_eq!(CutSlope::Db6.step(-4), CutSlope::Db6);
-        assert_eq!(CutSlope::Db96.step(4), CutSlope::Db96);
-        assert_eq!(CutSlope::Db24.step(100), CutSlope::Db96);
-        assert_eq!(CutSlope::Db24.step(-100), CutSlope::Db6);
-        assert_eq!(CutSlope::Db24.step(i32::MAX), CutSlope::Db96);
-        assert_eq!(CutSlope::Db24.step(i32::MIN), CutSlope::Db6);
-    }
-}

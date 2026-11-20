@@ -185,13 +185,6 @@ impl Kernel {
         }
     }
 
-    /// Filter exactly one block in place.
-    #[cfg(test)]
-    #[inline]
-    pub fn apply(&self, state: &mut State, buf: &mut [f32; BLOCK]) {
-        self.apply_slice(state, buf);
-    }
-
     /// # Safety
     /// The current CPU must support AVX2 and FMA.
     #[cfg(target_arch = "x86_64")]
@@ -396,58 +389,4 @@ pub fn peak(left: &[f32], right: &[f32]) -> f32 {
         }
     }
     peak
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::filter::FilterKind;
-
-    fn random(len: usize, seed: u32) -> Vec<f32> {
-        let mut state = seed;
-        (0..len)
-            .map(|_| {
-                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                (state >> 8) as f32 / 8_388_608.0 - 1.0
-            })
-            .collect()
-    }
-
-    #[test]
-    fn kernel_switch_preserves_state() {
-        let coeff = Coefficients::for_kind(48_000.0, 1_200.0, 1.0, 8.0, FilterKind::Peak);
-        let kernel = Kernel::new(&coeff);
-        let input = random(1_024, 0xbeef);
-
-        // Alternate between the block kernel and the per-sample kernel; the
-        // state is shared, so the output must match a single-path run.
-        let mut mixed_state = State::default();
-        let mut mixed = Vec::new();
-        for (block, chunk) in input.chunks_exact(BLOCK).enumerate() {
-            let mut buf = [0.0; BLOCK];
-            buf.copy_from_slice(chunk);
-            if block % 3 == 0 {
-                for sample in buf.iter_mut() {
-                    *sample = step(&mut mixed_state, &coeff, *sample);
-                }
-            } else {
-                kernel.apply(&mut mixed_state, &mut buf);
-            }
-            mixed.extend_from_slice(&buf);
-        }
-
-        let mut reference = State::default();
-        let expected: Vec<f32> = input
-            .iter()
-            .map(|x| step(&mut reference, &coeff, *x))
-            .collect();
-
-        let worst = expected
-            .iter()
-            .zip(&mixed)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0_f32, f32::max);
-
-        assert!(worst < 1e-5, "path switching drifted {worst}");
-    }
 }

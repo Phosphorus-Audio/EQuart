@@ -45,6 +45,7 @@ fn bench_case(label: &str, controls: Controls, frames: usize, analyze: bool) -> 
 }
 
 #[test]
+#[ignore = "manual throughput benchmark"]
 fn bench_engine_throughput() {
     let frames = RATE as usize;
 
