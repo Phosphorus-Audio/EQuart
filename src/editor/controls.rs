@@ -20,7 +20,7 @@ const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 420.0;
 const MENU_CARD_H: f32 = 372.0;
 const LAYOUT_CARD_W: f32 = 220.0;
-const LAYOUT_CARD_H: f32 = 184.0;
+const LAYOUT_CARD_H: f32 = 210.0;
 const MENU_CARD_MARGIN: f32 = 12.0;
 const MENU_CARD_GAP: f32 = 14.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -225,6 +225,18 @@ impl EquartEditor {
             accent,
         ) {
             self.params.meter_fade.store(!fade, Ordering::Relaxed);
+            ui.ctx().request_repaint();
+        }
+
+        let piano_fade = self.params.piano_key_fade.load(Ordering::Relaxed);
+        if menu::switch(
+            &mut content,
+            group.with("piano-key-fade"),
+            "Piano key fade",
+            piano_fade,
+            accent,
+        ) {
+            self.params.piano_key_fade.store(!piano_fade, Ordering::Relaxed);
             ui.ctx().request_repaint();
         }
 

@@ -39,7 +39,7 @@ pub(super) use meter::draw_level_meter;
 
 /// keyboard strip height + top gap
 pub(crate) const KEYS_BAND: f32 = 26.0;
-const KEYS_HEIGHT: f32 = 22.0;
+const KEYS_HEIGHT: f32 = 27.0;
 /// fade width at both ends of keyboard
 const KEYS_FADE: f32 = 78.0;
 
@@ -91,6 +91,7 @@ impl EquartEditor {
             .filter(|_| !self.dial.is_shown());
         let (eq_highlight, spectrum_highlight) = self.axis_controls(ui, &plot, outer);
         draw_grid_lines(&p, &plot, outer);
+        let piano_key_fade = self.params.piano_key_fade.load(Ordering::Relaxed);
 
         if self.params.bypass.value() {
             // fade edges before watermark
@@ -99,11 +100,10 @@ impl EquartEditor {
                 &p,
                 &plot,
                 outer,
-                hover,
                 eq_highlight,
                 spectrum_highlight,
-                self.accent(),
             );
+            draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
             p.text(
                 plot.rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -468,11 +468,10 @@ impl EquartEditor {
             &p,
             &plot,
             outer,
-            hover,
             eq_highlight,
             spectrum_highlight,
-            self.accent(),
         );
+        draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
         if let Some(mode) = phase_mode {
             phase::draw_label(&p, &plot, outer, mode);
         }

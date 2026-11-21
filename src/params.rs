@@ -96,6 +96,9 @@ pub struct EquartParams {
 
     #[persist = "meter_visible"]
     pub meter_visible: AtomicBool,
+
+    #[persist = "piano_key_fade"]
+    pub piano_key_fade: AtomicBool,
 }
 
 impl Default for EquartParams {
@@ -143,6 +146,7 @@ impl Default for EquartParams {
             phase_unwrapped: AtomicBool::new(false),
             meter_fade: AtomicBool::new(true),
             meter_visible: AtomicBool::new(true),
+            piano_key_fade: AtomicBool::new(false),
         }
     }
 }

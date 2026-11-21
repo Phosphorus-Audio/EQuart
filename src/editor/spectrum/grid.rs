@@ -77,10 +77,8 @@ pub(super) fn draw_axis_labels(
     p: &egui::Painter,
     plot: &Plot,
     outer: Rect,
-    pointer: Option<Pos2>,
     eq_highlight: f32,
     spectrum_highlight: f32,
-    tint: Color32,
 ) {
     for (rect, alpha) in [
         (
@@ -160,6 +158,4 @@ pub(super) fn draw_axis_labels(
             ),
         );
     }
-
-    draw_keys(p, plot, outer, pointer, tint);
 }

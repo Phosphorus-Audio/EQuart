@@ -45,8 +45,8 @@ pub(super) fn visible_notes(plot: &Plot, strip: Rect) -> std::ops::RangeInclusiv
 
 pub(crate) fn keys_strip(outer: Rect) -> Rect {
     Rect::from_min_max(
-        Pos2::new(outer.left(), outer.bottom() - KEYS_HEIGHT - 5.0),
-        Pos2::new(outer.right(), outer.bottom() - 5.0),
+        Pos2::new(outer.left(), outer.bottom() - KEYS_HEIGHT),
+        outer.right_bottom(),
     )
 }
 
@@ -56,6 +56,7 @@ pub(super) fn draw_keys(
     outer: Rect,
     pointer: Option<Pos2>,
     tint: Color32,
+    bottom_fade: bool,
 ) {
     let rect = keys_strip(outer);
     let painter = p.with_clip_rect(rect);
@@ -75,7 +76,7 @@ pub(super) fn draw_keys(
     let range = visible_notes(plot, rect);
     let semitone = x(1.0) - x(0.0);
     let white_top = rect.top() + 1.0;
-    let white_bottom = rect.bottom() - 1.0;
+    let white_bottom = rect.bottom();
     let highlight = tint.gamma_multiply(0.36);
 
     for note in range.clone() {
@@ -124,7 +125,7 @@ pub(super) fn draw_keys(
         }
 
         let centre = x(note as f32);
-        let half = (semitone * 0.34).max(0.85);
+        let half = (semitone * 0.38).max(0.95);
         let key = Rect::from_min_max(
             Pos2::new(centre - half, rect.top()),
             Pos2::new(centre + half, rect.top() + KEYS_HEIGHT * 0.58),
@@ -160,6 +161,14 @@ pub(super) fn draw_keys(
         mesh.add_triangle(0, 1, 2);
         mesh.add_triangle(1, 3, 2);
         painter.add(egui::Shape::mesh(mesh));
+    }
+
+    if bottom_fade {
+        let bottom = Rect::from_min_max(
+            Pos2::new(rect.left(), rect.bottom() - 8.0),
+            rect.right_bottom(),
+        );
+        gradient_rect(&painter, bottom, wash(0), wash(128));
     }
 
     if let Some((pointer_x, hz, note)) = hovered {
