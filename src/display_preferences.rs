@@ -60,6 +60,7 @@ pub(crate) struct LayoutPreferences {
     pub(crate) piano_key_fade: bool,
     pub(crate) phase_curve: bool,
     pub(crate) phase_unwrapped: bool,
+    pub(crate) footer_border: bool,
 }
 
 impl Default for LayoutPreferences {
@@ -71,6 +72,7 @@ impl Default for LayoutPreferences {
             piano_key_fade: true,
             phase_curve: false,
             phase_unwrapped: false,
+            footer_border: false,
         }
     }
 }
@@ -243,11 +245,13 @@ mod tests {
                 piano_key_fade: false,
                 phase_curve: true,
                 phase_unwrapped: true,
+                footer_border: true,
             },
         };
 
         first.reload().unwrap();
         assert_eq!(first.read(), DisplayPreferences::default());
+        assert!(!first.read().layout.footer_border);
 
         std::thread::scope(|scope| {
             scope.spawn(|| {
@@ -281,6 +285,7 @@ mod tests {
             "piano_key_fade",
             "phase_curve",
             "phase_unwrapped",
+            "footer_border",
         ] {
             assert!(
                 !state.contains_key(id),

@@ -166,13 +166,13 @@ impl EquartEditor {
             Color32::from_rgba_unmultiplied(46, 46, 46, BAR_ALPHA),
             Color32::from_rgba_unmultiplied(27, 27, 27, BAR_ALPHA),
         );
-        p.line_segment(
-            [
-                at(0.0, canvas.height() - Layout::FOOTER),
-                at(canvas.width(), canvas.height() - Layout::FOOTER),
-            ],
-            Stroke::new(1.0, Color32::from_gray(76)),
-        );
+
+        if self.display_preferences.read().layout.footer_border {
+            p.line_segment(
+                [footer.left_top(), footer.right_top()],
+                Stroke::new(1.0, Color32::from_gray(76)),
+            );
+        }
 
         self.band_panel(ui, canvas);
         if self.selected_region.is_some() {
