@@ -177,6 +177,7 @@ fn shared_detector_tracking_rates() {
         mix: 1.0,
         bypass: false,
         oversampling: Default::default(),
+        linear_phase: None,
         precision: Default::default(),
     };
     let mut left = tone(rate, 220.0, 0.4, 7_200);
@@ -214,6 +215,7 @@ fn pitch_mod_holds_frequency_during_dropout() {
         mix: 1.0,
         bypass: false,
         oversampling: Default::default(),
+        linear_phase: None,
         precision: Default::default(),
     };
     let mut input = tone(rate, 220.0, 0.4, rate as usize);

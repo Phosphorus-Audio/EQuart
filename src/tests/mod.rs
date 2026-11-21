@@ -42,6 +42,7 @@ fn controls(bands: [BandControl; crate::band::BAND_COUNT]) -> Controls {
         mix: 1.0,
         bypass: false,
         oversampling: crate::oversample::Oversampling::Off,
+        linear_phase: None,
         precision: Default::default(),
     }
 }
@@ -81,6 +82,7 @@ mod dynamics;
 mod filter_shapes;
 mod host;
 mod oversampling;
+mod processing;
 mod regions;
 mod signal_path;
 mod spectrum;

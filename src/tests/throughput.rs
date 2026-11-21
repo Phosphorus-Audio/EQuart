@@ -85,6 +85,7 @@ fn bench_engine_throughput() {
         mix: 1.0,
         bypass: false,
         oversampling: crate::oversample::Oversampling::Off,
+        linear_phase: None,
         precision: Default::default(),
     };
 
@@ -102,6 +103,7 @@ fn bench_engine_throughput() {
         mix: 1.0,
         bypass: false,
         oversampling,
+        linear_phase: None,
         precision: Default::default(),
     };
     bench_case(

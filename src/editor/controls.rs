@@ -1,5 +1,6 @@
 use super::*;
 use crate::filter::FilterKind;
+use crate::processing_mode::{LinearQuality, ProcessingMode};
 
 mod band_panel;
 mod card;
@@ -300,23 +301,52 @@ impl EquartEditor {
             menu::divider(&mut r);
             dropdowns.new_group();
             menu::section(&mut r, "ENGINE");
-            let modes: Vec<&str> = crate::oversample::Oversampling::ALL
-                .iter()
-                .map(|mode| mode.label())
-                .collect();
-            let current = crate::oversample::Oversampling::ALL
-                .iter()
-                .position(|mode| *mode == self.params.oversampling.value())
-                .unwrap_or(0);
+            let processing = self.params.processing_mode.value();
+            let modes = ProcessingMode::variants();
+            let index = processing.to_index();
+
             dropdowns.combo(
                 &mut r,
-                menu::COMBO_OVERSAMPLING,
-                "Oversampling",
-                modes[current],
-                &modes,
-                current,
+                menu::COMBO_PROCESSING,
+                "Processing mode",
+                modes[index],
+                modes,
+                index,
                 accent,
             );
+
+            if processing == ProcessingMode::NaturalPhase {
+                let mut modes = crate::oversample::Oversampling::ALL.map(|mode| mode.label());
+                modes[0] = "Auto (4×)";
+                let index = self.params.oversampling.value().to_index();
+                dropdowns.combo(
+                    &mut r,
+                    menu::COMBO_OVERSAMPLING,
+                    "Oversampling",
+                    modes[index],
+                    &modes,
+                    index,
+                    accent,
+                );
+            }
+
+            if processing == ProcessingMode::LinearPhase {
+                let names = LinearQuality::variants();
+                let quality = self.params.linear_quality.value();
+                let index = quality.to_index();
+                let taps = 2 * quality.center_at(values.sample_rate) + 1;
+                let caption = format!("Linear phase quality · {taps} taps");
+
+                dropdowns.combo(
+                    &mut r,
+                    menu::COMBO_LINEAR_QUALITY,
+                    &caption,
+                    names[index],
+                    names,
+                    index,
+                    accent,
+                );
+            }
 
             let double = self.params.precision.value() == crate::precision::Precision::Double;
 
@@ -359,7 +389,21 @@ impl EquartEditor {
         if fall.is_none()
             && let Some((key, index)) = dropdowns.finish(ui, card, accent)
         {
-            if key == menu::COMBO_OVERSAMPLING {
+            if key == menu::COMBO_PROCESSING {
+                if let Some(gui) = &self.gui {
+                    self.set(
+                        &gui.param_setter(),
+                        &self.params.processing_mode,
+                        ProcessingMode::ALL[index],
+                    );
+                }
+            } else if key == menu::COMBO_LINEAR_QUALITY {
+                if let Some(gui) = &self.gui {
+                    self.set(
+                        &gui.param_setter(), &self.params.linear_quality, LinearQuality::ALL[index],
+                    );
+                }
+            } else if key == menu::COMBO_OVERSAMPLING {
                 if let Some(gui) = &self.gui {
                     let setter = gui.param_setter();
                     self.set(

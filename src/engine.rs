@@ -6,9 +6,12 @@ use crate::dynamics::{Dynamics, Sidechain};
 use crate::oversample::Oversampling;
 use crate::pitch::PitchRack;
 use crate::precision::Precision;
+use crate::processing_mode::LinearQuality;
 use crate::region::{REGION_COUNT, RegionControl};
 
+mod convolution;
 mod host;
+mod linear;
 pub(crate) use host::HostSample;
 
 pub struct Controls {
@@ -18,6 +21,7 @@ pub struct Controls {
     pub mix: f32,
     pub bypass: bool,
     pub oversampling: Oversampling,
+    pub linear_phase: Option<LinearQuality>,
     pub precision: Precision,
 }
 
@@ -27,6 +31,8 @@ pub struct Engine {
     single: Box<AudioPath<f32>>,
     double: Box<AudioPath<f64>>,
     precision: Precision,
+    linear: linear::LinearEq,
+    linear_phase: Option<LinearQuality>,
     /// Two detector envelopes per band, and the dB offset they last produced.
     /// The detectors watch the dry input; the offsets are folded into the
     /// coefficient targets once per COEFF_FRAMES.
@@ -70,6 +76,8 @@ impl Engine {
             single: Box::new(AudioPath::new()),
             double: Box::new(AudioPath::new()),
             precision: Precision::Single,
+            linear: linear::LinearEq::new(),
+            linear_phase: None,
             dynamics: std::array::from_fn(|_| Dynamics::new(rate)),
             dynamic_gains: [0.0; BAND_COUNT],
             detectors_live: false,
@@ -106,6 +114,7 @@ impl Engine {
     pub fn reset(&mut self) {
         self.single.reset();
         self.double.reset();
+        self.linear.reset();
         for dynamic in &mut self.dynamics {
             dynamic.reset();
         }
@@ -142,6 +151,7 @@ impl Engine {
         }
 
         self.rate = rate;
+        self.linear.set_rate(rate);
         self.resonance.reset();
         self.detector_frames = 0;
         self.alpha = 1.0 - (-(COEFF_FRAMES as f32) / (0.012 * rate)).exp();
@@ -158,12 +168,46 @@ impl Engine {
         self.output_analyzer.retune(rate);
     }
 
-    /// Latency of the oversampled path, in frames of the host's rate.
+    /// processing latency in host samples
     pub fn latency(&self) -> u32 {
+        if let Some(quality) = self.linear_phase {
+            return linear::latency(quality.center_at(self.rate)) as u32;
+        }
+
         match self.precision {
             Precision::Single => self.single.resampler.latency(),
             Precision::Double => self.double.resampler.latency(),
         }
+    }
+
+    pub(crate) fn linear_response_revision(&self) -> u64 {
+        self.linear_phase.map_or(0, |_| self.linear.response_revision())
+    }
+
+    pub(crate) fn linear_response(&self) -> Option<[Option<&[f64]>; 4]> {
+        self.linear_phase.and_then(|_| self.linear.response())
+    }
+
+    pub(crate) fn tail(&self) -> u32 {
+        self.linear_phase.map_or(0, |quality| linear::tail(quality.center_at(self.rate)))
+    }
+
+    pub(crate) fn set_processing(&mut self, linear_phase: Option<LinearQuality>, oversampling: Oversampling) {
+        if self.linear_phase != linear_phase {
+            self.linear_phase = linear_phase;
+            self.frame = 0;
+            self.delta_mix = 0.0;
+            self.delta_region = None;
+
+            if let Some(quality) = linear_phase {
+                self.linear.set_quality(quality, self.rate);
+            } else {
+                self.single.reset();
+                self.double.reset();
+            }
+        }
+
+        self.set_oversampling(oversampling);
     }
 
     pub(crate) fn set_oversampling(&mut self, mode: Oversampling) {
@@ -306,7 +350,7 @@ impl Engine {
             controls.precision
         };
         self.set_precision(precision);
-        self.set_oversampling(controls.oversampling);
+        self.set_processing(controls.linear_phase, controls.oversampling);
         let requested = self.delta_request.filter(|&index| {
             !controls.bypass
                 && controls
@@ -329,12 +373,22 @@ impl Engine {
         let mut offset = 0;
         while offset < frames {
             // split at coeff-update boundaries
-            let end = (offset + (COEFF_FRAMES - self.frame)).min(frames);
+            let mut count = COEFF_FRAMES - self.frame;
+
+            if self.linear_phase.is_some() {
+                count = count.min(self.linear.frames_until_hop());
+            }
+
+            let end = (offset + count).min(frames);
             let left = &mut left[offset..end];
             let right = &mut right[offset..end];
             if self.frame == 0 {
                 self.refresh(controls);
             }
+            if self.linear_phase.is_some() && self.linear.at_boundary() {
+                self.snapshot_linear(controls);
+            }
+
             let left_analysis = T::analysis(left, &mut analysis_l);
             let right_analysis = T::analysis(right, &mut analysis_r);
             self.pitch.process(left_analysis, right_analysis);
@@ -382,7 +436,18 @@ impl Engine {
                 }),
             };
 
-            T::render(self, left, right, controls, output);
+            if self.linear_phase.is_some() {
+                let gain = match self.precision {
+                    Precision::Single => self.single.output_gain(),
+                    Precision::Double => self.double.output_gain(),
+                };
+                self.linear.process(
+                    left, right, OutputMix { wet: self.mix, ..output }, controls.bypass,
+                    gain, &mut self.delta_mix,
+                );
+            } else {
+                T::render(self, left, right, controls, output);
+            }
 
             if analyze {
                 let left = T::analysis(left, &mut analysis_l);
@@ -448,6 +513,62 @@ impl Engine {
         let mut right = [input[1]];
         self.process_block(&mut left, &mut right, controls);
         [left[0], right[0]]
+    }
+
+    pub(crate) fn prepare_processing(&mut self, controls: &Controls) {
+        self.set_processing(controls.linear_phase, controls.oversampling);
+
+        if self.linear_phase.is_some() {
+            self.snapshot_linear(controls);
+        }
+    }
+
+    fn snapshot_linear(&mut self, controls: &Controls) {
+        let pending = self.linear.begin_snapshot();
+
+        for (index, &band) in controls
+            .bands
+            .iter()
+            .enumerate()
+            .filter(|(_, band)| band.enabled)
+        {
+            let mut control = band;
+            control.frequency = self.pitch.band_target(index).unwrap_or(control.frequency);
+
+            if control.kind.has_gain() {
+                control.gain += self.dynamic_gains[index];
+            }
+
+            pending.push(control);
+        }
+
+        let mut delta = None;
+
+        for (index, (&region, reductions)) in controls
+            .regions
+            .iter()
+            .zip(self.resonance.reductions())
+            .enumerate()
+        {
+            pending.extend(
+                region
+                    .filter_plan(self.rate, self.pitch.harmonic_hz(index))
+                    .filter(|band| band.enabled),
+            );
+            let start = pending.len();
+            pending.extend(
+                reductions
+                    .iter()
+                    .map(|cut| cut.band(region))
+                    .filter(|band| band.enabled),
+            );
+
+            if self.delta_region == Some(index) && start < pending.len() {
+                delta = Some(start..pending.len());
+            }
+        }
+
+        self.linear.finish_snapshot(self.rate, delta);
     }
 
     fn refresh(&mut self, controls: &Controls) {

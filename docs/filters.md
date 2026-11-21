@@ -2,6 +2,21 @@
 
 Notes on what `filter.rs` uses
 
+## processing modes
+
+- **Zero Latency** runs the TPT-SVF at the host rate and reports zero samples of latency.
+- **Natural Phase** runs the TPT-SVF at 2× or 4× the host rate to reduce high-frequency warping. The resampling FIR adds 32 or 48 samples of latency. Auto selects 4×.
+- **Linear Phase** uses a symmetric FIR and 256-sample partitioned overlap-save. At 44.1 and 48 kHz, Short, Standard, High and Extended use 1,025, 4,097, 8,193 and 32,769 taps. They report 768, 2,304, 4,352 and 16,640 samples of latency, including the 256-sample convolution hop.
+- **High sample rates** at or above 64 kHz double the FIR length for all Linear Phase tiers. At 96 kHz, the resulting PDC is 1,280, 4,352, 8,448 and 33,024 samples. The design scales in one step and caps at twice the 48 kHz length, so filters at still higher rates gradually lose equivalent low-frequency resolution.
+
+The FIR design samples the magnitude of the routed EQ cascade on a uniform grid. Eight-point frequency-cell integration is used for the first 32 cells when a narrow pole is under-resolved there, with a transition over the last eight cells. This reduces sensitivity to a narrow resonance landing on a grid point. The inverse FFT is normalized by its length, mirrored about the center tap, and tapered over the outer quarter of each half with a raised cosine. The sinc correction partially compensates for the cell integration. The final tap is exactly zero and can be omitted from convolution.
+
+Linear Phase records filter controls every 256 samples. Short and Standard can renew a kernel every hop at base rates for a cascade with at most eight filter sections. Larger cascades use two hops, while High and Extended use four hops. The hop count doubles in the doubled FIR tier. Design work is spread across input chunks. A raised-cosine crossfade over 256 samples evaluates both symmetric kernels on the same input history. Each frozen kernel has linear phase apart from the sign of its real response. A moving gain or filter creates a time-varying system.
+
+The plot uses a snapshot of the last applied stereo FIR, using RMS magnitude across the left and right paths for independent stereo inputs. The audio thread publishes a requested snapshot of the half taps and the editor evaluates it. The combined line represents the EQ FIR before mix, output trim and delta audition, while individual band curves remain controls for the desired response. The phase overlay removes the reported delay. Internal bypass fades to aligned dry audio over 5 ms. Changing quality or processing mode resets convolution history and updates host PDC.
+
+The absolute band-pass and high-pass power detectors shorten smoothing at short attack settings when the detector frequency allows it. Low-frequency, wideband, relative and onset detection retain their established smoothing. Attack is the gain smoother’s time constant. Detector filtering, FIR scheduling and crossfades also affect the measured step response.
+
 ## what we use
 
 Cytomic TPT SVF (`g = tan(π f/f_s)`, `k = 1/Q`, `mix0·x + mix1·band + mix2·low`), stable under modulation:

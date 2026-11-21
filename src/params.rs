@@ -47,6 +47,11 @@ pub struct EquartParams {
     /// 2x/4x oversampling to reduce high-freq bilinear warping
     #[id = "oversampling"]
     pub oversampling: EnumParam<Oversampling>,
+
+    #[id = "processing_mode"]
+    pub(crate) processing_mode: EnumParam<crate::processing_mode::ProcessingMode>,
+    #[id = "linear_quality"]
+    pub(crate) linear_quality: EnumParam<crate::processing_mode::LinearQuality>,
     #[id = "dsp_precision"]
     pub(crate) precision: EnumParam<Precision>,
 
@@ -121,6 +126,8 @@ impl Default for EquartParams {
             .with_value_to_string(formatters::v2s_f32_rounded(0)),
             bypass: BoolParam::new("Bypass", false).make_bypass(),
             oversampling: EnumParam::new("Oversampling", Oversampling::Off),
+            processing_mode: EnumParam::new("Processing Mode", Default::default()),
+            linear_quality: EnumParam::new("Linear Phase Quality", Default::default()).non_automatable(),
             precision: EnumParam::new("DSP Precision", Precision::default()),
             ui_scale_percent: AtomicU32::new(100),
             axis_range_db: AtomicU32::new(DEFAULT_AXIS_RANGE),

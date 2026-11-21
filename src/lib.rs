@@ -10,6 +10,7 @@ mod oversample;
 mod params;
 mod pitch;
 mod precision;
+mod processing_mode;
 mod realtime;
 #[cfg(test)]
 mod reference;
@@ -62,13 +63,17 @@ impl Default for Equart {
 
 impl Equart {
     fn controls(&self) -> Controls {
+        let mode = self.params.processing_mode.value();
+
         Controls {
             bands: std::array::from_fn(|i| self.params.control(i)),
             regions: std::array::from_fn(|i| self.params.regions[i].control()),
             output_db: self.params.output.value(),
             mix: self.params.mix.value() * 0.01,
             bypass: self.params.bypass.value(),
-            oversampling: self.params.oversampling.value(),
+            oversampling: mode.oversampling(self.params.oversampling.value()),
+            linear_phase: (mode == processing_mode::ProcessingMode::LinearPhase)
+                .then(|| self.params.linear_quality.value()),
             precision: self.params.precision.value(),
         }
     }
@@ -107,7 +112,7 @@ impl Plugin for Equart {
     ];
 
     // params are read once per block and smoothed, no need for sample-accurate automation
-    const SAMPLE_ACCURATE_AUTOMATION: bool = false;
+    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
     type Editor = EguiEditor<editor::EquartEditor>;
     type SysExMessage = ();
@@ -119,6 +124,14 @@ impl Plugin for Equart {
 
     fn filter_state(state: &mut PluginState) {
         use nice_plug::plugin::ParamValue;
+
+        let mode = match state.params.get("oversampling") {
+            Some(ParamValue::String(id)) if id == "2x" || id == "4x" => "natural_phase",
+            Some(ParamValue::I32(1 | 2)) => "natural_phase",
+            _ => "zero_latency",
+        };
+        state.params.entry("processing_mode".into())
+            .or_insert_with(|| ParamValue::String(mode.into()));
 
         state
             .params
@@ -178,8 +191,8 @@ impl Plugin for Equart {
         }
 
         self.engine = Engine::new(config.sample_rate);
-        self.engine
-            .set_oversampling(self.params.oversampling.value());
+        let controls = self.controls();
+        self.engine.prepare_processing(&controls);
         self.reported_latency = self.engine.latency();
         context.set_latency_samples(self.reported_latency);
         self.telemetry.publish(&self.engine, true);
@@ -244,7 +257,7 @@ impl Equart {
             }
         }
 
-        // tell host when oversampling latency changes
+        // report processing latency changes to the host
         let latency = self.engine.latency();
         if latency != self.reported_latency {
             self.reported_latency = latency;
@@ -262,7 +275,12 @@ impl Equart {
             );
         }
 
-        ProcessStatus::Normal
+        let tail = self.engine.tail();
+        if tail == 0 {
+            ProcessStatus::Normal
+        } else {
+            ProcessStatus::Tail(tail)
+        }
     }
 }
 

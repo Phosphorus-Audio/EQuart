@@ -68,6 +68,10 @@ impl<T: Sample> AudioPath<T> {
         self.output_gain += T::value(f64::from(alpha)) * (self.target_gain - self.output_gain);
     }
 
+    pub(crate) fn output_gain(&self) -> f64 {
+        self.output_gain.double()
+    }
+
     pub(crate) fn invalidate_bands(&mut self) {
         for band in &mut self.bands {
             band.invalidate();

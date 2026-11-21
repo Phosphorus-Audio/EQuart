@@ -15,7 +15,7 @@ pub const REGION_COUNT: usize = 6;
 pub const DEFAULT_SOFTNESS: f32 = 35.0;
 pub const DEFAULT_GAIN: f32 = -6.0;
 const BASE_FILTERS: usize = 2 + MAX_HARMONIC;
-const FILTERS: usize = BASE_FILTERS + REDUCTIONS;
+pub(crate) const FILTERS: usize = BASE_FILTERS + REDUCTIONS;
 const _: () = assert!(FILTERS <= u32::BITS as usize);
 
 #[derive(Clone, Copy, PartialEq)]

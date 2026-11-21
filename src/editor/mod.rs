@@ -150,6 +150,7 @@ pub struct EquartEditor {
     telemetry: Arc<Telemetry>,
     spectrum_snapshot: crate::telemetry::SpectrumSnapshot,
     response_db: [Vec<f32>; BAND_COUNT],
+    fir_response: crate::telemetry::FirResponse,
     gui: Option<GuiContext>,
     /// focused band for the panel
     pub(crate) selected: Option<usize>,
@@ -194,6 +195,7 @@ impl EquartEditor {
             telemetry,
             spectrum_snapshot: Default::default(),
             response_db: Default::default(),
+            fir_response: Default::default(),
             gui: None,
             selected: None,
             selected_region: None,

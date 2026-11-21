@@ -47,6 +47,7 @@ fn legacy_parameter_migration() {
     let mut state = PluginState {
         version: String::new(),
         params: [
+            ("oversampling".into(), ParamValue::String("2x".into())),
             ("region_depth_1".into(), ParamValue::F32(9.0)),
             ("region_depth_6".into(), ParamValue::F32(5.0)),
             ("region_gain_6".into(), ParamValue::F32(3.0)),
@@ -57,6 +58,7 @@ fn legacy_parameter_migration() {
         fields: Default::default(),
     };
     crate::Equart::filter_state(&mut state);
+    assert!(matches!(state.params.get("processing_mode"), Some(ParamValue::String(id)) if id == "natural_phase"));
     assert!(matches!(
         state.params.get("dsp_precision"),
         Some(ParamValue::String(id)) if id == "f32"

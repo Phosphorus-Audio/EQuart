@@ -429,8 +429,9 @@ impl EquartEditor {
         }
 
         // eval response at oversampled rate
-        let design_rate = if rate > 0.0 { rate } else { 48_000.0 }
-            * self.params.oversampling.value().factor() as f32;
+        let processing = self.params.processing_mode.value();
+        let oversampling = processing.oversampling(self.params.oversampling.value());
+        let design_rate = if rate > 0.0 { rate } else { 48_000.0 } * oversampling.factor() as f32;
         let phase_mode = self.params.phase_curve.load(Ordering::Relaxed).then(|| {
             if self.params.phase_unwrapped.load(Ordering::Relaxed) {
                 phase::Mode::Unwrapped
@@ -438,6 +439,10 @@ impl EquartEditor {
                 phase::Mode::Wrapped
             }
         });
+        let linear_phase = processing == crate::processing_mode::ProcessingMode::LinearPhase;
+        if linear_phase {
+            self.fir_response.update(&self.telemetry.fir);
+        }
         draw_response(
             &p,
             &plot,
@@ -451,6 +456,8 @@ impl EquartEditor {
                 rate: design_rate,
                 selected: self.selected,
                 phase_mode,
+                linear_center: linear_phase.then(|| self.params.linear_quality.value().center_at(design_rate)),
+                fir_response: &self.fir_response,
             },
         );
 

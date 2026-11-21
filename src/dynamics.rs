@@ -180,6 +180,7 @@ pub struct Dynamics {
     detect: Detector,
     relative: Detector,
     power_alphas: [f32; 2],
+    power_attack: Option<f32>,
     gain_clock: Option<([f32; 2], usize)>,
     gain_alphas: [f32; 2],
     pub level: Option<f32>,
@@ -193,6 +194,7 @@ impl Dynamics {
             relative: Detector::new(),
             // Two cascaded poles retain the nominal low-frequency delay (5 / 45 ms).
             power_alphas: [alpha(2.5, rate, 1), alpha(22.5, rate, 1)],
+            power_attack: None,
             gain_clock: None,
             gain_alphas: [0.0; 2],
             level: None,
@@ -209,6 +211,7 @@ impl Dynamics {
 
     pub fn retune(&mut self, rate: f32) {
         self.power_alphas = [alpha(2.5, rate, 1), alpha(22.5, rate, 1)];
+        self.power_attack = None;
         self.gain_clock = None;
         self.detect.reset();
         self.relative.reset();
@@ -233,8 +236,27 @@ impl Dynamics {
             self.level = None;
             return false;
         }
-        self.detect
-            .tune(DetectorKey::new(control.detect, frequency, q, kind), rate);
+        let key = DetectorKey::new(control.detect, frequency, q, kind);
+
+        // keep a half-cycle of smoothing on filtered carriers to limit envelope ripple
+        // preserve the existing windows for onset and wideband detection
+        let pole_ms = if control.onsets_amount == 0.0
+            && !use_reference
+            && matches!(key.spectrum, Spectrum::BandPass | Spectrum::HighPass)
+        {
+            (control.attack_ms * 0.25)
+                .max(500.0 / key.frequency)
+                .min(2.5)
+        } else {
+            2.5
+        };
+
+        if self.power_attack != Some(pole_ms) {
+            self.power_attack = Some(pole_ms);
+            self.power_alphas[0] = alpha(pole_ms, rate, 1);
+        }
+
+        self.detect.tune(key, rate);
         if use_reference {
             self.relative
                 .tune(DetectorKey::new(control.relative, frequency, q, kind), rate);

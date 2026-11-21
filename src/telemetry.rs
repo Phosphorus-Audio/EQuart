@@ -1,6 +1,9 @@
 use crate::analyzer::{MAX_SPECTRUM_BINS, SpectrumFrame};
 use crate::band::BAND_COUNT;
 use crate::engine::Engine;
+
+mod fir;
+pub(crate) use fir::FirResponse;
 use crate::region::{
     REGION_COUNT,
     resonance::{REDUCTIONS, Reduction},
@@ -44,6 +47,7 @@ impl SpectrumSnapshot {
 }
 
 pub(crate) struct Telemetry {
+    pub(crate) fir: fir::FirTelemetry,
     input_peak: AtomicU32,
     output_peak: AtomicU32,
     sample_rate: AtomicU32,
@@ -69,6 +73,7 @@ pub(crate) struct Telemetry {
 impl Default for Telemetry {
     fn default() -> Self {
         Self {
+            fir: Default::default(),
             input_peak: AtomicU32::new(0),
             output_peak: AtomicU32::new(0),
             sample_rate: AtomicU32::new(0),
@@ -106,6 +111,8 @@ impl Telemetry {
             .store(engine.output_peak.to_bits(), Ordering::Relaxed);
         self.sample_rate
             .store(engine.rate.to_bits(), Ordering::Relaxed);
+
+        self.fir.publish(engine);
 
         if spectrum_changed {
             let (bin_hz, spectrum) = engine.analyzer.spectrum();

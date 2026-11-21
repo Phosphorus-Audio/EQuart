@@ -71,6 +71,8 @@ pub(super) struct ResponseInput<'a> {
     pub(super) rate: f32,
     pub(super) selected: Option<usize>,
     pub(super) phase_mode: Option<phase::Mode>,
+    pub(super) linear_center: Option<usize>,
+    pub(super) fir_response: &'a crate::telemetry::FirResponse,
 }
 
 /// draw each band's curve and the total sum line
@@ -90,6 +92,8 @@ pub(super) fn draw_response(
         rate,
         selected,
         phase_mode,
+        linear_center,
+        fir_response,
     } = input;
 
     let responses: Vec<_> = controls
@@ -114,7 +118,7 @@ pub(super) fn draw_response(
         .iter()
         .map(|band| band.sections(rate))
         .collect();
-    let phase_response = phase_mode.map(|_| {
+    let phase_response = phase_mode.filter(|_| linear_center.is_none()).map(|_| {
         phase::Response::new(
             plot,
             rate,
@@ -349,7 +353,14 @@ pub(super) fn draw_response(
     let combined: Vec<Pos2> = xs
         .iter()
         .zip(sum)
-        .map(|(&x, db)| Pos2::new(x, plot.y_free(db)))
+        .filter_map(|(&x, target_db)| {
+            let db = if let Some(center) = linear_center {
+                fir_response.db(plot.hz_extended(x), rate, center)?
+            } else {
+                target_db
+            };
+            Some(Pos2::new(x, plot.y_free(db)))
+        })
         .collect();
     painter.add(egui::Shape::line(
         combined.clone(),
@@ -359,7 +370,14 @@ pub(super) fn draw_response(
         combined,
         Stroke::new(1.9, COMBINED.gamma_multiply(0.95)),
     ));
-    if let Some((mode, response)) = phase_mode.zip(phase_response) {
-        phase::draw(p, plot, mode, &response.sample(plot, &xs));
+    if let Some(mode) = phase_mode {
+        let samples = match phase_response {
+            Some(response) => response.sample(plot, &xs),
+            None => vec![
+                (plot.rect.left(), Some(0.0)),
+                (plot.rect.right(), Some(0.0)),
+            ],
+        };
+        phase::draw(p, plot, mode, &samples);
     }
 }
