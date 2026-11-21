@@ -108,6 +108,7 @@ impl EquartEditor {
                 &values,
                 self.spectrum_range(),
                 self.meter_fade(),
+                self.piano_keys_visible(),
             );
         }
 

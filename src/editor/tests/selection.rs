@@ -46,8 +46,19 @@ fn double_click_key_adds_band() {
     attach_host(&mut editor);
     let pos = key_at(440.0);
 
+    assert!(!editor.piano_keys_visible());
+    assert!(editor.params.piano_key_fade.load(Ordering::Relaxed));
+
     click(&ctx, &mut editor, 0.0, pos);
     click(&ctx, &mut editor, 0.05, pos);
+    assert!(!editor.params.is_placed(0));
+
+    editor
+        .params
+        .piano_keys_visible
+        .store(true, Ordering::Relaxed);
+    click(&ctx, &mut editor, 1.0, pos);
+    click(&ctx, &mut editor, 1.05, pos);
 
     let band = editor.params.band(0);
     assert_eq!(band.kind.value(), FilterKind::Peak);

@@ -26,6 +26,10 @@ impl EquartEditor {
         self.params.meter_visible.load(Ordering::Relaxed)
     }
 
+    pub(in crate::editor) fn piano_keys_visible(&self) -> bool {
+        self.params.piano_keys_visible.load(Ordering::Relaxed)
+    }
+
     /// analyzer resolution index
     pub(in crate::editor) fn resolution(&self) -> u32 {
         self.params.analyzer_index(AnalyzerOption::Resolution)

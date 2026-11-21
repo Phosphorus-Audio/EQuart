@@ -20,7 +20,7 @@ const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 420.0;
 const MENU_CARD_H: f32 = 372.0;
 const LAYOUT_CARD_W: f32 = 220.0;
-const LAYOUT_CARD_H: f32 = 210.0;
+const LAYOUT_CARD_H: f32 = 236.0;
 const MENU_CARD_MARGIN: f32 = 12.0;
 const MENU_CARD_GAP: f32 = 14.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -232,7 +232,23 @@ impl EquartEditor {
             ui.ctx().request_repaint();
         }
 
+        let piano_keys_visible = self.piano_keys_visible();
+
+        if menu::switch(
+            &mut content,
+            group.with("piano-keys-visible"),
+            "Show piano keys",
+            piano_keys_visible,
+            accent,
+        ) {
+            self.params
+                .piano_keys_visible
+                .store(!piano_keys_visible, Ordering::Relaxed);
+            ui.ctx().request_repaint();
+        }
+
         let piano_fade = self.params.piano_key_fade.load(Ordering::Relaxed);
+
         if menu::switch(
             &mut content,
             group.with("piano-key-fade"),

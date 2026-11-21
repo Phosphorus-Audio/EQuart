@@ -84,7 +84,14 @@ impl EquartEditor {
         let outer = Layout::plot_outer(canvas, self.meter_visible());
         let p = ui.painter_at(outer);
 
-        let plot = Plot::with_ranges(outer, rate, self.axis_range(), self.spectrum_range());
+        let piano_keys_visible = self.piano_keys_visible();
+        let plot = Plot::with_ranges(
+            outer,
+            rate,
+            self.axis_range(),
+            self.spectrum_range(),
+            piano_keys_visible,
+        );
         // hide hover note readout when dB dial is open
         let hover = ui
             .input(|i| i.pointer.hover_pos())
@@ -103,7 +110,11 @@ impl EquartEditor {
                 eq_highlight,
                 spectrum_highlight,
             );
-            draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
+
+            if piano_keys_visible {
+                draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
+            }
+
             p.text(
                 plot.rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -224,26 +235,29 @@ impl EquartEditor {
             }
         }
 
-        // double click key to add band at 0 dB
-        let keys = ui
-            .interact(
-                keys_strip(outer),
-                ui.make_persistent_id("eq-keys"),
-                Sense::click(),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        if keys.double_clicked()
-            && !popup_open
-            && let Some(position) = keys
-                .interact_pointer_pos()
-                .or_else(|| ui.input(|i| i.pointer.hover_pos()))
-        {
-            self.place_band(
-                key_hz(&plot, position.x),
-                0.0,
-                &controls,
-                ui.input(|i| i.time),
-            );
+        if piano_keys_visible {
+            // double click key to add band at 0 dB
+            let keys = ui
+                .interact(
+                    keys_strip(outer),
+                    ui.make_persistent_id("eq-keys"),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+            if keys.double_clicked()
+                && !popup_open
+                && let Some(position) = keys
+                    .interact_pointer_pos()
+                    .or_else(|| ui.input(|i| i.pointer.hover_pos()))
+            {
+                self.place_band(
+                    key_hz(&plot, position.x),
+                    0.0,
+                    &controls,
+                    ui.input(|i| i.time),
+                );
+            }
         }
 
         if response.drag_started_by(egui::PointerButton::Primary) {
@@ -477,7 +491,11 @@ impl EquartEditor {
             eq_highlight,
             spectrum_highlight,
         );
-        draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
+
+        if piano_keys_visible {
+            draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
+        }
+
         if let Some(mode) = phase_mode {
             phase::draw_label(&p, &plot, outer, mode);
         }

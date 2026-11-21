@@ -22,14 +22,22 @@ impl Plot {
             rate,
             DEFAULT_AXIS_RANGE as f32,
             DEFAULT_SPECTRUM_RANGE as f32,
+            false,
         )
     }
 
-    pub(crate) fn with_ranges(outer: Rect, rate: f32, range: f32, spectrum_range: f32) -> Self {
+    pub(crate) fn with_ranges(
+        outer: Rect,
+        rate: f32,
+        range: f32,
+        spectrum_range: f32,
+        piano_keys_visible: bool,
+    ) -> Self {
+        let keyboard_space = if piano_keys_visible { KEYS_BAND } else { 0.0 };
         let rect = Rect::from_min_max(
             outer.min + Vec2::new(48.0, Layout::HEADER + SCALE_TOP_INSET),
             // leave room for axis labels and keyboard
-            outer.max - Vec2::new(30.0, KEYS_BAND + 34.0),
+            outer.max - Vec2::new(30.0, keyboard_space + 34.0),
         );
         Self {
             max_hz: if rate > 0.0 {

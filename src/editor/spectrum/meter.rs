@@ -57,12 +57,14 @@ pub(in crate::editor) fn draw_level_meter(
     values: &MeterReadings,
     spectrum_range: f32,
     fade_foot: bool,
+    piano_keys_visible: bool,
 ) {
     let plot = Plot::with_ranges(
         Layout::plot_outer(canvas, true),
         values.sample_rate,
         DEFAULT_AXIS_RANGE as f32,
         spectrum_range,
+        piano_keys_visible,
     );
 
     let column = meter_column(canvas);
