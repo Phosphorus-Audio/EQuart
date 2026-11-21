@@ -239,6 +239,7 @@ pub struct Band<T: Sample = f32> {
     gain: f32,
     q: f32,
     wet: f32,
+    previous_wet: f32,
     started: bool,
     ramp_on_start: bool,
     /// true while smoothing, so steady state can skip update
@@ -263,6 +264,7 @@ impl<T: Sample> Band<T> {
             gain: 0.0,
             q: 0.7,
             wet: 0.0,
+            previous_wet: 0.0,
             started: false,
             ramp_on_start,
             moving: true,
@@ -282,6 +284,7 @@ impl<T: Sample> Band<T> {
         }
         self.fade.fill(0.0);
         self.wet = 0.0;
+        self.previous_wet = 0.0;
         self.sections = 1;
         self.started = false;
         self.moving = true;
@@ -296,6 +299,7 @@ impl<T: Sample> Band<T> {
         self.gain = source.gain;
         self.q = source.q;
         self.wet = source.wet;
+        self.previous_wet = source.previous_wet;
         self.started = source.started;
         self.frequency = source.frequency;
         self.ramp_frame = source.ramp_frame;
@@ -335,19 +339,19 @@ impl<T: Sample> Band<T> {
         self.ramp_frame = 0;
         self.ramp_frames = frames;
 
+        self.previous_wet = self.wet;
+
+        if !self.started && !control.enabled {
+            self.moving = false;
+            return;
+        }
+
         let target_wet = f32::from(control.enabled);
         let frequency = control.frequency.clamp(10.0, rate * 0.49);
         let (targets, count) = control.sections_for::<T>(rate);
         assert!(count <= self.slots.len(), "filter exceeds its section rack");
 
         if !self.started {
-            if !control.enabled {
-                // Never ran: stay cold and cheap until it is switched on.
-                self.wet = 0.0;
-                self.moving = self.fade.iter().any(|f| *f > 0.0);
-                return;
-            }
-
             self.started = true;
             self.log_frequency = frequency.ln();
             self.gain = control.gain;
@@ -370,6 +374,7 @@ impl<T: Sample> Band<T> {
             self.wet = if self.ramp_on_start {
                 step.min(target_wet)
             } else {
+                self.previous_wet = target_wet;
                 target_wet
             };
             self.moving = self.wet != target_wet;
@@ -429,7 +434,7 @@ impl<T: Sample> Band<T> {
 
         self.wet += (target_wet - self.wet).clamp(-step, step);
 
-        if self.wet == 0.0 && target_wet == 0.0 {
+        if self.wet == 0.0 && self.previous_wet == 0.0 && target_wet == 0.0 {
             // Fully closed: drop stale state so re-enabling starts clean.
             for slot in &mut self.slots {
                 slot.state = [State::zero(); 2];
@@ -442,12 +447,12 @@ impl<T: Sample> Band<T> {
             return;
         }
 
-        self.moving = !settled || self.wet != target_wet;
+        self.moving = !settled || self.wet != target_wet || self.previous_wet != self.wet;
     }
 
     /// filter stereo channels (handles Mid/Side here)
     pub fn process(&mut self, left: &mut [T], right: &mut [T], route: ChannelMode) {
-        if self.wet == 0.0 {
+        if !self.is_processing() {
             return;
         }
 
@@ -474,26 +479,35 @@ impl<T: Sample> Band<T> {
     }
 
     pub(crate) fn is_processing(&self) -> bool {
-        self.wet != 0.0
+        self.wet != 0.0 || self.previous_wet != 0.0
     }
 
     fn run(&mut self, buf: &mut [T], channel: usize) {
         const TILE: usize = 64;
 
         let wet = self.wet;
+        let fading = self.previous_wet != wet;
         let mut dry = [T::zero(); TILE];
         let mut spare = [T::zero(); TILE];
 
         for (i, tile) in buf.chunks_mut(TILE).enumerate() {
             let len = tile.len();
 
-            if wet < 1.0 {
+            if fading || wet < 1.0 {
                 dry[..len].copy_from_slice(tile);
             }
 
             self.cascade(tile, channel, &mut spare[..len], self.ramp_frame + i * TILE);
 
-            if wet < 1.0 {
+            if fading {
+                let start = self.ramp_frame + i * TILE;
+                for (frame, (sample, &dry)) in tile.iter_mut().zip(&dry[..len]).enumerate() {
+                    let t =
+                        (start + frame + 1).min(self.ramp_frames) as f32 / self.ramp_frames as f32;
+                    let wet = self.previous_wet + t * (wet - self.previous_wet);
+                    *sample = dry + T::value(f64::from(wet)) * (*sample - dry);
+                }
+            } else if wet < 1.0 {
                 dsp::blend(&dry[..len], tile, wet);
             }
         }

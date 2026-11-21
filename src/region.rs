@@ -5,7 +5,7 @@ pub use harmonic::{FundamentalSource, HarmonicControl, HarmonicMode, MAX_HARMONI
 
 use crate::band::{Band, BandControl, SECTIONS};
 use crate::filter::{CutSlope, FilterKind, bell_bandwidth};
-use crate::params::{FREQUENCY_MAX_HZ, Q_MAX, Q_MIN};
+use crate::params::{FREQUENCY_MAX_HZ, FloatDisplay, Q_MAX, Q_MIN};
 use crate::precision::Sample;
 use nice_plug::prelude::*;
 use resonance::{REDUCTIONS, Reduction};
@@ -211,6 +211,10 @@ impl<T: Sample> Region<T> {
     ) {
         let pitch = pitch.filter(|_| control.harmonic.enabled);
         let mut pending = self.active;
+        if pending == 0 && (!control.enabled || control.bypass) {
+            self.last = None;
+            return;
+        }
         if self.last != Some((control, rate, pitch)) {
             if self.last.is_some_and(|(_, old_rate, _)| old_rate != rate) {
                 for filter in &mut self.filters {
@@ -316,44 +320,45 @@ pub struct RegionParams {
 
 impl RegionParams {
     pub fn new(index: usize) -> Self {
-        let prefix = format!("Spectral Region {}", index + 1);
+        let prefix = format!("Spectral Region {:02}", index + 1);
+        let region = format!("{prefix} / Region");
         let defaults = RegionControl::default();
         let frequency = |label, default| {
             FloatParam::new(
-                format!("{prefix} {label}"),
+                format!("{region} / {label}"),
                 default,
                 FloatRange::Logarithmic {
                     min: crate::analyzer::MIN_HZ,
                     max: FREQUENCY_MAX_HZ,
                 },
             )
-            .with_unit(" Hz")
+            .display_as(" Hz", 2)
             .with_step_size(0.01)
         };
         Self {
-            enabled: BoolParam::new(format!("{prefix} Enabled"), defaults.enabled),
-            bypass: BoolParam::new(format!("{prefix} Bypass"), defaults.bypass),
+            enabled: BoolParam::new(format!("{region} / Enabled"), defaults.enabled)
+                .non_automatable(),
+            bypass: BoolParam::new(format!("{region} / Bypass"), defaults.bypass),
             low: frequency("Range Start", defaults.low),
             high: frequency("Range End", defaults.high),
             softness: FloatParam::new(
-                format!("{prefix} Edge Softness"),
+                format!("{region} / Edge Softness"),
                 defaults.softness,
                 FloatRange::Linear {
                     min: 0.0,
                     max: 100.0,
                 },
             )
-            .with_unit("%"),
+            .display_as("%", 1),
             gain: FloatParam::new(
-                format!("{prefix} Gain"),
+                format!("{region} / Gain"),
                 defaults.gain,
                 FloatRange::Linear {
                     min: -24.0,
                     max: 24.0,
                 },
             )
-            .with_unit(" dB")
-            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            .display_as(" dB", 2),
             resonance: Box::new(resonance::ResonanceParams::new(&prefix)),
             harmonic: Box::new(harmonic::HarmonicParams::new(&prefix)),
         }

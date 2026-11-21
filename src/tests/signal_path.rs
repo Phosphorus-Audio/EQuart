@@ -76,6 +76,7 @@ fn mix_bypass_latency_aligned() {
         let phase = i as f32 * std::f32::consts::TAU / RATE;
         [(phase * 1000.0).sin() * 0.25, (phase * 830.0).cos() * 0.2]
     };
+    let fade_step = 1.0 / (0.005 * f64::from(RATE));
     for mode in Oversampling::ALL {
         let mut settings = controls(bands);
         settings.oversampling = mode;
@@ -88,6 +89,7 @@ fn mix_bypass_latency_aligned() {
         reference.oversampling = mode;
         reference.output_db = settings.output_db;
 
+        let mut bypass = 0.0_f64;
         for i in 0..4096 {
             settings.mix = if i < 2048 { 0.5 } else { 0.0 };
             settings.bypass = (1501..1803).contains(&i);
@@ -95,14 +97,134 @@ fn mix_bypass_latency_aligned() {
             let actual = engine.process_frame(input(i), &settings);
             let delay = engine.latency() as usize;
             let dry = i.checked_sub(delay).map_or([0.0; 2], input);
-            if settings.bypass || i >= 2600 {
+            bypass += (f64::from(settings.bypass) - bypass).clamp(-fade_step, fade_step);
+            if bypass == 1.0 || i >= 2600 {
                 assert_eq!(actual, dry, "{mode:?} frame {i}");
             } else if i < 2048 {
                 for ch in 0..2 {
-                    let expected = (dry[ch] + wet[ch]) * 0.5;
+                    let expected = dry[ch] + (1.0 - bypass) as f32 * 0.5 * (wet[ch] - dry[ch]);
                     assert!((actual[ch] - expected).abs() < 1e-6, "{mode:?} frame {i}");
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn modifier_bypass_preserves_latency_and_smooths_transitions() {
+    use crate::dynamics::{DetectorMode, GainRule};
+    use crate::oversample::Oversampling;
+    use crate::processing_mode::LinearQuality;
+    use crate::region::{FundamentalSource, HarmonicMode};
+
+    const TOGGLE: usize = 24_013;
+    const RESTORE: usize = 36_021;
+    const FRAMES: usize = 54_000;
+    const HZ: f32 = 937.5;
+
+    for (oversampling, linear) in [
+        (Oversampling::Off, None),
+        (Oversampling::X2, None),
+        (Oversampling::Off, Some(LinearQuality::Short)),
+    ] {
+        for effect in ["Region", "Resonance", "Harmonic", "Dynamic", "F0 Follow"] {
+            let mut config = controls(flat_bands());
+            config.oversampling = oversampling;
+            config.linear_phase = linear;
+
+            let region = &mut config.regions[0];
+            match effect {
+                "Region" | "Resonance" | "Harmonic" => {
+                    region.enabled = true;
+                    region.gain = -9.0;
+                    region.resonance.enabled = effect == "Resonance";
+                    region.harmonic.enabled = effect == "Harmonic";
+                    region.harmonic.mode = HarmonicMode::Protect;
+                    region.harmonic.source = FundamentalSource::Fixed;
+                    region.harmonic.fixed_hz = HZ / 4.0;
+                }
+                "Dynamic" => {
+                    let mut filter = band(HZ, 0.0, 1.0, FilterKind::Peak);
+                    filter.dynamics.enabled = true;
+                    filter.dynamics.detect.mode = DetectorMode::Broadband;
+                    filter.dynamics.attack_ms = 2.0;
+                    filter.dynamics.threshold = -30.0;
+                    filter.dynamics.above = GainRule {
+                        enabled: true,
+                        range: -12.0,
+                        ratio: 1.0,
+                    };
+                    config.bands[0] = filter;
+                }
+                "F0 Follow" => {
+                    let mut filter = band(500.0, -12.0, 4.0, FilterKind::Peak);
+                    filter.pitch.enabled = true;
+                    config.bands[0] = filter;
+                }
+                _ => unreachable!(),
+            }
+
+            let mut left = Vec::with_capacity(FRAMES);
+            let mut right = Vec::with_capacity(FRAMES);
+            for index in 0..FRAMES {
+                let phase = std::f64::consts::TAU * index as f64 * f64::from(HZ / RATE);
+                left.push((0.25 * phase.sin()) as f32);
+                right.push((0.25 * phase.cos()) as f32);
+            }
+
+            let mut engine = Engine::new(RATE);
+            engine.prepare_processing(&config);
+            let latency = engine.latency();
+
+            nice_assert_no_alloc::assert_no_alloc(|| {
+                let mut start = 0;
+                for (end, active) in [(TOGGLE, true), (RESTORE, false), (FRAMES, true)] {
+                    match effect {
+                        "Region" => config.regions[0].bypass = !active,
+                        "Resonance" => config.regions[0].resonance.enabled = active,
+                        "Harmonic" => config.regions[0].harmonic.enabled = active,
+                        "Dynamic" => config.bands[0].dynamics.enabled = active,
+                        "F0 Follow" => config.bands[0].pitch.enabled = active,
+                        _ => unreachable!(),
+                    }
+
+                    let mut remaining = &mut left[start..end];
+                    let mut stereo = &mut right[start..end];
+                    let mut sizes = [17, 128, 97, 256].into_iter().cycle();
+
+                    while !remaining.is_empty() {
+                        let count = sizes.next().unwrap().min(remaining.len());
+                        let (l, rest_l) = remaining.split_at_mut(count);
+                        let (r, rest_r) = stereo.split_at_mut(count);
+                        engine.process_block(l, r, &config);
+                        assert_eq!(engine.latency(), latency);
+                        remaining = rest_l;
+                        stereo = rest_r;
+                    }
+
+                    start = end;
+                }
+            });
+
+            let magnitude = |frame: usize| left[frame].hypot(right[frame]);
+            let mean = |end: usize| (end - 2048..end).map(magnitude).sum::<f32>() / 2048.0;
+            let active = mean(TOGGLE);
+            let bypassed = mean(RESTORE);
+            let restored = mean(FRAMES);
+
+            assert!(
+                (active - bypassed).abs() > 0.01,
+                "{effect} {oversampling:?} {linear:?}: {active}, {bypassed}"
+            );
+            assert!(
+                (active - restored).abs() < 0.01,
+                "{effect} {oversampling:?} {linear:?}: {active}, {restored}"
+            );
+
+            let jump = (TOGGLE..FRAMES)
+                .map(|i| (magnitude(i) - magnitude(i - 1)).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(jump < 0.025, "{effect} {oversampling:?} {linear:?}: {jump}");
         }
     }
 }

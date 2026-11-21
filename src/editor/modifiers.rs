@@ -328,7 +328,7 @@ impl EquartEditor {
                         .map(|cut| cut.band(control))
                         .filter(|band| band.enabled)
                         .min_by(|a, b| a.gain.total_cmp(&b.gain));
-                    let active = !bypassed && !region.bypass.value() && !self.params.bypass.value();
+                    let active = !bypassed && !region.bypass.value() && !self.params.global.bypass.value();
 
                     ui.horizontal(|ui| {
                         let button = ui.add_enabled(
@@ -390,7 +390,7 @@ impl EquartEditor {
                 column(ui, 160.0, |ui| {
                     ui.strong("Detection");
                     self.pitch_detection_choices(ui, &setter, &pitch.detection);
-                    let detected = (active && band.enabled.value() && !self.params.bypass.value())
+                    let detected = (active && band.enabled.value() && !self.params.global.bypass.value())
                         .then(|| self.telemetry.detected_pitch(index))
                         .flatten();
                     if let Some(hz) = detected {

@@ -259,7 +259,7 @@ impl EquartEditor {
     fn conversion_rate(&self) -> f32 {
         let rate = self.telemetry.sample_rate();
         let rate = if rate > 0.0 { rate } else { 48_000.0 };
-        rate * self.params.oversampling.value().factor() as f32
+        rate * self.params.global.oversampling.value().factor() as f32
     }
 
     pub(super) fn convert_band_to_region(&mut self, index: usize, destination: usize) {

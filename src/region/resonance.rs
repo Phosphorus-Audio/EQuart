@@ -2,6 +2,7 @@ mod reduction;
 
 use super::{REGION_COUNT, RegionControl};
 use crate::band::ChannelMode;
+use crate::params::FloatDisplay;
 use nice_plug::prelude::*;
 use realfft::{RealFftPlanner, RealToComplex, num_complex::Complex32};
 use std::{f32::consts::TAU, sync::Arc};
@@ -72,7 +73,7 @@ pub struct ResonanceParams {
 impl ResonanceParams {
     pub(super) fn new(prefix: &str) -> Self {
         let defaults = ResonanceControl::default();
-        let name = |label| format!("{prefix} Resonance {label}");
+        let name = |label| format!("{prefix} / Resonance / {label}");
         let db = |label, value| {
             FloatParam::new(
                 name(label),
@@ -82,16 +83,14 @@ impl ResonanceParams {
                     max: 24.0,
                 },
             )
-            .with_unit(" dB")
+            .display_as(" dB", 2)
         };
         let pct = |label, value, min, max| {
-            FloatParam::new(name(label), value, FloatRange::Linear { min, max })
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_rounded(0))
+            FloatParam::new(name(label), value, FloatRange::Linear { min, max }).display_as("%", 1)
         };
         Self {
-            enabled: BoolParam::new(name("Enabled"), false),
-            bypassed: BoolParam::new(name("Bypassed"), false),
+            enabled: BoolParam::new(name("Enabled"), false).non_automatable(),
+            bypassed: BoolParam::new(name("Bypass"), false),
             depth: db("Depth", defaults.depth),
             threshold: db("Prominence", defaults.threshold),
             q: FloatParam::new(
@@ -101,7 +100,8 @@ impl ResonanceParams {
                     min: 2.0,
                     max: 32.0,
                 },
-            ),
+            )
+            .display_as("", 2),
             attack: FloatParam::new(
                 name("Attack"),
                 defaults.attack_ms,
@@ -110,8 +110,7 @@ impl ResonanceParams {
                     max: 100.0,
                 },
             )
-            .with_unit(" ms")
-            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            .display_as(" ms", 1),
             release: FloatParam::new(
                 name("Release"),
                 defaults.release_ms,
@@ -120,8 +119,7 @@ impl ResonanceParams {
                     max: 500.0,
                 },
             )
-            .with_unit(" ms")
-            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            .display_as(" ms", 1),
             ratio: pct("Ratio", defaults.ratio, 0.0, 200.0),
             smooth: pct("Smooth", defaults.smooth, 0.0, 100.0),
             stereo_link: pct("Stereo Link", defaults.stereo_link, 0.0, 100.0),

@@ -9,12 +9,15 @@ pub(crate) struct AudioPath<T: Sample> {
     pub(crate) regions: [Region<T>; REGION_COUNT],
     pub(crate) resampler: Resampler<T>,
     output_gain: T,
+    bypass_mix: Option<f64>,
     target_gain: T,
     target_db: f32,
 }
 
 pub(crate) struct OutputMix {
     pub(crate) wet: f32,
+    pub(crate) bypass: bool,
+    pub(crate) bypass_step: f64,
     pub(crate) delta: Option<(usize, f32)>,
 }
 
@@ -25,6 +28,7 @@ impl<T: Sample> AudioPath<T> {
             regions: std::array::from_fn(|_| Region::new()),
             resampler: Resampler::default(),
             output_gain: T::one(),
+            bypass_mix: None,
             target_gain: T::one(),
             target_db: 0.0,
         }
@@ -40,6 +44,7 @@ impl<T: Sample> AudioPath<T> {
         }
 
         self.resampler.reset();
+        self.bypass_mix = None;
     }
 
     pub(crate) fn transfer_from<S: Sample>(&mut self, source: &AudioPath<S>) {
@@ -53,6 +58,7 @@ impl<T: Sample> AudioPath<T> {
 
         self.resampler.transfer_from(&source.resampler);
         self.output_gain = T::value(source.output_gain.double());
+        self.bypass_mix = source.bypass_mix;
         self.set_output_target(source.target_db);
     }
 
@@ -103,7 +109,12 @@ impl<T: Sample> AudioPath<T> {
         let dry_l = &mut dry_left[..len];
         let dry_r = &mut dry_right[..len];
 
-        if mode != Oversampling::Off || output.wet < 1.0 {
+        let target_bypass = f64::from(output.bypass);
+        let bypass = *self.bypass_mix.get_or_insert(target_bypass);
+        let fading = bypass != target_bypass;
+        let wet = if output.bypass { 0.0 } else { output.wet };
+
+        if mode != Oversampling::Off || fading || wet < 1.0 {
             self.resampler.delayed_dry(left, right, dry_l, dry_r);
         }
 
@@ -158,7 +169,21 @@ impl<T: Sample> AudioPath<T> {
             }
         }
 
-        if output.wet == 0.0 {
+        if fading && output.wet != 0.0 {
+            let mut bypass = bypass;
+            for ((left, right), (&dry_l, &dry_r)) in left
+                .iter_mut()
+                .zip(right.iter_mut())
+                .zip(dry_l.iter().zip(dry_r.iter()))
+            {
+                bypass += (target_bypass - bypass).clamp(-output.bypass_step, output.bypass_step);
+                let wet = T::value(f64::from(output.wet) * (1.0 - bypass));
+                *left = dry_l + wet * (*left * self.output_gain - dry_l);
+                *right = dry_r + wet * (*right * self.output_gain - dry_r);
+            }
+            self.bypass_mix = Some(bypass);
+        } else if wet == 0.0 {
+            self.bypass_mix = Some(target_bypass);
             left.copy_from_slice(dry_l);
             right.copy_from_slice(dry_r);
         } else {
@@ -166,9 +191,9 @@ impl<T: Sample> AudioPath<T> {
                 T::scale(left, self.output_gain);
                 T::scale(right, self.output_gain);
             }
-            if output.wet < 1.0 {
-                dsp::blend(dry_l, left, output.wet);
-                dsp::blend(dry_r, right, output.wet);
+            if wet < 1.0 {
+                dsp::blend(dry_l, left, wet);
+                dsp::blend(dry_r, right, wet);
             }
         }
 

@@ -520,25 +520,29 @@ impl EquartEditor {
         // 3 knobs here
         let q_enabled = band.kind.value().uses_q(band.slope.value());
         let frequency_mode = if band.pitch.enabled.value() {
-            let hz =
-                if band.pitch.bypassed.value() || !band.enabled.value() || params.bypass.value() {
-                    band.frequency.value()
-                } else {
-                    self.telemetry
-                        .tracked_frequency(index)
-                        .unwrap_or_else(|| band.frequency.value())
-                };
+            let hz = if band.pitch.bypassed.value()
+                || !band.enabled.value()
+                || params.global.bypass.value()
+            {
+                band.frequency.value()
+            } else {
+                self.telemetry
+                    .tracked_frequency(index)
+                    .unwrap_or_else(|| band.frequency.value())
+            };
             knob::KnobMode::ReadOnly(hz)
         } else {
             knob::KnobMode::Editable
         };
-        let gain_mode =
-            if band.dynamics.enabled.value() && band.enabled.value() && !params.bypass.value() {
-                let (_, offset) = self.telemetry.dynamic_meter(index);
-                knob::KnobMode::GainOffset(offset)
-            } else {
-                knob::KnobMode::Editable
-            };
+        let gain_mode = if band.dynamics.enabled.value()
+            && band.enabled.value()
+            && !params.global.bypass.value()
+        {
+            let (_, offset) = self.telemetry.dynamic_meter(index);
+            knob::KnobMode::GainOffset(offset)
+        } else {
+            knob::KnobMode::Editable
+        };
         let knobs = [
             (&band.frequency, "FREQ", 192.0, true, true, frequency_mode),
             (

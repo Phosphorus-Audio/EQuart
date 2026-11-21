@@ -2,6 +2,7 @@ use super::RegionControl;
 use crate::band::BandControl;
 use crate::filter::CutSlope;
 use crate::pitch::{BASS_MIN_HZ, DetectionRange, MAX_HZ, PitchControl, PitchDetectionParams};
+use crate::params::FloatDisplay;
 use nice_plug::prelude::*;
 use realfft::num_complex::Complex32;
 use std::f32::consts::{PI, SQRT_2};
@@ -210,17 +211,18 @@ pub struct HarmonicParams {
 impl HarmonicParams {
     pub fn new(prefix: &str) -> Self {
         let defaults = HarmonicControl::default();
-        let name = |label| format!("{prefix} Harmonic {label}");
+        let name = |label| format!("{prefix} / Harmonic / {label}");
         let range = IntRange::Linear {
             min: 1,
             max: MAX_HARMONIC as i32,
         };
+
         Self {
-            enabled: BoolParam::new(name("Enabled"), false),
-            bypassed: BoolParam::new(name("Bypassed"), false),
-            mode: EnumParam::new(name("Mode"), defaults.mode),
-            first: IntParam::new(name("First"), defaults.first, range),
-            last: IntParam::new(name("Last"), defaults.last, range),
+            enabled: BoolParam::new(name("Enabled"), false).non_automatable(),
+            bypassed: BoolParam::new(name("Bypass"), false),
+            mode: EnumParam::new(name("Mode"), defaults.mode).non_automatable(),
+            first: IntParam::new(name("First"), defaults.first, range).non_automatable(),
+            last: IntParam::new(name("Last"), defaults.last, range).non_automatable(),
             width: FloatParam::new(
                 name("Width"),
                 defaults.width_percent,
@@ -229,8 +231,8 @@ impl HarmonicParams {
                     max: 100.0,
                 },
             )
-            .with_unit(" %"),
-            source: EnumParam::new(name("Fundamental Source"), defaults.source),
+            .display_as("%", 1),
+            source: EnumParam::new(name("Fundamental Source"), defaults.source).non_automatable(),
             fixed_hz: FloatParam::new(
                 name("Fixed Fundamental"),
                 defaults.fixed_hz,
@@ -239,7 +241,7 @@ impl HarmonicParams {
                     max: MAX_HZ,
                 },
             )
-            .with_unit(" Hz"),
+            .display_as(" Hz", 0),
             detection: PitchDetectionParams::new(&name("Detection"), defaults.detection),
         }
     }

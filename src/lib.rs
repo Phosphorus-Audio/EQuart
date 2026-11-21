@@ -68,18 +68,18 @@ impl Default for Equart {
 
 impl Equart {
     fn controls(&self) -> Controls {
-        let mode = self.params.processing_mode.value();
+        let mode = self.params.global.processing_mode.value();
 
         Controls {
             bands: std::array::from_fn(|i| self.params.control(i)),
             regions: std::array::from_fn(|i| self.params.regions[i].control()),
-            output_db: self.params.output.value(),
-            mix: self.params.mix.value() * 0.01,
-            bypass: self.params.bypass.value(),
-            oversampling: mode.oversampling(self.params.oversampling.value()),
+            output_db: self.params.global.output.value(),
+            mix: self.params.global.mix.value() * 0.01,
+            bypass: self.params.global.bypass.value(),
+            oversampling: mode.oversampling(self.params.global.oversampling.value()),
             linear_phase: (mode == processing_mode::ProcessingMode::LinearPhase)
-                .then(|| self.params.linear_quality.value()),
-            precision: self.params.precision.value(),
+                .then(|| self.params.global.linear_quality.value()),
+            precision: self.params.global.precision.value(),
         }
     }
 }
@@ -116,7 +116,7 @@ impl Plugin for Equart {
         },
     ];
 
-    // params are read once per block and smoothed, no need for sample-accurate automation
+    // the host wrappers split processing at automation points
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
     type Editor = EguiEditor<editor::EquartEditor>;

@@ -266,7 +266,7 @@ impl Engine {
         self.detectors_live = false;
         for (i, (dynamic, band)) in self.dynamics.iter_mut().zip(&controls.bands).enumerate() {
             let mut control = band.dynamics;
-            control.enabled &= band.enabled && !controls.bypass;
+            control.enabled &= band.enabled;
             let active = dynamic.prepare(
                 control,
                 rate,
@@ -311,17 +311,15 @@ impl Engine {
 
         let frames = left.len().min(right.len());
         let sidechain = sidechain.filter(|[l, r]| l.len() >= frames && r.len() >= frames);
-        let detects = !controls.bypass
-            && controls
-                .bands
-                .iter()
-                .any(|band| band.enabled && band.kind.has_gain() && band.dynamics.enabled);
+        let detects = controls
+            .bands
+            .iter()
+            .any(|band| band.enabled && band.kind.has_gain() && band.dynamics.enabled);
 
-        let resonance_live = !controls.bypass
-            && controls
-                .regions
-                .iter()
-                .any(|r| r.enabled && !r.bypass && r.resonance.enabled && r.resonance.depth > 0.0);
+        let resonance_live = controls
+            .regions
+            .iter()
+            .any(|r| r.enabled && !r.bypass && r.resonance.enabled && r.resonance.depth > 0.0);
 
         if self.resonance_live && !resonance_live {
             self.resonance.reset();
@@ -330,7 +328,6 @@ impl Engine {
         self.pitch.configure(
             self.rate,
             &controls.bands,
-            controls.bypass,
             controls.regions.map(RegionControl::harmonic_detection),
         );
 
@@ -350,11 +347,6 @@ impl Engine {
         });
 
         let fade_step = 1.0 / (0.005 * self.rate);
-
-        if controls.bypass {
-            self.delta_region = None;
-            self.delta_mix = 0.0;
-        }
 
         let mut analysis_l = [0.0; COEFF_FRAMES];
         let mut analysis_r = [0.0; COEFF_FRAMES];
@@ -409,7 +401,9 @@ impl Engine {
                 }
             }
             let output = OutputMix {
-                wet: if controls.bypass { 0.0 } else { self.mix },
+                wet: self.mix,
+                bypass: controls.bypass,
+                bypass_step: 1.0 / (0.005 * f64::from(self.rate)),
                 delta: self.delta_region.map(|index| {
                     let step = if requested == self.delta_region {
                         fade_step
@@ -425,27 +419,28 @@ impl Engine {
                     Precision::Single => self.single.output_gain(),
                     Precision::Double => self.double.output_gain(),
                 };
-                self.linear.process(
-                    left, right, OutputMix { wet: self.mix, ..output }, controls.bypass,
-                    gain, &mut self.delta_mix,
-                );
+                self.linear
+                    .process(left, right, output, gain, &mut self.delta_mix);
             } else {
                 T::render(self, left, right, controls, output);
             }
 
-            let focus = self.audition_request.and_then(|target| {
-                let focus = match target {
-                    audition::Target::Band(index) => {
-                        let band = *controls.bands.get(index)?;
-                        let frequency = self.pitch.band_target(index).unwrap_or(band.frequency);
-                        audition::Focus::band(band, frequency)
-                    }
-                    audition::Target::Region(index) => {
-                        audition::Focus::region(controls.regions.get(index)?.bounds())
-                    }
-                };
-                Some((target, focus))
-            });
+            let focus = self
+                .audition_request
+                .filter(|_| !controls.bypass)
+                .and_then(|target| {
+                    let focus = match target {
+                        audition::Target::Band(index) => {
+                            let band = *controls.bands.get(index)?;
+                            let frequency = self.pitch.band_target(index).unwrap_or(band.frequency);
+                            audition::Focus::band(band, frequency)
+                        }
+                        audition::Target::Region(index) => {
+                            audition::Focus::region(controls.regions.get(index)?.bounds())
+                        }
+                    };
+                    Some((target, focus))
+                });
             self.audition.process(left, right, self.rate, focus);
 
             let output_peak = dsp::peak(left, right);
@@ -541,6 +536,10 @@ impl Engine {
             .zip(self.resonance.reductions())
             .enumerate()
         {
+            if !region.enabled || region.bypass {
+                continue;
+            }
+
             pending.extend(
                 region
                     .filter_plan(self.rate, self.pitch.harmonic_hz(index))
@@ -577,10 +576,7 @@ impl Engine {
 
         for (i, &control) in controls.bands.iter().enumerate() {
             let mut control = control;
-            if let Some(hz) = self
-                .pitch
-                .refresh_band(i, &control, controls.bypass, self.rate)
-            {
+            if let Some(hz) = self.pitch.refresh_band(i, &control, self.rate) {
                 control.frequency = hz;
             }
             if control.kind.has_gain() {

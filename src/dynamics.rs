@@ -274,7 +274,13 @@ impl Dynamics {
     }
 
     pub fn advance(&mut self, control: DynamicControl, rate: f32, frames: usize) {
-        let clock = ([control.attack_ms, control.release_ms], frames);
+        let release_ms = if control.enabled {
+            control.release_ms
+        } else {
+            5.0
+        };
+        let clock = ([control.attack_ms, release_ms], frames);
+
         if self.gain_clock != Some(clock) {
             self.gain_clock = Some(clock);
             self.gain_alphas = clock.0.map(|ms| alpha(ms, rate, frames));

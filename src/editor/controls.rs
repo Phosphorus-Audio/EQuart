@@ -61,12 +61,16 @@ impl EquartEditor {
             ("footer-bypass", 0),
             row(FOOTER_BUTTONS[0]),
             icons::Glyph::Bypass,
-            self.params.bypass.value(),
+            self.params.global.bypass.value(),
             RED,
         )
         .clicked()
         {
-            self.set(&setter, &self.params.bypass, !self.params.bypass.value());
+            self.set(
+                &setter,
+                &self.params.global.bypass,
+                !self.params.global.bypass.value(),
+            );
         }
 
         let scale = icon_button(
@@ -313,7 +317,7 @@ impl EquartEditor {
             menu::divider(&mut r);
             dropdowns.new_group();
             menu::section(&mut r, "ENGINE");
-            let processing = self.params.processing_mode.value();
+            let processing = self.params.global.processing_mode.value();
             let modes = ProcessingMode::variants();
             let index = processing.to_index();
 
@@ -330,7 +334,7 @@ impl EquartEditor {
             if processing == ProcessingMode::NaturalPhase {
                 let mut modes = crate::oversample::Oversampling::ALL.map(|mode| mode.label());
                 modes[0] = "Auto (4×)";
-                let index = self.params.oversampling.value().to_index();
+                let index = self.params.global.oversampling.value().to_index();
                 dropdowns.combo(
                     &mut r,
                     menu::COMBO_OVERSAMPLING,
@@ -344,7 +348,7 @@ impl EquartEditor {
 
             if processing == ProcessingMode::LinearPhase {
                 let names = LinearQuality::variants();
-                let quality = self.params.linear_quality.value();
+                let quality = self.params.global.linear_quality.value();
                 let index = quality.to_index();
                 let taps = 2 * quality.center_at(values.sample_rate) + 1;
                 let caption = format!("Linear phase quality · {taps} taps");
@@ -360,7 +364,8 @@ impl EquartEditor {
                 );
             }
 
-            let double = self.params.precision.value() == crate::precision::Precision::Double;
+            let double =
+                self.params.global.precision.value() == crate::precision::Precision::Double;
 
             if menu::switch(
                 &mut r,
@@ -375,7 +380,11 @@ impl EquartEditor {
                 } else {
                     crate::precision::Precision::Double
                 };
-                self.set(&gui.param_setter(), &self.params.precision, precision);
+                self.set(
+                    &gui.param_setter(),
+                    &self.params.global.precision,
+                    precision,
+                );
             }
 
             if menu::row(&mut r, "Flat all", None, false, accent) {
@@ -405,14 +414,16 @@ impl EquartEditor {
                 if let Some(gui) = &self.gui {
                     self.set(
                         &gui.param_setter(),
-                        &self.params.processing_mode,
+                        &self.params.global.processing_mode,
                         ProcessingMode::ALL[index],
                     );
                 }
             } else if key == menu::COMBO_LINEAR_QUALITY {
                 if let Some(gui) = &self.gui {
                     self.set(
-                        &gui.param_setter(), &self.params.linear_quality, LinearQuality::ALL[index],
+                        &gui.param_setter(),
+                        &self.params.global.linear_quality,
+                        LinearQuality::ALL[index],
                     );
                 }
             } else if key == menu::COMBO_OVERSAMPLING {
@@ -420,7 +431,7 @@ impl EquartEditor {
                     let setter = gui.param_setter();
                     self.set(
                         &setter,
-                        &self.params.oversampling,
+                        &self.params.global.oversampling,
                         crate::oversample::Oversampling::ALL[index],
                     );
                 }
@@ -447,8 +458,8 @@ impl EquartEditor {
             child.visuals_mut().selection.bg_fill = accent.gamma_multiply(0.3);
             child.visuals_mut().selection.stroke = Stroke::new(1.0, accent);
             for (param, label, across) in [
-                (&self.params.output, "OUT", 0.36),
-                (&self.params.mix, "MIX", 0.74),
+                (&self.params.global.output, "OUT", 0.36),
+                (&self.params.global.mix, "MIX", 0.74),
             ] {
                 let center = Pos2::new(row.left() + row.width() * across, row.top() + MENU_KNOB_Y);
                 knob::knob(

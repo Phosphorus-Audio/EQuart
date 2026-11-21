@@ -29,19 +29,17 @@ impl PitchRack {
         &mut self,
         rate: f32,
         bands: &[BandControl; BAND_COUNT],
-        bypass: bool,
         harmonics: [Option<PitchControl>; REGION_COUNT],
     ) {
         let mut requests = [None; SOURCES];
-        if !bypass {
-            for (request, band) in requests.iter_mut().zip(bands) {
-                *request = (band.enabled && band.pitch.enabled).then(|| band.pitch.into());
-            }
-
-            for (request, harmonic) in requests[HARMONIC_SOURCE..].iter_mut().zip(harmonics) {
-                *request = harmonic.map(Into::into);
-            }
+        for (request, band) in requests.iter_mut().zip(bands) {
+            *request = (band.enabled && band.pitch.enabled).then(|| band.pitch.into());
         }
+
+        for (request, harmonic) in requests[HARMONIC_SOURCE..].iter_mut().zip(harmonics) {
+            *request = harmonic.map(Into::into);
+        }
+
         self.bank.configure(rate, requests);
     }
 
@@ -53,11 +51,10 @@ impl PitchRack {
         &mut self,
         index: usize,
         band: &BandControl,
-        bypass: bool,
         rate: f32,
     ) -> Option<f32> {
         let voice = &mut self.bands[index];
-        if bypass || !band.enabled || !band.pitch.enabled {
+        if !band.enabled || !band.pitch.enabled {
             voice.clear();
         } else if let Some(hz) = self.bank.detected(index) {
             voice.advance(

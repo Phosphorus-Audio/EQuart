@@ -515,7 +515,6 @@ impl LinearEq {
         left: &mut [T],
         right: &mut [T],
         output: OutputMix,
-        bypass: bool,
         gain: f64,
         delta_mix: &mut f32,
     ) {
@@ -526,9 +525,8 @@ impl LinearEq {
         }
 
         let latency = latency(self.center);
-        let target_bypass = f64::from(bypass);
+        let target_bypass = f64::from(output.bypass);
         let bypass_mix = self.bypass_mix.get_or_insert(target_bypass);
-        let fade_step = 1.0 / (0.005 * f64::from(self.rate));
 
         for (left, right) in left.iter_mut().zip(right) {
             let input = [left.double(), right.double()];
@@ -536,7 +534,8 @@ impl LinearEq {
             self.dry_pos = (self.dry_pos + 1) % latency;
             self.convolution.input(self.pos, input);
 
-            *bypass_mix += (target_bypass - *bypass_mix).clamp(-fade_step, fade_step);
+            *bypass_mix +=
+                (target_bypass - *bypass_mix).clamp(-output.bypass_step, output.bypass_step);
 
             if let Some((_, step)) = output.delta {
                 *delta_mix = (*delta_mix + step).clamp(0.0, 1.0);

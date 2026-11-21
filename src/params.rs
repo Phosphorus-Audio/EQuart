@@ -35,25 +35,8 @@ pub struct EquartParams {
     #[persist = "bands_placed"]
     pub bands_placed: AtomicU32,
 
-    #[id = "output"]
-    pub output: FloatParam,
-
-    #[id = "mix"]
-    pub mix: FloatParam,
-
-    #[id = "bypass"]
-    pub bypass: BoolParam,
-
-    /// 2x/4x oversampling to reduce high-freq bilinear warping
-    #[id = "oversampling"]
-    pub oversampling: EnumParam<Oversampling>,
-
-    #[id = "processing_mode"]
-    pub(crate) processing_mode: EnumParam<crate::processing_mode::ProcessingMode>,
-    #[id = "linear_quality"]
-    pub(crate) linear_quality: EnumParam<crate::processing_mode::LinearQuality>,
-    #[id = "dsp_precision"]
-    pub(crate) precision: EnumParam<Precision>,
+    #[nested(group = "Global")]
+    pub global: GlobalParams,
 
     #[persist = "ui_scale_percent"]
     pub ui_scale_percent: AtomicU32,
@@ -107,31 +90,7 @@ impl Default for EquartParams {
             bands: std::array::from_fn(BandParams::at),
             regions: std::array::from_fn(crate::region::RegionParams::new),
             bands_placed: AtomicU32::new(0),
-            output: FloatParam::new(
-                "Output",
-                0.0,
-                FloatRange::Linear {
-                    min: -24.0,
-                    max: 12.0,
-                },
-            )
-            .with_unit(" dB")
-            .with_value_to_string(formatters::v2s_f32_rounded(1)),
-            mix: FloatParam::new(
-                "Mix",
-                100.0,
-                FloatRange::Linear {
-                    min: 0.0,
-                    max: 100.0,
-                },
-            )
-            .with_unit(" %")
-            .with_value_to_string(formatters::v2s_f32_rounded(0)),
-            bypass: BoolParam::new("Bypass", false).make_bypass(),
-            oversampling: EnumParam::new("Oversampling", Oversampling::Off),
-            processing_mode: EnumParam::new("Processing Mode", Default::default()),
-            linear_quality: EnumParam::new("Linear Phase Quality", Default::default()).non_automatable(),
-            precision: EnumParam::new("DSP Precision", Precision::default()),
+            global: GlobalParams::default(),
             ui_scale_percent: AtomicU32::new(100),
             axis_range_db: AtomicU32::new(DEFAULT_AXIS_RANGE),
             spectrum_range_db: AtomicU32::new(DEFAULT_SPECTRUM_RANGE),
@@ -148,6 +107,80 @@ impl Default for EquartParams {
             meter_visible: AtomicBool::new(true),
             piano_key_fade: AtomicBool::new(false),
         }
+    }
+}
+
+#[derive(Params)]
+pub struct GlobalParams {
+    #[id = "output"]
+    pub output: FloatParam,
+
+    #[id = "mix"]
+    pub mix: FloatParam,
+
+    #[id = "bypass"]
+    pub bypass: BoolParam,
+
+    #[id = "oversampling"]
+    pub oversampling: EnumParam<Oversampling>,
+
+    #[id = "processing_mode"]
+    pub(crate) processing_mode: EnumParam<crate::processing_mode::ProcessingMode>,
+    #[id = "linear_quality"]
+    pub(crate) linear_quality: EnumParam<crate::processing_mode::LinearQuality>,
+    #[id = "dsp_precision"]
+    pub(crate) precision: EnumParam<Precision>,
+}
+
+impl Default for GlobalParams {
+    fn default() -> Self {
+        Self {
+            output: FloatParam::new(
+                "Output Gain",
+                0.0,
+                FloatRange::Linear {
+                    min: -24.0,
+                    max: 12.0,
+                },
+            )
+            .display_as(" dB", 2),
+            mix: FloatParam::new(
+                "Mix",
+                100.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 100.0,
+                },
+            )
+            .display_as("%", 1),
+            bypass: BoolParam::new("Bypass", false).make_bypass(),
+            oversampling: EnumParam::new("Oversampling", Oversampling::Off).non_automatable(),
+            processing_mode: EnumParam::new("Processing Mode", Default::default())
+                .non_automatable(),
+            linear_quality: EnumParam::new("Linear Phase Quality", Default::default())
+                .non_automatable(),
+            precision: EnumParam::new("DSP Precision", Precision::default()).non_automatable(),
+        }
+    }
+}
+
+pub(crate) trait FloatDisplay {
+    fn display_as(self, unit: &'static str, digits: usize) -> Self;
+}
+
+impl FloatDisplay for FloatParam {
+    fn display_as(self, unit: &'static str, digits: usize) -> Self {
+        self.with_unit(unit)
+            .with_value_to_string(formatters::v2s_f32_rounded(digits))
+            .with_string_to_value(std::sync::Arc::new(move |text| {
+                let unit = unit.trim();
+                let (number, scale) = match (unit, text.strip_suffix("kHz")) {
+                    ("Hz", Some(number)) => (number, 1000.0),
+                    _ => (text.strip_suffix(unit).unwrap_or(text), 1.0),
+                };
+                let value = number.trim().parse::<f32>().ok()? * scale;
+                value.is_finite().then_some(value)
+            }))
     }
 }
 
@@ -221,10 +254,10 @@ pub struct BandParams {
 
     /// Per-band threshold / range / attack / release, folded under the host's
     /// band group so automation sees them as one parameter tree.
-    #[nested(group = "Dynamics")]
+    #[nested(group = "Dynamic")]
     pub dynamics: DynamicParams,
 
-    #[nested(group = "f0lock")]
+    #[nested(group = "F0 Follow")]
     pub pitch: Box<PitchParams>,
 }
 
@@ -251,7 +284,7 @@ fn default_frequency(index: usize) -> f32 {
 impl BandParams {
     fn frequency_param(band: &str, default: f32) -> FloatParam {
         FloatParam::new(
-            format!("{band} Frequency"),
+            format!("{band} / Frequency"),
             default,
             // f(t) = min * (max/min)^t: an octave costs the same drag
             // distance at 100 Hz as it does at 10 kHz. The old skewed range
@@ -264,27 +297,26 @@ impl BandParams {
                 max: FREQUENCY_MAX_HZ,
             },
         )
-        .with_value_to_string(formatters::v2s_f32_hz_then_khz(1))
+        .display_as(" Hz", 2)
         .with_step_size(0.01)
     }
 
     fn gain_param(band: &str, default: f32) -> FloatParam {
         FloatParam::new(
-            format!("{band} Gain"),
+            format!("{band} / Gain"),
             default,
             FloatRange::Linear {
                 min: -24.0,
                 max: 24.0,
             },
         )
-        .with_unit(" dB")
-        .with_value_to_string(formatters::v2s_f32_rounded(1))
+        .display_as(" dB", 2)
         .with_step_size(0.01)
     }
 
     fn q_param(band: &str, default: f32) -> FloatParam {
         FloatParam::new(
-            format!("{band} Q"),
+            format!("{band} / Q"),
             default,
             FloatRange::Skewed {
                 min: Q_MIN,
@@ -292,7 +324,7 @@ impl BandParams {
                 factor: FloatRange::skew_factor(-1.0),
             },
         )
-        .with_value_to_string(formatters::v2s_f32_rounded(3))
+        .display_as("", 3)
         .with_step_size(0.001)
     }
 
@@ -305,16 +337,19 @@ impl BandParams {
         // The host lists every band's parameters in one flat column, so the
         // slot number has to be in the name itself: thirty-two rows of "Gain"
         // tell you nothing about which point you are automating.
-        let band = format!("Band {}", index + 1);
+        let band = format!("Band {:02}", index + 1);
+        let filter = format!("{band} / Filter");
 
         Self {
-            enabled: BoolParam::new(format!("{band} Enabled"), false),
-            kind: EnumParam::new(format!("{band} Type"), kind),
-            channel: EnumParam::new(format!("{band} Channel"), ChannelMode::Stereo),
-            frequency: Self::frequency_param(&band, frequency),
-            gain: Self::gain_param(&band, gain),
-            q: Self::q_param(&band, q),
-            slope: EnumParam::new(format!("{band} Slope"), CutSlope::default()),
+            enabled: BoolParam::new(format!("{filter} / Enabled"), false).non_automatable(),
+            kind: EnumParam::new(format!("{filter} / Type"), kind).non_automatable(),
+            channel: EnumParam::new(format!("{filter} / Channel"), ChannelMode::Stereo)
+                .non_automatable(),
+            frequency: Self::frequency_param(&filter, frequency),
+            gain: Self::gain_param(&filter, gain),
+            q: Self::q_param(&filter, q),
+            slope: EnumParam::new(format!("{filter} / Slope"), CutSlope::default())
+                .non_automatable(),
             dynamics: DynamicParams::new(&band),
             pitch: Box::new(PitchParams::new(&band)),
         }
@@ -343,64 +378,126 @@ impl BandParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
 
-    /// Every parameter the host can automate has to be findable by its name:
-    /// the host lists them in one flat column, and "Gain" thirty-two times over
-    /// says nothing about which point the row moves.
     #[test]
-    fn param_names_include_band() {
+    fn host_parameter_permissions_names_and_text() {
         let params = EquartParams::default();
-        let mut names: Vec<String> = Vec::new();
+        let mut ids = HashSet::new();
+        let mut names = HashSet::new();
+        let mut counts = HashMap::new();
 
-        for (index, band) in params.bands.iter().enumerate() {
-            let prefix = format!("Band {} ", index + 1);
-            for name in [
-                band.enabled.name(),
-                band.kind.name(),
-                band.channel.name(),
-                band.frequency.name(),
-                band.gain.name(),
-                band.q.name(),
-                band.slope.name(),
-                band.dynamics.enabled.name(),
-                band.dynamics.threshold.name(),
-                band.dynamics.range.name(),
-                band.dynamics.attack.name(),
-                band.dynamics.release.name(),
-            ] {
-                assert!(
-                    name.starts_with(&prefix),
-                    "{name:?} does not say it belongs to band {}",
-                    index + 1
-                );
-                names.push(name.to_owned());
+        for (id, param, group) in params.param_map() {
+            assert!(ids.insert(id));
+
+            // SAFETY: params owns every pointer and outlives the loop
+            unsafe {
+                let name = param.name();
+                assert!(names.insert(name.to_owned()), "duplicate name {name}");
+                assert!(!name.contains("Bypassed"));
+                assert!(!name.contains("Detection / Detection"));
+                assert!(name.encode_utf16().count() < 128);
+
+                let flags = param.flags();
+                assert!(!flags.contains(ParamFlags::HIDDEN), "{name}");
+                let automated = !flags.contains(ParamFlags::NON_AUTOMATABLE);
+                let (_, subgroup) = group.split_once('/').unwrap_or((&group, ""));
+                let category = if group.starts_with("Band ") {
+                    subgroup
+                        .split('/')
+                        .next()
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("Filter")
+                } else if group.starts_with("Spectral Region ") {
+                    subgroup
+                        .split('/')
+                        .next()
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("Region")
+                } else {
+                    assert_eq!(group, "Global");
+                    "Global"
+                };
+                *counts.entry((category.to_owned(), automated)).or_insert(0) += 1;
+
+                for value in [0.0, param.default_normalized_value(), 1.0] {
+                    for include_unit in [true, false] {
+                        let text = param.normalized_value_to_string(value, include_unit);
+                        assert!(
+                            param.string_to_normalized_value(&text).is_some(),
+                            "could not parse {name} = {text}",
+                        );
+                        let unit = param.unit().trim();
+                        if !unit.is_empty() && include_unit {
+                            assert_eq!(text.matches(unit).count(), 1, "{name} = {text}");
+                        }
+                    }
+                }
             }
         }
 
-        for name in [
-            params.output.name(),
-            params.mix.name(),
-            params.bypass.name(),
-            params.oversampling.name(),
+        for (group, automated, manual) in [
+            ("Global", 3, 4),
+            ("Filter", 3 * BAND_COUNT, 4 * BAND_COUNT),
+            ("Dynamic", 16 * BAND_COUNT, 5 * BAND_COUNT),
+            ("F0 Follow", 7 * BAND_COUNT, 6 * BAND_COUNT),
+            (
+                "Region",
+                5 * crate::region::REGION_COUNT,
+                crate::region::REGION_COUNT,
+            ),
+            (
+                "Resonance",
+                10 * crate::region::REGION_COUNT,
+                crate::region::REGION_COUNT,
+            ),
+            (
+                "Harmonic",
+                8 * crate::region::REGION_COUNT,
+                10 * crate::region::REGION_COUNT,
+            ),
         ] {
-            names.push(name.to_owned());
+            assert_eq!(counts[&(group.to_owned(), true)], automated, "{group}");
+            assert_eq!(counts[&(group.to_owned(), false)], manual, "{group}");
         }
+        assert_eq!(counts.len(), 14);
+        assert_eq!(ids.len(), 1529);
 
-        let mut unique = std::collections::HashSet::new();
-        for name in &names {
-            assert!(unique.insert(name.as_str()), "{name:?} is used twice");
-        }
+        let band = &params.bands[0];
+        let pitch = &band.pitch.detection;
+        let output = &params.global.output;
+        let region = &params.regions[0];
 
-        let ids: std::collections::HashSet<_> =
-            params.param_map().into_iter().map(|(id, _, _)| id).collect();
-        assert!(ids.contains("dsp_precision"));
-
-        for key in [
-            "algorithm", "profile", "tracking", "gate", "clarity", "target", "minimum", "maximum",
-            "reference", "tolerance",
-        ] {
-            assert!(ids.contains(&format!("pitch_{key}_1")));
-            assert!(ids.contains(&format!("harmonic_pitch_{key}_1")));
-        }
+        assert_eq!(band.frequency.name(), "Band 01 / Filter / Frequency");
+        assert_eq!(
+            region.harmonic.detection.profile.name(),
+            "Spectral Region 01 / Harmonic / Detection / Range"
+        );
+        assert_eq!(
+            band.frequency.string_to_normalized_value("1.2345 kHz"),
+            band.frequency.string_to_normalized_value("1234.5Hz")
+        );
+        assert_eq!(band.q.normalized_value_to_string(0.0, true), "0.025");
+        assert_eq!(
+            pitch
+                .tracking
+                .normalized_value_to_string(pitch.tracking.default_normalized_value(), true),
+            "35.0 ms"
+        );
+        assert_eq!(
+            pitch
+                .maximum
+                .normalized_value_to_string(pitch.maximum.default_normalized_value(), true),
+            "600 Hz"
+        );
+        assert_eq!(
+            output.string_to_normalized_value("-12.345 dB"),
+            Some(output.preview_normalized(-12.345))
+        );
+        assert_eq!(output.string_to_normalized_value("-24 dB"), Some(0.0));
+        assert_eq!(output.string_to_normalized_value("12 dB"), Some(1.0));
+        assert_eq!(output.string_to_normalized_value("NaN dB"), None);
+        assert_eq!(output.string_to_normalized_value("inf"), None);
+        assert_eq!(band.frequency.string_to_normalized_value("600 Hz Hz"), None);
     }
 }

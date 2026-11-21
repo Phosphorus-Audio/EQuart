@@ -118,7 +118,7 @@ impl EquartEditor {
                         }
                     }
 
-                    if bypassed || region.bypass.value() || self.params.bypass.value() {
+                    if bypassed || region.bypass.value() || self.params.global.bypass.value() {
                         ui.label("Bypassed");
                     } else if region.gain.value() == 0.0 {
                         ui.label("Gain is 0 dB");

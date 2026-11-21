@@ -1,4 +1,5 @@
 use super::{BASS_MIN_HZ, DetectionMode, DetectionRange, MAX_HZ, PitchControl, Target, TargetMode};
+use crate::params::FloatDisplay;
 use nice_plug::prelude::*;
 
 #[derive(Params)]
@@ -39,19 +40,24 @@ pub struct PitchDetectionParams {
 
 impl PitchParams {
     pub fn new(band: &str) -> Self {
+        let name = |label| format!("{band} / F0 Follow / {label}");
+
         Self {
-            enabled: BoolParam::new(format!("{band} Pitch Enabled"), false),
-            bypassed: BoolParam::new(format!("{band} Pitch Bypassed"), false),
-            detection: PitchDetectionParams::new(&format!("{band} Pitch"), PitchControl::default()),
+            enabled: BoolParam::new(name("Enabled"), false).non_automatable(),
+            bypassed: BoolParam::new(name("Bypass"), false),
+            detection: PitchDetectionParams::new(
+                &format!("{band} / F0 Follow"),
+                PitchControl::default(),
+            ),
             multiplier: FloatParam::new(
-                format!("{band} Pitch Multiplier"),
+                name("Multiplier"),
                 PitchControl::default().multiplier,
                 FloatRange::Logarithmic {
                     min: 0.125,
                     max: 16.0,
                 },
             )
-            .with_unit("×"),
+            .display_as("×", 3),
         }
     }
 
@@ -68,9 +74,10 @@ impl PitchParams {
 
 impl PitchDetectionParams {
     pub fn new(prefix: &str, defaults: PitchControl) -> Self {
-        let name = |label| format!("{prefix} {label}");
+        let name = |label| format!("{prefix} / {label}");
         let linear = |label, default, min, max, unit| {
-            FloatParam::new(name(label), default, FloatRange::Linear { min, max }).with_unit(unit)
+            FloatParam::new(name(label), default, FloatRange::Linear { min, max })
+                .display_as(unit, 1)
         };
         let frequency = |label, default| {
             FloatParam::new(
@@ -81,11 +88,11 @@ impl PitchDetectionParams {
                     max: MAX_HZ,
                 },
             )
-            .with_unit(" Hz")
+            .display_as(" Hz", 0)
         };
         Self {
-            algorithm: EnumParam::new(name("Algorithm"), defaults.algorithm),
-            profile: EnumParam::new(name("Detection Range"), defaults.profile),
+            algorithm: EnumParam::new(name("Algorithm"), defaults.algorithm).non_automatable(),
+            profile: EnumParam::new(name("Range"), defaults.profile).non_automatable(),
             tracking: FloatParam::new(
                 name("Tracking"),
                 defaults.tracking_ms,
@@ -95,12 +102,12 @@ impl PitchDetectionParams {
                     factor: FloatRange::skew_factor(-1.0),
                 },
             )
-            .with_unit(" ms"),
+            .display_as(" ms", 1),
             gate: linear("Gate", defaults.gate_db, -80.0, -20.0, " dBFS"),
             clarity: linear("Clarity", defaults.clarity * 100.0, 50.0, 99.0, "%"),
-            target: EnumParam::new(name("Target"), defaults.target.mode),
-            minimum: frequency("Minimum", defaults.target.minimum),
-            maximum: frequency("Maximum", defaults.target.maximum),
+            target: EnumParam::new(name("Target"), defaults.target.mode).non_automatable(),
+            minimum: frequency("Minimum", defaults.target.minimum).non_automatable(),
+            maximum: frequency("Maximum", defaults.target.maximum).non_automatable(),
             reference: frequency("Reference", defaults.target.reference),
             tolerance: linear("Tolerance", defaults.target.tolerance, 1.0, 24.0, " st"),
         }

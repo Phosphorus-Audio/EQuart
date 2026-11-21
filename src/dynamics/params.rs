@@ -1,4 +1,4 @@
-use crate::params::{FREQUENCY_MAX_HZ, Q_MAX, Q_MIN};
+use crate::params::{FREQUENCY_MAX_HZ, FloatDisplay, Q_MAX, Q_MIN};
 use nice_plug::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enum)]
@@ -105,26 +105,26 @@ pub struct DetectorParams {
 impl DetectorParams {
     fn new(name: &str, defaults: DetectorControl) -> Self {
         Self {
-            mode: EnumParam::new(format!("{name} Mode"), defaults.mode),
-            input: EnumParam::new(format!("{name} Input"), defaults.input),
+            mode: EnumParam::new(format!("{name} / Mode"), defaults.mode).non_automatable(),
+            input: EnumParam::new(format!("{name} / Input"), defaults.input).non_automatable(),
             frequency: FloatParam::new(
-                format!("{name} Frequency"),
+                format!("{name} / Frequency"),
                 defaults.frequency,
                 FloatRange::Logarithmic {
                     min: crate::analyzer::MIN_HZ,
                     max: FREQUENCY_MAX_HZ,
                 },
             )
-            .with_unit(" Hz"),
+            .display_as(" Hz", 2),
             q: FloatParam::new(
-                format!("{name} Q"),
+                format!("{name} / Q"),
                 defaults.q,
                 FloatRange::Logarithmic {
                     min: Q_MIN,
                     max: Q_MAX,
                 },
             )
-            .with_value_to_string(formatters::v2s_f32_rounded(3)),
+            .display_as("", 3),
         }
     }
 
@@ -175,11 +175,10 @@ pub struct DynamicParams {
 impl DynamicParams {
     pub fn new(band: &str) -> Self {
         let defaults = DynamicControl::default();
-        let name = |label| format!("{band} {label}");
+        let name = |label| format!("{band} / Dynamic / {label}");
         let db = |label, default, min, max| {
             FloatParam::new(name(label), default, FloatRange::Linear { min, max })
-                .with_unit(" dB")
-                .with_value_to_string(formatters::v2s_f32_rounded(2))
+                .display_as(" dB", 2)
         };
         let time = |label, default, max| {
             FloatParam::new(
@@ -191,8 +190,7 @@ impl DynamicParams {
                     factor: FloatRange::skew_factor(-2.0),
                 },
             )
-            .with_unit(" ms")
-            .with_value_to_string(formatters::v2s_f32_rounded(2))
+            .display_as(" ms", 2)
         };
         let percent = |label, default| {
             FloatParam::new(
@@ -203,26 +201,25 @@ impl DynamicParams {
                     max: 100.0,
                 },
             )
-            .with_unit(" %")
-            .with_value_to_string(formatters::v2s_f32_rounded(1))
+            .display_as("%", 1)
         };
 
         Self {
-            enabled: BoolParam::new(name("Dynamic enabled"), defaults.enabled),
-            bypassed: BoolParam::new(name("Dynamic bypass"), false),
-            threshold: db("Dynamic threshold", defaults.threshold, -80.0, 0.0),
-            range: db("Dynamic Above range", defaults.above.range, -24.0, 24.0),
-            attack: time("Dynamic attack", defaults.attack_ms, 500.0),
-            release: time("Dynamic release", defaults.release_ms, 2000.0),
-            above_enabled: BoolParam::new(name("Dynamic Above enabled"), defaults.above.enabled),
-            above_ratio: percent("Dynamic Above ratio", defaults.above.ratio),
-            below_enabled: BoolParam::new(name("Dynamic Below enabled"), defaults.below.enabled),
-            below_range: db("Dynamic Below range", defaults.below.range, -24.0, 24.0),
-            below_ratio: percent("Dynamic Below ratio", defaults.below.ratio),
-            detect: DetectorParams::new(&name("Dynamic Detect"), defaults.detect),
-            relative: DetectorParams::new(&name("Dynamic Relative"), defaults.relative),
-            relative_amount: percent("Dynamic Relative amount", defaults.relative_amount),
-            onsets_amount: percent("Dynamic Onsets amount", defaults.onsets_amount),
+            enabled: BoolParam::new(name("Enabled"), defaults.enabled).non_automatable(),
+            bypassed: BoolParam::new(name("Bypass"), false),
+            threshold: db("Threshold", defaults.threshold, -80.0, 0.0),
+            range: db("Above / Range", defaults.above.range, -24.0, 24.0),
+            attack: time("Attack", defaults.attack_ms, 500.0),
+            release: time("Release", defaults.release_ms, 2000.0),
+            above_enabled: BoolParam::new(name("Above / Enabled"), defaults.above.enabled),
+            above_ratio: percent("Above / Ratio", defaults.above.ratio),
+            below_enabled: BoolParam::new(name("Below / Enabled"), defaults.below.enabled),
+            below_range: db("Below / Range", defaults.below.range, -24.0, 24.0),
+            below_ratio: percent("Below / Ratio", defaults.below.ratio),
+            detect: DetectorParams::new(&name("Detect"), defaults.detect),
+            relative: DetectorParams::new(&name("Relative"), defaults.relative),
+            relative_amount: percent("Relative Amount", defaults.relative_amount),
+            onsets_amount: percent("Onsets Amount", defaults.onsets_amount),
         }
     }
 
