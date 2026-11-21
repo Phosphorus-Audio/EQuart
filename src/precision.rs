@@ -5,10 +5,10 @@ use realfft::num_traits::{Float, FloatConst, NumAssign};
 
 #[derive(Clone, Copy, Debug, Default, Enum, Eq, PartialEq)]
 pub(crate) enum Precision {
-    #[default]
     #[id = "f32"]
     #[name = "32-bit"]
     Single,
+    #[default]
     #[id = "f64"]
     #[name = "64-bit"]
     Double,
