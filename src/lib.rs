@@ -240,6 +240,7 @@ impl Equart {
         } else {
             None
         };
+        self.engine.audition_request = if open { self.telemetry.audition() } else { None };
         let display = self.params.analyzer.load(Ordering::Relaxed);
         #[cfg(feature = "analyzer-profile")]
         let display = analyzer::profile::enabled(display);

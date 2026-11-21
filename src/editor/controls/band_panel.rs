@@ -82,17 +82,13 @@ pub(in crate::editor) fn panel_actions(
 ) -> [Response; 4] {
     use icons::Glyph;
 
-    let (close, delete, convert, switch, full) = match target {
+    let (convert, switch, full) = match target {
         modifiers::ModifierTarget::Band(_) => (
-            "Close band panel",
-            "Delete band",
             Glyph::ToRegion,
             "Switch to Spectral Region",
             "No free Spectral Region slots",
         ),
         modifiers::ModifierTarget::Region(_) => (
-            "Close region panel",
-            "Delete region",
             Glyph::ToBand,
             "Switch to Band",
             "No free Band slots",
@@ -100,8 +96,8 @@ pub(in crate::editor) fn panel_actions(
     };
     let height = panel.height() / 4.0;
     let buttons = [
-        (Glyph::Close, close, true),
-        (Glyph::Delete, delete, true),
+        (Glyph::Close, "", true),
+        (Glyph::Listen, "Hold to listen", true),
         (
             convert,
             if can_convert { switch } else { full },
@@ -122,7 +118,9 @@ pub(in crate::editor) fn panel_actions(
             .interact(
                 rect,
                 ui.make_persistent_id(("panel-action", target, glyph as u8)),
-                if enabled {
+                if glyph == Glyph::Listen {
+                    Sense::click_and_drag()
+                } else if enabled {
                     Sense::click()
                 } else {
                     Sense::hover()
@@ -132,8 +130,13 @@ pub(in crate::editor) fn panel_actions(
                 egui::CursorIcon::PointingHand
             } else {
                 egui::CursorIcon::Default
-            })
-            .on_hover_text(label);
+            });
+        let response = if glyph == Glyph::Close {
+            close_tooltip(ui, &response);
+            response
+        } else {
+            response.on_hover_text(label)
+        };
         let p = ui.painter();
         let hover = if enabled {
             hover_amount(&response)
@@ -160,15 +163,72 @@ pub(in crate::editor) fn panel_actions(
                 Color32::from_white_alpha(15).gamma_multiply(hover),
             );
         }
+        let color = if glyph == Glyph::Listen && panel_listening(ui, &response) {
+            match target {
+                modifiers::ModifierTarget::Band(index) => POINT_COLORS[index],
+                modifiers::ModifierTarget::Region(_) => crate::editor::regions::REGION_COLOR,
+            }
+        } else if enabled {
+            TEXT
+        } else {
+            MUTED
+        };
         icons::draw(
             p,
             ui.ctx(),
             glyph,
             Rect::from_center_size(rect.center(), Vec2::splat(BAND_ACTION_GLYPH)),
-            if enabled { TEXT } else { MUTED },
+            color,
         );
         response
     })
+}
+
+fn close_tooltip(ui: &egui::Ui, response: &Response) {
+    let id = response.id.with("close-tooltip");
+    let now = ui.input(|input| input.time);
+
+    if !response.hovered() || ui.input(|input| input.pointer.any_down()) {
+        ui.data_mut(|data| data.remove::<f64>(id));
+        return;
+    }
+
+    let started = ui.data_mut(|data| *data.get_temp_mut_or_insert_with(id, || now));
+    let remaining = 0.1 - (now - started);
+
+    if remaining > 0.0 {
+        ui.ctx().request_repaint_after_secs(remaining as f32);
+        return;
+    }
+
+    let modifier = if ui.ctx().os() == egui::os::OperatingSystem::Mac {
+        "Command"
+    } else {
+        "Ctrl"
+    };
+
+    egui::Tooltip::for_widget(response).show(|ui| {
+        ui.label(format!(
+            "Click to close this panel. Hold {modifier} and left click to delete this point."
+        ));
+    });
+}
+
+pub(in crate::editor) fn delete_point_clicked(ui: &egui::Ui, close: &Response) -> bool {
+    let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
+    close.clicked_by(egui::PointerButton::Primary)
+        && ui.input(|input| {
+            if mac {
+                input.modifiers.mac_cmd
+            } else {
+                input.modifiers.ctrl
+            }
+        })
+}
+
+pub(in crate::editor) fn panel_listening(ui: &egui::Ui, response: &Response) -> bool {
+    response.is_pointer_button_down_on()
+        && ui.input(|input| input.focused && input.pointer.primary_down())
 }
 
 pub(in crate::editor) fn panel_power(
@@ -322,20 +382,23 @@ impl EquartEditor {
 
         let target = modifiers::ModifierTarget::Band(index);
         let destination = self.free_region_slot();
-        let [close, delete, switch, add] = panel_actions(
+        let [close, listen, switch, add] = panel_actions(
             ui,
             panel,
             target,
             modifiers::Modifier::available_on(band),
             destination.is_some(),
         );
+        if delete_point_clicked(ui, &close) {
+            self.delete_band(index);
+            return;
+        }
         if close.clicked() {
             self.clear_selection();
             return;
         }
-        if delete.clicked() {
-            self.delete_band(index);
-            return;
+        if panel_listening(ui, &listen) {
+            self.held_audition = Some(crate::engine::audition::Target::Band(index));
         }
         if switch.clicked()
             && let Some(destination) = destination

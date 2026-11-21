@@ -26,6 +26,41 @@ fn click(ctx: &egui::Context, editor: &mut EquartEditor, time: f64, pos: Pos2) {
     click_button(ctx, editor, time, pos, egui::PointerButton::Primary);
 }
 
+fn delete_click(ctx: &egui::Context, editor: &mut EquartEditor, time: f64, pos: Pos2) {
+    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+    let modifiers = egui::Modifiers {
+        ctrl: !mac,
+        mac_cmd: mac,
+        command: true,
+        ..Default::default()
+    };
+    frame(ctx, editor, time, vec![egui::Event::PointerMoved(pos)]);
+
+    for (offset, pressed) in [(0.01, true), (0.02, false)] {
+        frame(
+            ctx,
+            editor,
+            time + offset,
+            vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers,
+                },
+            ],
+        );
+    }
+
+    frame(
+        ctx,
+        editor,
+        time + 0.03,
+        vec![egui::Event::ModifiersChanged(egui::Modifiers::default())],
+    );
+}
+
 fn click_button(
     ctx: &egui::Context,
     editor: &mut EquartEditor,

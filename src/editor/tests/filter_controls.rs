@@ -21,3 +21,30 @@ fn wheel_steps_cut_slope() {
     wheel_at(&ctx, &mut editor, 1.0, position, true);
     assert_eq!(editor.params.band(0).slope.value(), CutSlope::Db12);
 }
+
+#[test]
+fn panel_close_click_preserves_point_and_control_click_deletes_it() {
+    let (ctx, mut editor) = editor();
+    one_bell(&mut editor);
+    attach_host(&mut editor);
+
+    {
+        let setter = editor.gui.as_ref().unwrap().param_setter();
+        editor.set(
+            &setter,
+            &editor.params.band(0).frequency,
+            axis_plot().hz(CANVAS.x * 0.5),
+        );
+    }
+
+    editor.pick_only(0);
+    let close = panel_button(Layout::PANEL_W - 18.0, 24.0);
+    click(&ctx, &mut editor, 0.0, close);
+    assert_eq!(editor.selected, None);
+    assert!(editor.band_exists(0));
+
+    editor.pick_only(0);
+    delete_click(&ctx, &mut editor, 1.0, close);
+    assert_eq!(editor.selected, None);
+    assert!(!editor.band_exists(0));
+}

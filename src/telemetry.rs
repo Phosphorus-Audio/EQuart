@@ -29,6 +29,7 @@ pub(crate) struct Telemetry {
     harmonic_hz: [AtomicU32; REGION_COUNT],
     /// Momentary editor request. Zero means normal output.
     delta_region: AtomicU32,
+    audition: AtomicU32,
     resonance: [[AtomicU32; REDUCTIONS]; REGION_COUNT],
 }
 
@@ -45,6 +46,7 @@ impl Default for Telemetry {
             tracked_frequency: std::array::from_fn(|_| AtomicU32::new(0)),
             harmonic_hz: Default::default(),
             delta_region: AtomicU32::new(0),
+            audition: AtomicU32::new(0),
             resonance: Default::default(),
         }
     }
@@ -57,6 +59,17 @@ impl Telemetry {
 
     pub(crate) fn delta_region(&self) -> Option<usize> {
         (self.delta_region.load(Ordering::Relaxed) as usize).checked_sub(1)
+    }
+
+    pub(crate) fn set_audition(&self, target: Option<crate::engine::audition::Target>) {
+        self.audition.store(
+            target.map_or(0, crate::engine::audition::Target::encode),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub(crate) fn audition(&self) -> Option<crate::engine::audition::Target> {
+        crate::engine::audition::Target::decode(self.audition.load(Ordering::Relaxed))
     }
 
     pub(crate) fn publish(&self, engine: &Engine) {

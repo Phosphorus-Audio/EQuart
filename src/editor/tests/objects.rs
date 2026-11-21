@@ -156,7 +156,7 @@ fn plot_menu_bands_and_regions() {
     let chip = find_text(&mut editor, 5.5, "Region 1");
     click(&ctx, &mut editor, 5.6, chip);
     assert_eq!(editor.selected_region, Some(0));
-    click(&ctx, &mut editor, 6.0, action(46.5));
+    delete_click(&ctx, &mut editor, 6.0, action(15.5));
     assert!(!editor.params.regions[0].enabled.value());
     assert!(!editor.params.regions[0].harmonic.enabled.value());
     for _ in 0..crate::region::REGION_COUNT {

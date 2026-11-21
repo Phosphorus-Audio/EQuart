@@ -400,20 +400,23 @@ impl EquartEditor {
         let base = Rect::from_min_size(panel.min, Vec2::new(REGION_PANEL_WIDTH, panel.height()));
         let target = modifiers::ModifierTarget::Region(index);
         let destination = (0..BAND_COUNT).find(|&index| !self.band_exists(index));
-        let [close, delete, switch, add] = controls::panel_actions(
+        let [close, listen, switch, add] = controls::panel_actions(
             ui,
             base,
             target,
             modifiers::Modifier::REGION.iter().any(|m| !m.attached_to_region(region)),
             destination.is_some(),
         );
+        if controls::delete_point_clicked(ui, &close) {
+            self.delete_region(index);
+            return;
+        }
         if close.clicked() {
             self.clear_selection();
             return;
         }
-        if delete.clicked() {
-            self.delete_region(index);
-            return;
+        if controls::panel_listening(ui, &listen) {
+            self.held_audition = Some(crate::engine::audition::Target::Region(index));
         }
         if switch.clicked()
             && let Some(destination) = destination

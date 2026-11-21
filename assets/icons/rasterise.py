@@ -236,6 +236,7 @@ def main():
         "align-center-horizontal-simple-bold",
         "circle-bold",
         "layout-bold",
+        "headphones-bold",
     ):
         source = Path("assets/icons", f"{name}.svg").read_text(encoding="utf-8")
         path = ElementTree.fromstring(source).find("{http://www.w3.org/2000/svg}path")

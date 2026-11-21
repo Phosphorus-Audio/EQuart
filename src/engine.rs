@@ -8,6 +8,7 @@ use crate::precision::Precision;
 use crate::processing_mode::LinearQuality;
 use crate::region::{REGION_COUNT, RegionControl};
 
+pub(crate) mod audition;
 mod convolution;
 mod host;
 mod linear;
@@ -43,6 +44,8 @@ pub struct Engine {
     pub(crate) resonance: crate::region::resonance::Detector,
     resonance_live: bool,
     pub(crate) delta_request: Option<usize>,
+    pub(crate) audition_request: Option<audition::Target>,
+    audition: audition::Audition,
     delta_region: Option<usize>,
     delta_mix: f32,
     mix: f32,
@@ -82,6 +85,8 @@ impl Engine {
             resonance: crate::region::resonance::Detector::new(),
             resonance_live: false,
             delta_request: None,
+            audition_request: None,
+            audition: Default::default(),
             delta_region: None,
             delta_mix: 0.0,
             mix: 1.0,
@@ -115,6 +120,8 @@ impl Engine {
         self.resonance.reset();
         self.resonance_live = false;
         self.delta_request = None;
+        self.audition_request = None;
+        self.audition = Default::default();
         self.delta_region = None;
         self.delta_mix = 0.0;
         self.dynamic_gains.fill(0.0);
@@ -425,6 +432,21 @@ impl Engine {
             } else {
                 T::render(self, left, right, controls, output);
             }
+
+            let focus = self.audition_request.and_then(|target| {
+                let focus = match target {
+                    audition::Target::Band(index) => {
+                        let band = *controls.bands.get(index)?;
+                        let frequency = self.pitch.band_target(index).unwrap_or(band.frequency);
+                        audition::Focus::band(band, frequency)
+                    }
+                    audition::Target::Region(index) => {
+                        audition::Focus::region(controls.regions.get(index)?.bounds())
+                    }
+                };
+                Some((target, focus))
+            });
+            self.audition.process(left, right, self.rate, focus);
 
             let output_peak = dsp::peak(left, right);
             if !input_peak.is_finite() {

@@ -158,6 +158,7 @@ pub struct EquartEditor {
     pub(crate) selected: Option<usize>,
     selected_region: Option<usize>,
     held_delta: Option<usize>,
+    held_audition: Option<crate::engine::audition::Target>,
     /// multi-selected bands (for dragging together)
     pub(crate) picked: [bool; crate::band::BAND_COUNT],
     /// selection box (start, current)
@@ -203,6 +204,7 @@ impl EquartEditor {
             selected: None,
             selected_region: None,
             held_delta: None,
+            held_audition: None,
             picked: [false; crate::band::BAND_COUNT],
             marquee: None,
             drag: None,
@@ -254,6 +256,7 @@ impl EquartEditor {
 impl Drop for EquartEditor {
     fn drop(&mut self) {
         self.telemetry.set_delta_region(None);
+        self.telemetry.set_audition(None);
         self.drag = None;
     }
 }
@@ -273,7 +276,9 @@ impl NiceEguiApp for EquartEditor {
 
     fn editor_closed(&mut self) {
         self.held_delta = None;
+        self.held_audition = None;
         self.telemetry.set_delta_region(None);
+        self.telemetry.set_audition(None);
         self.gui = None;
         self.drag = None;
         self.dial.shut();
@@ -283,8 +288,17 @@ impl NiceEguiApp for EquartEditor {
         #[cfg(feature = "analyzer-profile")]
         let _frame = crate::analyzer::profile::Timer::new(crate::analyzer::profile::FRAME);
         self.held_delta = None;
+        self.held_audition = None;
         self.draw(ui);
-        self.telemetry.set_delta_region(self.held_delta.filter(|&i| self.selected_region == Some(i)));
+
+        let audition = self.held_audition.filter(|target| match target {
+            crate::engine::audition::Target::Band(index) => self.selected == Some(*index),
+            crate::engine::audition::Target::Region(index) => self.selected_region == Some(*index),
+        });
+        self.telemetry.set_audition(audition);
+        self.telemetry.set_delta_region(
+            self.held_delta.filter(|&i| audition.is_none() && self.selected_region == Some(i)),
+        );
         // full framerate when animating, 60fps when idle
         let animated = self.settings.is_shown()
             || self.layout.is_shown()
@@ -292,7 +306,8 @@ impl NiceEguiApp for EquartEditor {
             || self.dial.is_shown()
             || self.drag.is_some()
             || self.marquee.is_some()
-            || self.held_delta.is_some();
+            || self.held_delta.is_some()
+            || audition.is_some();
         #[cfg(feature = "analyzer-profile")]
         if let Some(fps) = crate::analyzer::profile::fps() {
             ui.ctx().request_repaint_after(Duration::from_secs_f64(1.0 / f64::from(fps)));
