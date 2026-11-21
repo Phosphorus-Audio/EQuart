@@ -24,8 +24,7 @@ fn precision_switch_preserves_audio_history() {
 
         let mut engine = Engine::new(RATE);
         let mut fixed = Engine::new(RATE);
-        engine.analyze = false;
-        fixed.analyze = false;
+
         engine.set_oversampling(mode);
         let latency = engine.latency();
         let mut changed_samples = 0;
@@ -82,9 +81,9 @@ fn mix_bypass_latency_aligned() {
         settings.oversampling = mode;
         settings.output_db = 6.0;
         let mut engine = Engine::new(RATE);
-        engine.analyze = false;
+
         let mut wet_engine = Engine::new(RATE);
-        wet_engine.analyze = false;
+
         let mut reference = controls(bands);
         reference.oversampling = mode;
         reference.output_db = settings.output_db;
@@ -123,85 +122,91 @@ fn reset_mid_chunk() {
 
 #[test]
 fn spectrum_in_out_bins() {
-    let mut engine = Engine::new(48_000.0);
-    // pin release speed since this test checks -6 dB gap after fixed blocks
-    let factor_one = crate::analyzer::SPECTRUM_SPEEDS
-        .iter()
-        .position(|&f| f == 1.0)
-        .unwrap() as u32;
-    engine.analyzer.set_speed(factor_one);
-    engine.output_analyzer.set_speed(factor_one);
+    use crate::analyzer::{AnalyzerSettings, capture};
+    let mut engine = Engine::new(RATE);
+    let (mut producer, receiver) = capture::channel();
+    let mut display = capture::DisplaySpectrum::default();
+    let params = crate::params::EquartParams::default();
+    let settings = AnalyzerSettings::read(&params);
+
     let mut controls = controls(flat_bands());
     controls.output_db = -6.0;
     let mut sample_index = 0;
-    for _ in 0..80 {
+    for block in 0..80 {
         let mut left: [f32; 512] = std::array::from_fn(|_| {
-            let phase = std::f64::consts::TAU * 750.0 * sample_index as f64 / 48_000.0;
+            let phase = std::f64::consts::TAU * 750.0 * sample_index as f64 / f64::from(RATE);
             sample_index += 1;
             (0.5 * phase.sin()) as f32
         });
         let mut right = left;
-        engine.process_block(&mut left, &mut right, &controls);
+
+        nice_assert_no_alloc::assert_no_alloc(|| {
+            let mut capture = producer.reserve(RATE, left.len()).unwrap();
+            crate::capture_channels(&mut capture, &[&mut left, &mut right], 0);
+            engine.process_block(&mut left, &mut right, &controls);
+            crate::capture_channels(&mut capture, &[&mut left, &mut right], 1);
+            capture.commit_all();
+        });
+
+        if block % 4 == 0 {
+            display.update(&receiver, RATE, settings, true);
+        }
     }
 
-    let telemetry = crate::Telemetry::default();
-    telemetry.publish(&engine, true);
-    let meters = telemetry.meters();
-    assert_eq!(meters.input_peak, engine.input_peak);
-    assert_eq!(meters.output_peak, engine.output_peak);
-    assert_eq!(meters.sample_rate, 48_000.0);
-    let mut snapshot = crate::telemetry::SpectrumSnapshot::default();
-    assert!(telemetry.read_spectrum(&mut snapshot));
-    let frame = snapshot.frame();
-    assert_eq!(frame.bin_hz, 48_000.0 / 4_096.0);
+    let frame = display.frame();
+    assert_eq!(frame.bin_hz, RATE / 4_096.0);
     assert_eq!(frame.levels.len(), frame.output_levels.len());
     let change = frame.output_levels[64] - frame.levels[64];
     assert!(
         (change + 6.0).abs() < 0.05,
         "output spectrum change: {change} dB"
     );
-    let original_buffer = frame.levels.as_ptr();
-    assert!(!telemetry.read_spectrum(&mut snapshot));
-    assert_eq!(snapshot.frame().levels.as_ptr(), original_buffer);
 
-    engine.analyzer.set_resolution(0);
-    engine.output_analyzer.set_resolution(0);
-    telemetry.publish(&engine, true);
-    assert!(telemetry.read_spectrum(&mut snapshot));
-    let frame = snapshot.frame();
-    assert_eq!(frame.bin_hz, 48_000.0 / 1_024.0);
+    params
+        .analyzer_resolution
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    display.update(&receiver, RATE, AnalyzerSettings::read(&params), true);
+    let frame = display.frame();
+    assert_eq!(frame.bin_hz, RATE / 1_024.0);
     assert_eq!(frame.levels.len(), 513);
     assert_eq!(frame.output_levels.len(), frame.levels.len());
     assert_eq!(frame.hold_levels.len(), frame.levels.len());
     assert_eq!(frame.output_hold_levels.len(), frame.levels.len());
-    assert_eq!(frame.levels.as_ptr(), original_buffer);
 }
 
 #[test]
-fn spectrum_resolution_change() {
-    let mut engine = Engine::new(48_000.0);
-    let telemetry = crate::Telemetry::default();
-    telemetry.publish(&engine, true);
+fn spectrum_capture_recovers_when_editor_stalls() {
+    use crate::analyzer::{AnalyzerSettings, capture};
+    let (mut producer, receiver) = capture::channel();
+    let mut display = capture::DisplaySpectrum::default();
+    let settings = AnalyzerSettings::read(&crate::params::EquartParams::default());
 
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let mut snapshot = crate::telemetry::SpectrumSnapshot::default();
-            for _ in 0..512 {
-                telemetry.read_spectrum(&mut snapshot);
-                let frame = snapshot.frame();
-                let count = frame.levels.len();
-                assert_eq!((count - 1) as f32 * frame.bin_hz, 24_000.0);
-                assert_eq!(frame.output_levels.len(), count);
-                assert_eq!(frame.hold_levels.len(), count);
-                assert_eq!(frame.output_hold_levels.len(), count);
-                std::thread::yield_now();
-            }
-        });
-
-        for resolution in [0, 3].into_iter().cycle().take(128) {
-            engine.analyzer.set_resolution(resolution);
-            engine.output_analyzer.set_resolution(resolution);
-            telemetry.publish(&engine, true);
-        }
+    nice_assert_no_alloc::assert_no_alloc(|| {
+        producer.reserve(RATE, usize::MAX).unwrap().commit_all();
+        assert!(producer.reserve(RATE, 1).is_none());
     });
+
+    display.update(&receiver, RATE, settings, false);
+    assert!(display.frame().levels.is_empty());
+
+    let rate = 96_000.0;
+    producer.reserve(rate, 4096).unwrap().commit_all();
+    display.update(&receiver, rate, settings, true);
+
+    let mut frames = producer.reserve(rate, 4096).unwrap();
+    let (head, tail) = frames.as_mut_slices();
+
+    for (sample, frame) in head.iter_mut().chain(tail).enumerate() {
+        let value = (sample as f32 * std::f32::consts::TAU * 3_000.0 / rate).sin();
+        *frame = [[value; 2]; 2];
+    }
+
+    frames.commit_all();
+    display.update(&receiver, rate, settings, true);
+
+    let frame = display.frame();
+
+    assert_eq!(frame.bin_hz, rate / 8192.0);
+    assert!(frame.levels[(3000.0 / frame.bin_hz) as usize] > -25.0);
+    assert_eq!(frame.levels, frame.output_levels);
 }

@@ -11,7 +11,7 @@ fn linear_phase_impulse_is_symmetric_and_dry_is_aligned() {
     let mut config = controls(bands);
     config.linear_phase = Some(LinearQuality::Standard);
     let mut engine = Engine::new(RATE);
-    engine.analyze = false;
+
     engine.set_processing(config.linear_phase, Oversampling::Off);
 
     let delay = engine.latency() as usize;
@@ -80,7 +80,7 @@ fn zero_and_natural_phase_use_different_design_rates_and_latency() {
     bands[0] = band(15_000.0, 12.0, 1.0, FilterKind::Peak);
     let mut config = controls(bands);
     let mut engine = Engine::new(44_100.0);
-    engine.analyze = false;
+
 
     config.oversampling = ProcessingMode::ZeroLatency.oversampling(Oversampling::X4);
     let zero = engine.process_frame([1.0; 2], &config);
@@ -108,7 +108,7 @@ fn linear_phase_tracks_short_attack_after_latency_compensation() {
     let mut config = controls(bands);
     config.linear_phase = Some(LinearQuality::Standard);
     let mut engine = Engine::new(RATE);
-    engine.analyze = false;
+
 
     let input: Vec<_> = (0..48_000)
         .map(|i| {
@@ -191,7 +191,7 @@ fn extended_linear_phase_resolves_a_narrow_32_hz_bell() {
     let mut config = controls(bands);
     config.linear_phase = Some(LinearQuality::Extended);
     let mut engine = Engine::new(RATE);
-    engine.analyze = false;
+
 
     let mut left = vec![0.0_f64; 34_000];
     let mut right = left.clone();
@@ -235,7 +235,7 @@ fn linear_phase_automation_and_bypass_are_independent_of_host_blocks() {
         let mut config = controls(bands);
         config.linear_phase = Some(LinearQuality::Standard);
         let mut engine = Engine::new(RATE);
-        engine.analyze = false;
+
 
         let input: Vec<_> = (0..FRAMES)
             .map(|i| {
@@ -307,7 +307,7 @@ fn plot_response_tracks_the_applied_fir_at_each_rate_and_quality() {
         (96_000.0, LinearQuality::Extended),
     ] {
         let mut engine = Engine::new(rate);
-        engine.analyze = false;
+
         config.linear_phase = Some(quality);
         engine.set_processing(config.linear_phase, Oversampling::Off);
 
@@ -320,7 +320,7 @@ fn plot_response_tracks_the_applied_fir_at_each_rate_and_quality() {
         response.update(&telemetry.fir);
         nice_assert_no_alloc::assert_no_alloc(|| {
             engine.process_block_with_sidechain(&mut left, &mut right, None, &config);
-            telemetry.publish(&engine, false);
+            telemetry.publish(&engine);
         });
         response.update(&telemetry.fir);
 

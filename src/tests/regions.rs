@@ -188,7 +188,7 @@ fn resonance_delta_audition() {
     for mode in Oversampling::ALL {
         let render = |resonance: bool, audition: bool| {
             let mut engine = Engine::new(RATE);
-            engine.analyze = false;
+
             engine.delta_request = audition.then_some(1);
             let mut settings = controls(flat_bands());
             settings.oversampling = mode;
@@ -251,7 +251,7 @@ fn resonance_does_not_sweep_between_competing_peaks() {
 
     let render = |probe_direction: f64| {
         let mut engine = Engine::new(RATE);
-        engine.analyze = false;
+
         let mut left: Vec<_> = (0..FRAMES)
             .map(|i| {
                 let phase = std::f64::consts::TAU * i as f64 / f64::from(RATE);
@@ -306,7 +306,7 @@ fn resonance_does_not_sweep_between_competing_peaks() {
 #[test]
 fn harmonic_tracks_dry() {
     let mut engine = Engine::new(RATE);
-    engine.analyze = false;
+
     let mut settings = controls(flat_bands());
     settings.regions[0].enabled = true;
     settings.regions[0].harmonic.enabled = true;

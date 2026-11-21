@@ -17,6 +17,7 @@ resolver = "3"
 [features]
 standalone = ["nice-plug/standalone"]
 dpi-trace = ["nice-plug-egui/dpi-trace"]
+analyzer-profile = []
 
 [[bin]]
 name = "equart"
@@ -26,6 +27,7 @@ required-features = ["standalone"]
 nice-plug = { path = "vendor/nice-plug/crates/nice-plug", features = ["assert_process_allocs", "unsafe_flush_denormals"] }
 egui = { version = "0.37", features = ["default_fonts"] }
 realfft = "3.5"
+rtrb = "0.4"
 pitch-estimate = { path = "vendor/pitch-estimate" }
 
 [dev-dependencies]

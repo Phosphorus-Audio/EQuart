@@ -2,13 +2,13 @@ use super::*;
 
 // throughput
 
-fn bench_case(label: &str, controls: Controls, frames: usize, analyze: bool) -> f64 {
+fn bench_case(label: &str, controls: Controls, frames: usize) -> f64 {
     use std::time::Instant;
 
     const BLOCK: usize = 256;
 
     let mut engine = Engine::new(RATE);
-    engine.analyze = analyze;
+
     let mut left = vec![0.0_f32; BLOCK];
     let mut right = vec![0.0_f32; BLOCK];
 
@@ -90,10 +90,9 @@ fn bench_engine_throughput() {
     };
 
     println!();
-    bench_case("all bands off", make(&idle), frames, false);
-    bench_case("8 bells", make(&bell), frames, false);
-    let worst = bench_case("8 cuts @ 96 dB/oct", make(&cut), frames, false);
-    bench_case("8 cuts, analyser on", make(&cut), frames, true);
+    bench_case("all bands off", make(&idle), frames);
+    bench_case("8 bells", make(&bell), frames);
+    let worst = bench_case("8 cuts @ 96 dB/oct", make(&cut), frames);
 
     let with_os = |bands: [BandControl; crate::band::BAND_COUNT],
                    oversampling: crate::oversample::Oversampling| Controls {
@@ -113,7 +112,6 @@ fn bench_engine_throughput() {
             crate::oversample::Oversampling::X2,
         ),
         frames,
-        false,
     );
     bench_case(
         "8 cuts, 4x",
@@ -122,7 +120,6 @@ fn bench_engine_throughput() {
             crate::oversample::Oversampling::X4,
         ),
         frames,
-        false,
     );
 
     println!(

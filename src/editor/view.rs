@@ -1,7 +1,11 @@
 use super::*;
 
 impl EquartEditor {
-    fn update_spectrum(&mut self, snapshot: &mut crate::telemetry::SpectrumSnapshot) {
+    fn update_spectrum(
+        &mut self,
+        snapshot: &mut crate::analyzer::capture::DisplaySpectrum,
+        rate: f32,
+    ) {
         #[cfg(debug_assertions)]
         if std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/target/test-signal")).exists()
         {
@@ -17,12 +21,18 @@ impl EquartEditor {
                 analyzer.push([*l, *r]);
             }
 
-            // feed test signal to both layers
-            snapshot.update_preview(analyzer);
             return;
         }
 
-        self.telemetry.read_spectrum(snapshot);
+        let enabled = self.params.analyzer.load(Ordering::Relaxed);
+        #[cfg(feature = "analyzer-profile")]
+        let enabled = crate::analyzer::profile::enabled(enabled);
+        snapshot.update(
+            &self.analyzer_receiver,
+            rate,
+            crate::analyzer::AnalyzerSettings::read(&self.params),
+            enabled,
+        );
     }
 
     pub(super) fn restore_ui_scale(&self, ctx: &egui::Context) -> Result<(), std::io::Error> {
@@ -71,13 +81,24 @@ impl EquartEditor {
 
         // draw plot first so translucent header sits on top
         let mut snapshot = std::mem::take(&mut self.spectrum_snapshot);
-        self.update_spectrum(&mut snapshot);
+        self.update_spectrum(&mut snapshot, values.sample_rate);
         #[cfg(debug_assertions)]
         if self.demo.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(16));
         }
-        self.spectrum(ui, canvas, values.sample_rate, snapshot.frame());
+        let frame = snapshot.frame();
+        #[cfg(debug_assertions)]
+        let demo = self.demo.take();
+        #[cfg(debug_assertions)]
+        let frame = demo.as_ref().map_or(frame, |demo| {
+            crate::analyzer::SpectrumFrame::from_analyzers([demo, demo])
+        });
+        self.spectrum(ui, canvas, values.sample_rate, &frame);
         self.spectrum_snapshot = snapshot;
+        #[cfg(debug_assertions)]
+        {
+            self.demo = demo;
+        }
 
         // keep the meter under the header and footer
         if self.meter_visible() {

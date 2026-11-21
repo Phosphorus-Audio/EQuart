@@ -1,4 +1,3 @@
-use crate::analyzer::Analyzer;
 use crate::audio_path::{AudioPath, OutputMix};
 use crate::band::{BAND_COUNT, BandControl, COEFF_FRAMES, CoefficientTiming};
 use crate::dsp;
@@ -57,9 +56,6 @@ pub struct Engine {
     block_output: f32,
     pub input_peak: f32,
     pub output_peak: f32,
-    pub analyze: bool,
-    pub analyzer: Analyzer,
-    pub output_analyzer: Analyzer,
     /// Set when a non-finite sample is seen, so the host can be told.
     pub fault: Option<&'static str>,
     /// Debug builds only: synthesise input so the analyser can be inspected
@@ -98,9 +94,6 @@ impl Engine {
             block_output: 0.0,
             input_peak: 0.0,
             output_peak: 0.0,
-            analyze: true,
-            analyzer: Analyzer::new(rate),
-            output_analyzer: Analyzer::new(rate),
             fault: None,
             #[cfg(all(debug_assertions, not(test)))]
             test_signal: std::path::Path::new(concat!(
@@ -127,8 +120,6 @@ impl Engine {
         self.dynamic_gains.fill(0.0);
         self.detectors_live = false;
         self.detector_frames = 0;
-        self.analyzer.reset();
-        self.output_analyzer.reset();
         self.frame = 0;
         self.initialize_mix = true;
         self.fault = None;
@@ -140,11 +131,7 @@ impl Engine {
 
     /// Follow a sample rate the host never announced in `activate`.
     ///
-    /// The smoother coefficients, the band cascades and the analyser's
-    /// frequency mapping all depend on the rate. A host that starts processing
-    /// at a different rate than it activated at would otherwise leave the
-    /// analyser mapping FFT bins as if they were at the old rate, which reads
-    /// silence for everything above a fraction of the spectrum.
+    /// update the filter and detector clocks to the rate used for processing
     pub fn retune(&mut self, rate: f32) {
         if !rate.is_finite() || rate < 8_000.0 || (rate - self.rate).abs() < 0.5 {
             return;
@@ -163,9 +150,6 @@ impl Engine {
         for dynamic in &mut self.dynamics {
             dynamic.retune(rate);
         }
-
-        self.analyzer.retune(rate);
-        self.output_analyzer.retune(rate);
     }
 
     /// processing latency in host samples
@@ -342,7 +326,6 @@ impl Engine {
             controls.bypass,
             controls.regions.map(RegionControl::harmonic_detection),
         );
-        let analyze = self.analyze;
 
         let precision = if T::NATIVE_DOUBLE {
             Precision::Double
@@ -407,12 +390,6 @@ impl Engine {
                 self.detect(left_analysis, right_analysis, sidechain, controls);
             }
 
-            if analyze {
-                for (l, r) in left_analysis.iter().zip(right_analysis) {
-                    self.analyzer.push([*l, *r]);
-                }
-            }
-
             let input_peak = dsp::peak(left, right);
 
             if self.delta_mix == 0.0 && self.delta_region != requested {
@@ -447,14 +424,6 @@ impl Engine {
                 );
             } else {
                 T::render(self, left, right, controls, output);
-            }
-
-            if analyze {
-                let left = T::analysis(left, &mut analysis_l);
-                let right = T::analysis(right, &mut analysis_r);
-                for (l, r) in left.iter().zip(right) {
-                    self.output_analyzer.push([*l, *r]);
-                }
             }
 
             let output_peak = dsp::peak(left, right);

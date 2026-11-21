@@ -1,6 +1,10 @@
 use realfft::{RealFftPlanner, RealToComplex, num_complex::Complex64};
 use std::sync::{Arc, OnceLock};
 
+pub(crate) mod capture;
+#[cfg(feature = "analyzer-profile")]
+pub(crate) mod profile;
+
 pub const MIN_HZ: f32 = 10.0;
 const MIN_ORDER: usize = 8;
 const MAX_ORDER: usize = 16;
@@ -133,7 +137,7 @@ pub(crate) fn spectrum_range(stored: u32) -> u32 {
     }
 }
 
-/// The analyzer settings read once per audio block or preview frame.
+/// settings for the display analyzer
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AnalyzerSettings {
     resolution: u32,
@@ -159,14 +163,27 @@ impl AnalyzerSettings {
 }
 
 #[derive(Default)]
-pub(crate) struct SpectrumFrame {
+pub(crate) struct SpectrumFrame<'a> {
     pub bin_hz: f32,
-    pub levels: Vec<f32>,
-    pub output_levels: Vec<f32>,
+    pub levels: &'a [f32],
+    pub output_levels: &'a [f32],
     /// The peak each bin has reached and not yet released. Drawn as a line
     /// above the trace, or as the trace itself -- see [`HOLD_MODES`].
-    pub hold_levels: Vec<f32>,
-    pub output_hold_levels: Vec<f32>,
+    pub hold_levels: &'a [f32],
+    pub output_hold_levels: &'a [f32],
+}
+
+impl<'a> SpectrumFrame<'a> {
+    pub(crate) fn from_analyzers([input, output]: [&'a Analyzer; 2]) -> Self {
+        let (bin_hz, levels) = input.spectrum();
+        Self {
+            bin_hz,
+            levels,
+            output_levels: output.spectrum().1,
+            hold_levels: input.hold(),
+            output_hold_levels: output.hold(),
+        }
+    }
 }
 
 struct Transform {
@@ -216,7 +233,6 @@ pub struct Analyzer {
     smoothing: usize,
     speed: usize,
     range: f32,
-    release: f32,
     frozen: bool,
     rate: f32,
     size: usize,
@@ -238,10 +254,6 @@ pub struct Analyzer {
     tilt_slope: f32,
     display: Vec<f32>,
     hold: Vec<f32>,
-    /// Decibels the hold line gives back each frame: [`HOLD_DB_PER_SECOND`] at
-    /// Normal, scaled by the Speed setting.
-    hold_step: f32,
-    pub revision: u64,
 }
 
 impl Analyzer {
@@ -259,7 +271,6 @@ impl Analyzer {
             smoothing: DEFAULT_SPECTRUM_SMOOTHING as usize,
             speed: DEFAULT_SPECTRUM_SPEED as usize,
             range: crate::params::DEFAULT_SPECTRUM_RANGE as f32,
-            release: 1.0,
             frozen: false,
             rate,
             size: 0,
@@ -279,8 +290,6 @@ impl Analyzer {
             tilt_slope: TILTS[DEFAULT_TILT as usize],
             display: vec![INITIAL_DB; MAX_SPECTRUM_BINS],
             hold: vec![INITIAL_DB; MAX_SPECTRUM_BINS],
-            hold_step: HOLD_DB_PER_SECOND / FPS,
-            revision: 0,
         };
         analyzer.configure_transform();
         analyzer
@@ -328,7 +337,6 @@ impl Analyzer {
         let speed = AnalyzerOption::Speed.index(speed) as usize;
         if self.speed != speed {
             self.speed = speed;
-            self.configure_release();
         }
     }
 
@@ -370,7 +378,6 @@ impl Analyzer {
         self.dc_output = [0.0; 2];
         self.display.fill(INITIAL_DB);
         self.hold.fill(INITIAL_DB);
-        self.revision = self.revision.wrapping_add(1);
     }
 
     fn configure_transform(&mut self) {
@@ -378,9 +385,7 @@ impl Analyzer {
         self.hop_size = (self.rate / FPS).round() as usize;
         self.display.fill(INITIAL_DB);
         self.hold.fill(INITIAL_DB);
-        self.revision = self.revision.wrapping_add(1);
         self.configure_tilt();
-        self.configure_release();
         self.configure_smoothing();
     }
 
@@ -419,15 +424,7 @@ impl Analyzer {
         }
     }
 
-    fn configure_release(&mut self) {
-        let seconds = 0.15 / (1.1 * SPECTRUM_SPEEDS[self.speed]);
-        // half-life decay independent of display range
-        self.release = 1.0 - 0.5_f32.powf(self.hop_size as f32 / (self.rate * seconds));
-        // scale hold decay with Speed so Smooth/Line stay consistent
-        self.hold_step = HOLD_DB_PER_SECOND * SPECTRUM_SPEEDS[self.speed] / FPS;
-    }
-
-    pub fn push(&mut self, input: [f32; 2]) {
+    pub(crate) fn ingest(&mut self, input: [f32; 2]) {
         let mask = self.rings[0].len() - 1;
         for (channel, sample) in input.into_iter().enumerate() {
             let filtered = sample - self.dc_input[channel] + 0.9999 * self.dc_output[channel];
@@ -437,20 +434,36 @@ impl Analyzer {
         }
         self.position = (self.position + 1) & mask;
         self.hop += 1;
+    }
+
+    pub(crate) fn refresh(&mut self) {
         if self.hop >= self.hop_size {
-            self.hop = 0;
-            self.analyze();
+            let elapsed = std::mem::take(&mut self.hop) as f32 / self.rate;
+            self.analyze(elapsed);
         }
     }
 
-    fn analyze(&mut self) {
+    #[cfg(any(test, debug_assertions))]
+    pub fn push(&mut self, input: [f32; 2]) {
+        self.ingest(input);
+        self.refresh();
+    }
+
+    fn analyze(&mut self, elapsed: f32) {
+        #[cfg(feature = "analyzer-profile")]
+        let fft_timer = profile::Timer::new(profile::FFT);
         let transform = &self.transforms[self.size.ilog2() as usize - MIN_ORDER];
         let count = self.size / 2 + 1;
         let mask = self.rings[0].len() - 1;
         let start = (self.position + self.rings[0].len() - self.size) & mask;
         let power = &mut self.power[..count];
         power.fill(0.0);
-        for ring in &self.rings {
+        let identical = (0..self.size).all(|i| {
+            let at = (start + i) & mask;
+            self.rings[0][at] == self.rings[1][at]
+        });
+        let channels = if identical { 1 } else { 2 };
+        for ring in &self.rings[..channels] {
             for (i, &weight) in transform.window.iter().enumerate() {
                 self.input[i] = f64::from(ring[(start + i) & mask] * weight);
             }
@@ -467,6 +480,16 @@ impl Analyzer {
             }
         }
 
+        if identical {
+            for bin in power.iter_mut() {
+                *bin *= 2.0;
+            }
+        }
+
+        #[cfg(feature = "analyzer-profile")]
+        drop(fft_timer);
+        #[cfg(feature = "analyzer-profile")]
+        let _timer = profile::Timer::new(profile::SMOOTH);
         for _ in 0..2 {
             self.cumulative[0] = 0.0;
             for (i, &value) in power.iter().enumerate() {
@@ -478,7 +501,10 @@ impl Analyzer {
             }
         }
 
-        let hold_step = self.hold_step;
+        let speed = SPECTRUM_SPEEDS[self.speed];
+        let half_life = 0.15 / (1.1 * speed);
+        let release = 1.0 - 0.5_f32.powf(elapsed / half_life);
+        let hold_step = HOLD_DB_PER_SECOND * speed * elapsed;
         let floor = -self.range;
         // freeze stops fall but still tracks higher peaks
         for (i, &power) in power.iter().enumerate() {
@@ -490,11 +516,10 @@ impl Analyzer {
                 continue;
             }
             // instant attack, smooth release
-            self.display[i] = target.max(previous + self.release * (target - previous));
+            self.display[i] = target.max(previous + release * (target - previous));
             // hold drops faster the further it is above visible trace
             let gap = (self.hold[i] - target.max(floor)).max(0.0);
             self.hold[i] = target.max(self.hold[i] - hold_step * (1.0 + gap / HOLD_DISTANCE_DB));
         }
-        self.revision = self.revision.wrapping_add(1);
     }
 }

@@ -29,7 +29,7 @@ fn block_vs_sample_match() {
 
     // 1 frame per call (per-sample path)
     let mut single = Engine::new(RATE);
-    single.analyze = false;
+
     let mut expected = Vec::new();
     for sample in &input {
         let out = single.process_frame([*sample, *sample * 0.8], &controls);
@@ -38,7 +38,7 @@ fn block_vs_sample_match() {
 
     // Alternate full SIMD blocks and scalar-only host calls without resetting the state!
     let mut blocked = Engine::new(RATE);
-    blocked.analyze = false;
+
     let mut actual = Vec::new();
     let mut left = vec![0.0_f32; 97];
     let mut right = vec![0.0_f32; 97];
@@ -172,7 +172,7 @@ fn oversampling_switch_safe() {
     };
 
     let mut engine = Engine::new(RATE);
-    engine.analyze = false;
+
 
     let mut peak = 0.0_f32;
     assert_eq!(engine.latency(), 0);

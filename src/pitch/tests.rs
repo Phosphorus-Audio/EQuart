@@ -152,7 +152,7 @@ fn pool_shares_and_keeps_lock() {
 fn shared_detector_tracking_rates() {
     let rate = 48_000.0;
     let mut engine = Engine::new(rate);
-    engine.analyze = false;
+
     let mut bands = [BandControl {
         enabled: false,
         ..Default::default()
@@ -195,7 +195,7 @@ fn shared_detector_tracking_rates() {
 fn pitch_mod_holds_frequency_during_dropout() {
     let rate = 48_000.0;
     let mut engine = Engine::new(rate);
-    engine.analyze = false;
+
     let mut bands = [BandControl {
         enabled: false,
         ..Default::default()

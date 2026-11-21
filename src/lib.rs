@@ -40,6 +40,8 @@ pub const MIN_EDITOR_SIZE: [f32; 2] = [600.0, 460.0];
 pub struct Equart {
     params: Arc<EquartParams>,
     telemetry: Arc<Telemetry>,
+    analyzer_capture: analyzer::capture::Publisher,
+    analyzer_receiver: Arc<analyzer::capture::Receiver>,
     editor_state: Arc<EguiEditorState>,
     engine: Engine,
     /// Latency last handed to the host, so it is only told when it changes.
@@ -48,7 +50,10 @@ pub struct Equart {
 
 impl Default for Equart {
     fn default() -> Self {
+        let (analyzer_capture, analyzer_receiver) = analyzer::capture::channel();
         Self {
+            analyzer_capture,
+            analyzer_receiver: Arc::new(analyzer_receiver),
             params: Arc::new(EquartParams::default()),
             telemetry: Arc::new(Telemetry::default()),
             editor_state: EguiEditorState::from_size(
@@ -176,7 +181,11 @@ impl Plugin for Equart {
             self.editor_state.clone(),
             RepaintNotifier::new(),
             editor_settings(),
-            editor::EquartEditor::new(self.params.clone(), self.telemetry.clone()),
+            editor::EquartEditor::new(
+                self.params.clone(),
+                self.telemetry.clone(),
+                self.analyzer_receiver.clone(),
+            ),
         )
     }
 
@@ -195,13 +204,15 @@ impl Plugin for Equart {
         self.engine.prepare_processing(&controls);
         self.reported_latency = self.engine.latency();
         context.set_latency_samples(self.reported_latency);
-        self.telemetry.publish(&self.engine, true);
+        self.analyzer_capture.reset();
+        self.telemetry.publish(&self.engine);
         true
     }
 
     fn reset(&mut self) {
         self.engine.reset();
-        self.telemetry.publish(&self.engine, true);
+        self.analyzer_capture.reset();
+        self.telemetry.publish(&self.engine);
     }
 
     fn process(
@@ -222,7 +233,6 @@ impl Equart {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let _denormal_guard = realtime::DenormalGuard::new();
-        let spectrum_revision = self.engine.analyzer.revision;
         self.engine.retune(context.transport().sample_rate);
         let open = self.editor_state.is_open();
         self.engine.delta_request = if open {
@@ -230,10 +240,9 @@ impl Equart {
         } else {
             None
         };
-        self.engine.analyze = open && self.params.analyzer.load(Ordering::Relaxed);
-        let settings = analyzer::AnalyzerSettings::read(&self.params);
-        self.engine.analyzer.apply_settings(settings);
-        self.engine.output_analyzer.apply_settings(settings);
+        let display = self.params.analyzer.load(Ordering::Relaxed);
+        #[cfg(feature = "analyzer-profile")]
+        let display = analyzer::profile::enabled(display);
 
         // read params once per block instead of per-sample
         let controls = self.controls();
@@ -247,6 +256,21 @@ impl Equart {
                 [] => None,
             });
 
+        let mut captured = if open && display {
+            #[cfg(feature = "analyzer-profile")]
+            let _timer = analyzer::profile::Timer::new(analyzer::profile::CAPTURE);
+            let frames = channels.first().map_or(0, |channel| channel.len());
+            let mut captured = self.analyzer_capture.reserve(self.engine.rate, frames);
+
+            if let Some(captured) = &mut captured {
+                capture_channels(captured, channels, 0);
+            }
+            captured
+        } else {
+            self.analyzer_capture.suspend();
+            None
+        };
+
         match channels.len() {
             0 => {}
             1 => self.engine.process_mono(channels[0], sidechain, &controls),
@@ -255,6 +279,13 @@ impl Equart {
                 self.engine
                     .process_block_with_sidechain(left[0], right[0], sidechain, &controls);
             }
+        }
+
+        if let Some(mut captured) = captured.take() {
+            #[cfg(feature = "analyzer-profile")]
+            let _exchange = analyzer::profile::Timer::new(analyzer::profile::EXCHANGE);
+            capture_channels(&mut captured, channels, 1);
+            captured.commit_all();
         }
 
         // report processing latency changes to the host
@@ -269,10 +300,7 @@ impl Equart {
         }
 
         if open {
-            self.telemetry.publish(
-                &self.engine,
-                spectrum_revision != self.engine.analyzer.revision,
-            );
+            self.telemetry.publish(&self.engine);
         }
 
         let tail = self.engine.tail();
@@ -281,6 +309,20 @@ impl Equart {
         } else {
             ProcessStatus::Tail(tail)
         }
+    }
+}
+
+fn capture_channels<T: HostSample>(
+    chunk: &mut rtrb::chunks::WriteChunk<'_, analyzer::capture::Frame>,
+    channels: &[&mut [T]],
+    lane: usize,
+) {
+    let left = &channels[0];
+    let right = channels.get(1).unwrap_or(left);
+    let (head, tail) = chunk.as_mut_slices();
+
+    for ((frame, left), right) in head.iter_mut().chain(tail).zip(left.iter()).zip(right.iter()) {
+        frame[lane] = [left.double() as f32, right.double() as f32];
     }
 }
 

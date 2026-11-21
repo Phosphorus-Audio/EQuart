@@ -101,7 +101,7 @@ fn dynamic_tone_separates_modulation_from_static_residual() {
 
         let render = |config: &Controls| {
             let mut engine = Engine::new(RATE);
-            engine.analyze = false;
+
 
             let mut gain_sum = 0.0;
             let mut left = source.clone();
@@ -192,7 +192,7 @@ fn dynamic_block_independent() {
         config.oversampling = mode;
         let render = |chunk| {
             let mut engine = Engine::new(RATE);
-            engine.analyze = false;
+
             let mut left = source.clone();
             let mut right = source.clone();
             for (left, right) in left.chunks_mut(chunk).zip(right.chunks_mut(chunk)) {
@@ -224,7 +224,7 @@ fn sidechain_relative_detection() {
     dynamic.relative_amount = 1.0;
     for (reference, expected) in [(Some(0.09), -6.0), (Some(1.0), 0.0), (None, 0.0)] {
         let mut engine = Engine::new(RATE);
-        engine.analyze = false;
+
         let mut energy = 0.0;
         for i in (0..48_000).step_by(64) {
             let main = std::array::from_fn::<_, 64, _>(|step| sine(i + step) * 0.4);
@@ -245,7 +245,7 @@ fn sidechain_relative_detection() {
             }
         }
         let telemetry = crate::Telemetry::default();
-        telemetry.publish(&engine, false);
+        telemetry.publish(&engine);
         let (level, gain) = telemetry.dynamic_meter(0);
         assert_eq!(level.is_some(), reference.is_some());
         assert!((gain - expected).abs() < 0.04);

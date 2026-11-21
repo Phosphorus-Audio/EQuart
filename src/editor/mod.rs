@@ -148,7 +148,8 @@ pub(crate) const POINT_COLORS: [Color32; BAND_COUNT] = {
 pub struct EquartEditor {
     params: Arc<EquartParams>,
     telemetry: Arc<Telemetry>,
-    spectrum_snapshot: crate::telemetry::SpectrumSnapshot,
+    analyzer_receiver: Arc<crate::analyzer::capture::Receiver>,
+    spectrum_snapshot: crate::analyzer::capture::DisplaySpectrum,
     response_db: [Vec<f32>; BAND_COUNT],
     fir_response: crate::telemetry::FirResponse,
     gui: Option<GuiContext>,
@@ -189,10 +190,11 @@ struct Notice {
 }
 
 impl EquartEditor {
-    pub(crate) fn new(params: Arc<EquartParams>, telemetry: Arc<Telemetry>) -> Self {
+    pub(crate) fn new(params: Arc<EquartParams>, telemetry: Arc<Telemetry>, analyzer_receiver: Arc<crate::analyzer::capture::Receiver>) -> Self {
         Self {
             params,
             telemetry,
+            analyzer_receiver,
             spectrum_snapshot: Default::default(),
             response_db: Default::default(),
             fir_response: Default::default(),
@@ -277,6 +279,8 @@ impl NiceEguiApp for EquartEditor {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut nice_plug_egui::Frame) {
+        #[cfg(feature = "analyzer-profile")]
+        let _frame = crate::analyzer::profile::Timer::new(crate::analyzer::profile::FRAME);
         self.held_delta = None;
         self.draw(ui);
         self.telemetry.set_delta_region(self.held_delta.filter(|&i| self.selected_region == Some(i)));
@@ -288,6 +292,12 @@ impl NiceEguiApp for EquartEditor {
             || self.drag.is_some()
             || self.marquee.is_some()
             || self.held_delta.is_some();
+        #[cfg(feature = "analyzer-profile")]
+        if let Some(fps) = crate::analyzer::profile::fps() {
+            ui.ctx().request_repaint_after(Duration::from_secs_f64(1.0 / f64::from(fps)));
+            return;
+        }
+
         if animated {
             ui.ctx().request_repaint();
         } else {

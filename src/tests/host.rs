@@ -35,7 +35,7 @@ fn default_patch_preserves_host_samples() {
 
     for precision in [Precision::Single, Precision::Double] {
         controls.precision = precision;
-        plugin.engine.analyze = false;
+
 
         for input in period.chunks(257) {
             let mut left: Vec<_> = input.iter().map(|frame| frame[0]).collect();

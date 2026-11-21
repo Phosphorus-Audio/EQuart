@@ -29,9 +29,11 @@ pub(super) fn draw_spectrum(
     p: &egui::Painter,
     plot: &Plot,
     outer: Rect,
-    spectrum: &SpectrumFrame,
+    spectrum: &SpectrumFrame<'_>,
     hold: Hold,
 ) {
+    #[cfg(feature = "analyzer-profile")]
+    let _draw = crate::analyzer::profile::Timer::new(crate::analyzer::profile::DRAW);
     let painter = p.with_clip_rect(Rect::from_min_max(
         outer.min,
         Pos2::new(outer.right(), plot.spectrum_bottom),
@@ -44,8 +46,8 @@ pub(super) fn draw_spectrum(
     let depth = (axis.height() * 0.40).max(1.0);
     // Smooth mode uses held levels directly as the main trace
     let (input_levels, output_levels) = match hold {
-        Hold::Smooth => (&spectrum.hold_levels, &spectrum.output_hold_levels),
-        Hold::Off | Hold::Line => (&spectrum.levels, &spectrum.output_levels),
+        Hold::Smooth => (spectrum.hold_levels, spectrum.output_hold_levels),
+        Hold::Off | Hold::Line => (spectrum.levels, spectrum.output_levels),
     };
     for (levels, output) in [(input_levels, false), (output_levels, true)] {
         if levels.len() < BASS_CURVE_POINTS || levels.iter().all(|db| *db <= -plot.spectrum_range) {

@@ -78,7 +78,7 @@ impl EquartEditor {
         ui: &mut egui::Ui,
         canvas: Rect,
         rate: f32,
-        spectrum: &SpectrumFrame,
+        spectrum: &SpectrumFrame<'_>,
     ) {
         let outer = Layout::plot_outer(canvas, self.meter_visible());
         let p = ui.painter_at(outer);

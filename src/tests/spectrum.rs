@@ -1,13 +1,10 @@
-use super::*;
-
 #[test]
 fn analyser_follows_host_rate() {
     let rate = 96_000.0_f32;
     // Activated at 48 kHz, but the host processes at 96 kHz.
-    let mut engine = Engine::new(48_000.0);
-    let controls = controls(flat_bands());
+    let mut analyzer = crate::analyzer::Analyzer::new(48_000.0);
 
-    let feed = |engine: &mut Engine, seconds: f32| {
+    let feed = |analyzer: &mut crate::analyzer::Analyzer, seconds: f32| {
         let block = 512usize;
         let total = (rate * seconds) as usize;
         let mut left = vec![0.0; block];
@@ -21,21 +18,23 @@ fn analyser_follows_host_rate() {
                 *r = sample;
             }
 
-            engine.process_block(&mut left, &mut right, &controls);
+            for (&left, &right) in left.iter().zip(&right) {
+                analyzer.push([left, right]);
+            }
         }
     };
 
-    let at = |engine: &Engine, hz: f32| {
-        let (bin_hz, levels) = engine.analyzer.spectrum();
+    let at = |analyzer: &crate::analyzer::Analyzer, hz: f32| {
+        let (bin_hz, levels) = analyzer.spectrum();
         levels[(hz / bin_hz).round() as usize]
     };
 
-    feed(&mut engine, 2.0);
-    let before = at(&engine, 19_000.0);
+    feed(&mut analyzer, 2.0);
+    let before = at(&analyzer, 19_000.0);
 
-    engine.retune(rate);
-    feed(&mut engine, 2.0);
-    let after = at(&engine, 19_000.0);
+    analyzer.retune(rate);
+    feed(&mut analyzer, 2.0);
+    let after = at(&analyzer, 19_000.0);
     // mapping for half rate should shift tone down, retuned puts it back
     assert!(
         after - before > 15.0,
@@ -50,8 +49,7 @@ fn analyser_follows_host_rate() {
 #[test]
 fn quiet_highs_stay_finite() {
     // loud bass used to make f32 boxcar sum round to 0 -> log10(0) = NaN
-    let mut engine = Engine::new(48_000.0);
-    let controls = controls(flat_bands());
+    let mut analyzer = crate::analyzer::Analyzer::new(48_000.0);
 
     let mut left = vec![0.0f32; 512];
     let mut right = vec![0.0f32; 512];
@@ -68,11 +66,12 @@ fn quiet_highs_stay_finite() {
             *l = sample;
             *r = sample;
         }
-        engine.process_block(&mut left, &mut right, &controls);
+        for (&left, &right) in left.iter().zip(&right) {
+            analyzer.push([left, right]);
+        }
     }
 
-    let bad: Vec<usize> = engine
-        .analyzer
+    let bad: Vec<usize> = analyzer
         .spectrum()
         .1
         .iter()
@@ -83,7 +82,7 @@ fn quiet_highs_stay_finite() {
     assert!(bad.is_empty(), "non-finite bins: {bad:?}");
 
     let at = |hz: f32| {
-        let (bin_hz, levels) = engine.analyzer.spectrum();
+        let (bin_hz, levels) = analyzer.spectrum();
         levels[(hz / bin_hz).round() as usize]
     };
     // quiet -100 dBFS hiss shouldn't collapse to NaN in f32 sum

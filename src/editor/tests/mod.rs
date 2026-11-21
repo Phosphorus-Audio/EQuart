@@ -153,6 +153,7 @@ fn editor() -> (egui::Context, EquartEditor) {
     let editor = EquartEditor::new(
         Arc::new(crate::params::EquartParams::default()),
         Arc::new(crate::Telemetry::default()),
+        Arc::new(crate::analyzer::capture::channel().1),
     );
     (ctx, editor)
 }

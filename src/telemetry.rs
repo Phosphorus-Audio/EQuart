@@ -1,4 +1,3 @@
-use crate::analyzer::{MAX_SPECTRUM_BINS, SpectrumFrame};
 use crate::band::BAND_COUNT;
 use crate::engine::Engine;
 
@@ -8,7 +7,7 @@ use crate::region::{
     REGION_COUNT,
     resonance::{REDUCTIONS, Reduction},
 };
-use std::sync::atomic::{AtomicU32, Ordering, fence};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Meter readings and frequency scale used to draw an editor frame.
 pub(crate) struct MeterReadings {
@@ -17,48 +16,11 @@ pub(crate) struct MeterReadings {
     pub(crate) sample_rate: f32,
 }
 
-/// Reusable buffers and the publication currently stored in them.
-#[derive(Default)]
-pub(crate) struct SpectrumSnapshot {
-    frame: SpectrumFrame,
-    epoch: Option<u32>,
-}
-
-impl SpectrumSnapshot {
-    pub(crate) fn frame(&self) -> &SpectrumFrame {
-        &self.frame
-    }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn update_preview(&mut self, analyzer: &crate::analyzer::Analyzer) {
-        self.epoch = None;
-        let (bin_hz, levels) = analyzer.spectrum();
-        self.frame.bin_hz = bin_hz;
-        for (destination, source) in [
-            (&mut self.frame.levels, levels),
-            (&mut self.frame.output_levels, levels),
-            (&mut self.frame.hold_levels, analyzer.hold()),
-            (&mut self.frame.output_hold_levels, analyzer.hold()),
-        ] {
-            destination.clear();
-            destination.extend_from_slice(source);
-        }
-    }
-}
-
 pub(crate) struct Telemetry {
     pub(crate) fir: fir::FirTelemetry,
     input_peak: AtomicU32,
     output_peak: AtomicU32,
     sample_rate: AtomicU32,
-    spectrum: Box<[AtomicU32]>,
-    output_spectrum: Box<[AtomicU32]>,
-    /// Peak each bin reached and has not released yet, drawn as the hold line.
-    hold_spectrum: Box<[AtomicU32]>,
-    output_hold_spectrum: Box<[AtomicU32]>,
-    spectrum_epoch: AtomicU32,
-    spectrum_count: AtomicU32,
-    spectrum_bin_hz: AtomicU32,
     /// live dynamic gain offset per band for UI
     dynamic: [AtomicU32; BAND_COUNT],
     dynamic_levels: [AtomicU32; BAND_COUNT],
@@ -77,13 +39,6 @@ impl Default for Telemetry {
             input_peak: AtomicU32::new(0),
             output_peak: AtomicU32::new(0),
             sample_rate: AtomicU32::new(0),
-            spectrum: (0..MAX_SPECTRUM_BINS).map(|_| AtomicU32::new(0)).collect(),
-            output_spectrum: (0..MAX_SPECTRUM_BINS).map(|_| AtomicU32::new(0)).collect(),
-            hold_spectrum: (0..MAX_SPECTRUM_BINS).map(|_| AtomicU32::new(0)).collect(),
-            output_hold_spectrum: (0..MAX_SPECTRUM_BINS).map(|_| AtomicU32::new(0)).collect(),
-            spectrum_epoch: AtomicU32::new(0),
-            spectrum_count: AtomicU32::new(0),
-            spectrum_bin_hz: AtomicU32::new(0),
             dynamic: std::array::from_fn(|_| AtomicU32::new(0)),
             dynamic_levels: std::array::from_fn(|_| AtomicU32::new(f32::NEG_INFINITY.to_bits())),
             detected_pitch: std::array::from_fn(|_| AtomicU32::new(0)),
@@ -104,7 +59,7 @@ impl Telemetry {
         (self.delta_region.load(Ordering::Relaxed) as usize).checked_sub(1)
     }
 
-    pub(crate) fn publish(&self, engine: &Engine, spectrum_changed: bool) {
+    pub(crate) fn publish(&self, engine: &Engine) {
         self.input_peak
             .store(engine.input_peak.to_bits(), Ordering::Relaxed);
         self.output_peak
@@ -113,38 +68,6 @@ impl Telemetry {
             .store(engine.rate.to_bits(), Ordering::Relaxed);
 
         self.fir.publish(engine);
-
-        if spectrum_changed {
-            let (bin_hz, spectrum) = engine.analyzer.spectrum();
-            self.spectrum_epoch.fetch_add(1, Ordering::Relaxed);
-            // release fence so reader sees odd epoch
-            fence(Ordering::Release);
-            for (atomic, value) in self.spectrum.iter().zip(spectrum) {
-                atomic.store(value.to_bits(), Ordering::Relaxed);
-            }
-            for (atomic, value) in self
-                .output_spectrum
-                .iter()
-                .zip(engine.output_analyzer.spectrum().1)
-            {
-                atomic.store(value.to_bits(), Ordering::Relaxed);
-            }
-            for (atomic, value) in self.hold_spectrum.iter().zip(engine.analyzer.hold()) {
-                atomic.store(value.to_bits(), Ordering::Relaxed);
-            }
-            for (atomic, value) in self
-                .output_hold_spectrum
-                .iter()
-                .zip(engine.output_analyzer.hold())
-            {
-                atomic.store(value.to_bits(), Ordering::Relaxed);
-            }
-            self.spectrum_count
-                .store(spectrum.len() as u32, Ordering::Relaxed);
-            self.spectrum_bin_hz
-                .store(bin_hz.to_bits(), Ordering::Relaxed);
-            self.spectrum_epoch.fetch_add(1, Ordering::Release);
-        }
 
         for (atomic, value) in self.dynamic.iter().zip(engine.dynamic_gains()) {
             atomic.store(value.to_bits(), Ordering::Relaxed);
@@ -189,46 +112,6 @@ impl Telemetry {
 
     pub(crate) fn sample_rate(&self) -> f32 {
         f32::from_bits(self.sample_rate.load(Ordering::Relaxed))
-    }
-
-    /// Refresh the editor-owned snapshot only after a complete publication.
-    pub(crate) fn read_spectrum(&self, snapshot: &mut SpectrumSnapshot) -> bool {
-        loop {
-            let epoch = self.spectrum_epoch.load(Ordering::Acquire);
-            if epoch & 1 != 0 {
-                std::hint::spin_loop();
-                continue;
-            }
-            if snapshot.epoch == Some(epoch) {
-                return false;
-            }
-
-            let count = self.spectrum_count.load(Ordering::Relaxed) as usize;
-            let bin_hz = f32::from_bits(self.spectrum_bin_hz.load(Ordering::Relaxed));
-            snapshot.epoch = None;
-            let frame = &mut snapshot.frame;
-            for (source, destination) in [
-                (&self.spectrum, &mut frame.levels),
-                (&self.output_spectrum, &mut frame.output_levels),
-                (&self.hold_spectrum, &mut frame.hold_levels),
-                (&self.output_hold_spectrum, &mut frame.output_hold_levels),
-            ] {
-                destination.clear();
-                destination.extend(
-                    source[..count]
-                        .iter()
-                        .map(|level| f32::from_bits(level.load(Ordering::Relaxed))),
-                );
-            }
-
-            // reject if writer updated mid-read
-            fence(Ordering::Acquire);
-            if self.spectrum_epoch.load(Ordering::Relaxed) == epoch {
-                frame.bin_hz = bin_hz;
-                snapshot.epoch = Some(epoch);
-                return true;
-            }
-        }
     }
 
     pub(crate) fn dynamics(&self) -> [f32; BAND_COUNT] {
