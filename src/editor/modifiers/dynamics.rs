@@ -109,11 +109,14 @@ impl EquartEditor {
             DetectorInput::Sidechain => "Sidechain",
         };
 
-        egui::ComboBox::from_id_salt((title, "input")).width(117.0)
-            .selected_text(input(params.input.value()))
+        let sources = [DetectorInput::Main, DetectorInput::Sidechain];
+        let current_input = params.input.value();
+        let combo = egui::ComboBox::from_id_salt((title, "input"))
+            .width(117.0)
+            .selected_text(input(current_input))
             .show_ui(ui, |ui| {
-                for source in [DetectorInput::Main, DetectorInput::Sidechain] {
-                    let choice = ui.selectable_label(params.input.value() == source, input(source));
+                for source in sources {
+                    let choice = ui.selectable_label(current_input == source, input(source));
                     if choice.clicked() {
                         self.set(setter, &params.input, source);
                     }
@@ -122,6 +125,15 @@ impl EquartEditor {
                     }
                 }
             });
+
+        if let Some(source) = crate::editor::menu::wheel_choice(
+            &combo.response,
+            combo.inner.is_none(),
+            current_input,
+            &sources,
+        ) {
+            self.set(setter, &params.input, source);
+        }
 
         let mode_label = |mode| match mode {
             DetectorMode::Follow => "Follow",
@@ -132,16 +144,18 @@ impl EquartEditor {
 
         let mode = params.mode.value();
 
-        egui::ComboBox::from_id_salt((title, "mode"))
+        let modes = [
+            DetectorMode::Follow,
+            DetectorMode::Free,
+            DetectorMode::Broadband,
+            DetectorMode::BandShape,
+        ];
+
+        let combo = egui::ComboBox::from_id_salt((title, "mode"))
             .width(117.0)
             .selected_text(mode_label(mode))
             .show_ui(ui, |ui| {
-                for choice in [
-                    DetectorMode::Follow,
-                    DetectorMode::Free,
-                    DetectorMode::Broadband,
-                    DetectorMode::BandShape,
-                ] {
+                for choice in modes {
                     if ui
                         .selectable_label(mode == choice, mode_label(choice))
                         .clicked()
@@ -150,6 +164,12 @@ impl EquartEditor {
                     }
                 }
             });
+
+        if let Some(choice) =
+            crate::editor::menu::wheel_choice(&combo.response, combo.inner.is_none(), mode, &modes)
+        {
+            self.set(setter, &params.mode, choice);
+        }
 
         ui.add_enabled_ui(mode == DetectorMode::Free, |ui| {
             self.dynamic_number(ui, setter, "Freq", &params.frequency, 2.0);

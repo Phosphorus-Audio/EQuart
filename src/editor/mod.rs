@@ -22,6 +22,7 @@ mod bands;
 mod layout;
 mod logo;
 mod view;
+mod wheel;
 
 mod controls;
 mod dial;

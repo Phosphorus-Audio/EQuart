@@ -496,7 +496,7 @@ impl EquartEditor {
         label: impl Fn(T) -> &'static str,
     ) {
         let current = param.value();
-        egui::ComboBox::from_id_salt(param.name())
+        let combo = egui::ComboBox::from_id_salt(param.name())
             .width(ui.available_width() - 16.0)
             .selected_text(label(current))
             .show_ui(ui, |ui| {
@@ -509,6 +509,12 @@ impl EquartEditor {
                     }
                 }
             });
+
+        if let Some(choice) =
+            super::menu::wheel_choice(&combo.response, combo.inner.is_none(), current, choices)
+        {
+            self.set(setter, param, choice);
+        }
     }
 
     fn dynamic_number(

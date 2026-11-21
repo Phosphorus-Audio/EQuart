@@ -285,6 +285,18 @@ fn paint_option(
     }
 }
 
+pub(super) fn wheel_choice<T: Copy + PartialEq>(
+    response: &Response,
+    closed: bool,
+    current: T,
+    choices: &[T],
+) -> Option<T> {
+    let current = choices.iter().position(|choice| *choice == current);
+    let index = dropdown::wheel_index(response, closed, current, choices.len())?;
+
+    Some(choices[index])
+}
+
 /// value button with popup
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
@@ -313,6 +325,13 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
 
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let now = ui.input(|i| i.time);
+    let stepped = wheel_choice(
+        &response,
+        !life.is_shown() && !response.clicked(),
+        current,
+        choices,
+    );
+
     if response.clicked() {
         if life.is_up() {
             life.release(now);
@@ -373,7 +392,7 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
         life.release(now);
         ui.ctx().request_repaint();
     }
-    picked
+    picked.or(stepped)
 }
 
 /// fade premultiplied color

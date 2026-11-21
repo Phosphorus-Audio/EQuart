@@ -16,6 +16,7 @@ pub(crate) struct Dropdown {
     open: u32,
     entries: Vec<Entry>,
     combos: usize,
+    stepped: Option<(u32, usize)>,
 }
 
 impl Dropdown {
@@ -26,6 +27,7 @@ impl Dropdown {
             open,
             entries: Vec::new(),
             combos: 0,
+            stepped: None,
         }
     }
 
@@ -77,6 +79,14 @@ impl Dropdown {
             self.open = if self.open == key { 0 } else { key };
         }
         let open = self.open == key;
+        if let Some(index) = wheel_index(
+            &response,
+            self.open == 0 && !response.clicked(),
+            Some(current),
+            options.len(),
+        ) {
+            self.stepped = Some((key, index));
+        }
 
         paint_combo_button(ui, &response, value, open, true, accent, true);
 
@@ -109,7 +119,7 @@ impl Dropdown {
             .filter(|e| e.progress > 0.001)
         else {
             self.persist(ui.ctx());
-            return None;
+            return self.stepped;
         };
 
         let Entry {
@@ -189,6 +199,53 @@ impl Dropdown {
     fn persist(&self, ctx: &egui::Context) {
         ctx.data_mut(|d| d.insert_temp(self.group.with("open"), self.open));
     }
+}
+
+pub(super) fn wheel_index(
+    response: &Response,
+    closed: bool,
+    current: Option<usize>,
+    count: usize,
+) -> Option<usize> {
+    use crate::editor::wheel::{take_steps, wheel_steps};
+
+    let ctx = &response.ctx;
+    let id = response.id.with("wheel-travel");
+    let Some(current) = current.filter(|&index| index < count && count > 1) else {
+        ctx.data_mut(|data| data.remove::<(u64, f32)>(id));
+        return None;
+    };
+
+    let modified =
+        ctx.input(|input| input.modifiers.shift || input.modifiers.ctrl || input.modifiers.command);
+    if !closed || !response.hovered() || !response.enabled() || modified {
+        ctx.data_mut(|data| data.remove::<(u64, f32)>(id));
+        return None;
+    }
+
+    let frame = ctx.cumulative_frame_nr();
+    let previous = ctx.data(|data| data.get_temp::<(u64, f32)>(id));
+    if previous.is_some_and(|(last, _)| last == frame) {
+        return None;
+    }
+
+    let travel = ctx.input_mut(|input| {
+        // use physical wheel events so egui's smoothing cannot repeat a step
+        let travel = wheel_steps(&input.raw.events);
+        input.smooth_scroll_delta.y = 0.0;
+        travel
+    });
+
+    let remainder = previous
+        .filter(|(last, _)| last + 1 == frame)
+        .map_or(0.0, |(_, rest)| rest);
+    let (steps, remainder) = take_steps(remainder - travel);
+    let next = current.saturating_add_signed(steps as isize).min(count - 1);
+    let at_end = (next == 0 && remainder < 0.0) || (next + 1 == count && remainder > 0.0);
+
+    ctx.data_mut(|data| data.insert_temp(id, (frame, if at_end { 0.0 } else { remainder })));
+
+    (next != current).then_some(next)
 }
 
 pub(super) fn option_list_rect(anchor: Rect, size: Vec2, bounds: Rect) -> Rect {

@@ -25,7 +25,8 @@ mod trace;
 
 use backdrop::{ease_glow, edge_fade, soft_wash};
 pub(crate) use band_input::{BandDrag, cut_handle_q, cut_handle_y};
-use band_input::{cut_q, follow, key_hz, take_steps, wheel_steps};
+use band_input::{cut_q, follow, key_hz};
+use super::wheel::{take_steps, wheel_steps};
 use fill::gradient_fill;
 use grid::{draw_axis_labels, draw_grid_lines};
 use keys::{draw_keys, note_at, note_hz};
