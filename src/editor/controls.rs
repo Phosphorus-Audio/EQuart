@@ -187,7 +187,7 @@ impl EquartEditor {
     }
 
     fn layout_menu(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         group: egui::Id,
         progress: f32,
@@ -206,58 +206,54 @@ impl EquartEditor {
         menu::body(&mut content);
         menu::section(&mut content, "LAYOUT");
 
-        let visible = self.params.meter_visible.load(Ordering::Relaxed);
+        let layout = self.display_preferences.read().layout;
 
         if menu::switch(
             &mut content,
             group.with("meter-visible"),
             "Show meter",
-            visible,
+            layout.meter_visible,
             accent,
         ) {
-            self.params.meter_visible.store(!visible, Ordering::Relaxed);
-            ui.ctx().request_repaint();
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.meter_visible = !layout.meter_visible;
+            });
         }
-
-        let fade = self.meter_fade();
 
         if menu::switch(
             &mut content,
             group.with("meter-fade"),
             "Meter fade",
-            fade,
+            layout.meter_fade,
             accent,
         ) {
-            self.params.meter_fade.store(!fade, Ordering::Relaxed);
-            ui.ctx().request_repaint();
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.meter_fade = !layout.meter_fade;
+            });
         }
-
-        let piano_keys_visible = self.piano_keys_visible();
 
         if menu::switch(
             &mut content,
             group.with("piano-keys-visible"),
             "Show piano keys",
-            piano_keys_visible,
+            layout.piano_keys_visible,
             accent,
         ) {
-            self.params
-                .piano_keys_visible
-                .store(!piano_keys_visible, Ordering::Relaxed);
-            ui.ctx().request_repaint();
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.piano_keys_visible = !layout.piano_keys_visible;
+            });
         }
-
-        let piano_fade = self.params.piano_key_fade.load(Ordering::Relaxed);
 
         if menu::switch(
             &mut content,
             group.with("piano-key-fade"),
             "Piano key fade",
-            piano_fade,
+            layout.piano_key_fade,
             accent,
         ) {
-            self.params.piano_key_fade.store(!piano_fade, Ordering::Relaxed);
-            ui.ctx().request_repaint();
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.piano_key_fade = !layout.piano_key_fade;
+            });
         }
 
         let mut dropdowns = menu::Dropdown::new(ui.ctx(), group);
@@ -266,8 +262,7 @@ impl EquartEditor {
         if fall.is_none()
             && let Some((key, index)) = dropdowns.finish(ui, card, accent)
         {
-            self.apply_analysis_choice(key, index);
-            ui.ctx().request_repaint();
+            self.apply_analysis_choice(ui.ctx(), key, index);
         }
     }
 
@@ -294,7 +289,7 @@ impl EquartEditor {
 
     /// two-column settings card
     pub(super) fn settings_menu(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         values: &MeterReadings,
         progress: f32,
@@ -452,7 +447,7 @@ impl EquartEditor {
                     );
                 }
             } else {
-                self.apply_analysis_choice(key, index);
+                self.apply_analysis_choice(ui.ctx(), key, index);
             }
         }
     }

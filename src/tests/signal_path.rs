@@ -249,7 +249,7 @@ fn spectrum_in_out_bins() {
     let (mut producer, receiver) = capture::channel();
     let mut display = capture::DisplaySpectrum::default();
     let params = crate::params::EquartParams::default();
-    let settings = AnalyzerSettings::read(&params);
+    let settings = AnalyzerSettings::read(&params, Default::default());
 
     let mut controls = controls(flat_bands());
     controls.output_db = -6.0;
@@ -284,10 +284,11 @@ fn spectrum_in_out_bins() {
         "output spectrum change: {change} dB"
     );
 
-    params
-        .analyzer_resolution
-        .store(0, std::sync::atomic::Ordering::Relaxed);
-    display.update(&receiver, RATE, AnalyzerSettings::read(&params), true);
+    let settings = crate::display_preferences::SpectrumPreferences {
+        resolution: 0,
+        ..Default::default()
+    };
+    display.update(&receiver, RATE, AnalyzerSettings::read(&params, settings), true);
     let frame = display.frame();
     assert_eq!(frame.bin_hz, RATE / 1_024.0);
     assert_eq!(frame.levels.len(), 513);
@@ -301,7 +302,7 @@ fn spectrum_capture_recovers_when_editor_stalls() {
     use crate::analyzer::{AnalyzerSettings, capture};
     let (mut producer, receiver) = capture::channel();
     let mut display = capture::DisplaySpectrum::default();
-    let settings = AnalyzerSettings::read(&crate::params::EquartParams::default());
+    let settings = AnalyzerSettings::read(&crate::params::EquartParams::default(), Default::default());
 
     nice_assert_no_alloc::assert_no_alloc(|| {
         producer.reserve(RATE, usize::MAX).unwrap().commit_all();

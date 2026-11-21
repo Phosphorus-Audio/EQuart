@@ -1,4 +1,3 @@
-use crate::analyzer::AnalyzerOption;
 use crate::band::{BAND_COUNT, BandControl, ChannelMode};
 use crate::dynamics::DynamicParams;
 use crate::filter::{CutSlope, FilterKind};
@@ -47,44 +46,11 @@ pub struct EquartParams {
     #[persist = "spectrum_range_db"]
     pub spectrum_range_db: AtomicU32,
 
-    #[persist = "analyzer_resolution"]
-    pub analyzer_resolution: AtomicU32,
-
-    #[persist = "analyzer_speed"]
-    pub analyzer_speed: AtomicU32,
-
-    #[persist = "analyzer_smoothing"]
-    pub analyzer_smoothing: AtomicU32,
-
-    #[persist = "analyzer_hold"]
-    pub analyzer_hold: AtomicU32,
-
-    #[persist = "analyzer_tilt"]
-    pub analyzer_tilt: AtomicU32,
-
     #[persist = "analyzer_frozen"]
     pub analyzer_frozen: AtomicBool,
 
     #[persist = "analyzer"]
     pub analyzer: AtomicBool,
-
-    #[persist = "phase_curve"]
-    pub phase_curve: AtomicBool,
-
-    #[persist = "phase_unwrapped"]
-    pub phase_unwrapped: AtomicBool,
-
-    #[persist = "meter_fade"]
-    pub meter_fade: AtomicBool,
-
-    #[persist = "meter_visible"]
-    pub meter_visible: AtomicBool,
-
-    #[persist = "piano_keys_visible"]
-    pub piano_keys_visible: AtomicBool,
-
-    #[persist = "piano_key_fade"]
-    pub piano_key_fade: AtomicBool,
 }
 
 impl Default for EquartParams {
@@ -97,19 +63,8 @@ impl Default for EquartParams {
             ui_scale_percent: AtomicU32::new(100),
             axis_range_db: AtomicU32::new(DEFAULT_AXIS_RANGE),
             spectrum_range_db: AtomicU32::new(DEFAULT_SPECTRUM_RANGE),
-            analyzer_resolution: AtomicU32::new(crate::analyzer::DEFAULT_RESOLUTION),
-            analyzer_speed: AtomicU32::new(crate::analyzer::DEFAULT_SPECTRUM_SPEED),
-            analyzer_smoothing: AtomicU32::new(crate::analyzer::DEFAULT_SPECTRUM_SMOOTHING),
-            analyzer_hold: AtomicU32::new(crate::analyzer::DEFAULT_HOLD),
-            analyzer_tilt: AtomicU32::new(crate::analyzer::DEFAULT_TILT),
             analyzer_frozen: AtomicBool::new(false),
             analyzer: AtomicBool::new(true),
-            phase_curve: AtomicBool::new(false),
-            phase_unwrapped: AtomicBool::new(false),
-            meter_fade: AtomicBool::new(true),
-            meter_visible: AtomicBool::new(true),
-            piano_keys_visible: AtomicBool::new(false),
-            piano_key_fade: AtomicBool::new(true),
         }
     }
 }
@@ -197,17 +152,6 @@ fn placed_bit(index: usize) -> u32 {
 }
 
 impl EquartParams {
-    pub(crate) fn analyzer_index(&self, setting: AnalyzerOption) -> u32 {
-        let field = match setting {
-            AnalyzerOption::Resolution => &self.analyzer_resolution,
-            AnalyzerOption::Speed => &self.analyzer_speed,
-            AnalyzerOption::Smoothing => &self.analyzer_smoothing,
-            AnalyzerOption::Tilt => &self.analyzer_tilt,
-            AnalyzerOption::Hold => &self.analyzer_hold,
-        };
-        setting.index(field.load(Ordering::Relaxed))
-    }
-
     pub fn band(&self, index: usize) -> &BandParams {
         &self.bands[index]
     }

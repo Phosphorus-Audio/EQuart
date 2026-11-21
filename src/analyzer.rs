@@ -149,13 +149,16 @@ pub(crate) struct AnalyzerSettings {
 }
 
 impl AnalyzerSettings {
-    pub(crate) fn read(params: &crate::params::EquartParams) -> Self {
+    pub(crate) fn read(
+        params: &crate::params::EquartParams,
+        preferences: crate::display_preferences::SpectrumPreferences,
+    ) -> Self {
         use std::sync::atomic::Ordering::Relaxed;
         Self {
-            resolution: params.analyzer_index(AnalyzerOption::Resolution),
-            speed: params.analyzer_index(AnalyzerOption::Speed),
-            smoothing: params.analyzer_index(AnalyzerOption::Smoothing),
-            tilt: params.analyzer_index(AnalyzerOption::Tilt),
+            resolution: preferences.index(AnalyzerOption::Resolution),
+            speed: preferences.index(AnalyzerOption::Speed),
+            smoothing: preferences.index(AnalyzerOption::Smoothing),
+            tilt: preferences.index(AnalyzerOption::Tilt),
             frozen: params.analyzer_frozen.load(Relaxed),
             range: spectrum_range(params.spectrum_range_db.load(Relaxed)),
         }

@@ -47,16 +47,15 @@ fn double_click_key_adds_band() {
     let pos = key_at(440.0);
 
     assert!(!editor.piano_keys_visible());
-    assert!(editor.params.piano_key_fade.load(Ordering::Relaxed));
+    assert!(editor.display_preferences.read().layout.piano_key_fade);
 
     click(&ctx, &mut editor, 0.0, pos);
     click(&ctx, &mut editor, 0.05, pos);
     assert!(!editor.params.is_placed(0));
 
-    editor
-        .params
-        .piano_keys_visible
-        .store(true, Ordering::Relaxed);
+    let mut prefs = editor.display_preferences.read();
+    prefs.layout.piano_keys_visible = true;
+    editor.display_preferences = Arc::new(DisplayStore::with_values(prefs));
     click(&ctx, &mut editor, 1.0, pos);
     click(&ctx, &mut editor, 1.05, pos);
 

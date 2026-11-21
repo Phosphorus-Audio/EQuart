@@ -28,6 +28,8 @@ nice-plug = { path = "vendor/nice-plug/crates/nice-plug", features = ["assert_pr
 egui = { version = "0.37", features = ["default_fonts"] }
 realfft = "3.5"
 rtrb = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 pitch-estimate = { path = "vendor/pitch-estimate" }
 
 [dev-dependencies]

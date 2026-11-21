@@ -976,6 +976,8 @@ dependencies = [
  "pitch-estimate",
  "realfft",
  "rtrb",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

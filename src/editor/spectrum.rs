@@ -84,7 +84,8 @@ impl EquartEditor {
         let outer = Layout::plot_outer(canvas, self.meter_visible());
         let p = ui.painter_at(outer);
 
-        let piano_keys_visible = self.piano_keys_visible();
+        let layout = self.display_preferences.read().layout;
+        let piano_keys_visible = layout.piano_keys_visible;
         let plot = Plot::with_ranges(
             outer,
             rate,
@@ -98,7 +99,7 @@ impl EquartEditor {
             .filter(|_| !self.dial.is_shown());
         let (eq_highlight, spectrum_highlight) = self.axis_controls(ui, &plot, outer);
         draw_grid_lines(&p, &plot, outer);
-        let piano_key_fade = self.params.piano_key_fade.load(Ordering::Relaxed);
+        let piano_key_fade = layout.piano_key_fade;
 
         if self.params.global.bypass.value() {
             // fade edges before watermark
@@ -447,8 +448,8 @@ impl EquartEditor {
         let processing = self.params.global.processing_mode.value();
         let oversampling = processing.oversampling(self.params.global.oversampling.value());
         let design_rate = if rate > 0.0 { rate } else { 48_000.0 } * oversampling.factor() as f32;
-        let phase_mode = self.params.phase_curve.load(Ordering::Relaxed).then(|| {
-            if self.params.phase_unwrapped.load(Ordering::Relaxed) {
+        let phase_mode = layout.phase_curve.then(|| {
+            if layout.phase_unwrapped {
                 phase::Mode::Unwrapped
             } else {
                 phase::Mode::Wrapped

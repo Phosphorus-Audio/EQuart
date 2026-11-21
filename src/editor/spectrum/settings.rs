@@ -19,34 +19,46 @@ impl EquartEditor {
 
     /// fade out bottom of the level meter
     pub(in crate::editor) fn meter_fade(&self) -> bool {
-        self.params.meter_fade.load(Ordering::Relaxed)
+        self.display_preferences.read().layout.meter_fade
     }
 
     pub(in crate::editor) fn meter_visible(&self) -> bool {
-        self.params.meter_visible.load(Ordering::Relaxed)
+        self.display_preferences.read().layout.meter_visible
     }
 
     pub(in crate::editor) fn piano_keys_visible(&self) -> bool {
-        self.params.piano_keys_visible.load(Ordering::Relaxed)
+        self.display_preferences.read().layout.piano_keys_visible
     }
 
     /// analyzer resolution index
     pub(in crate::editor) fn resolution(&self) -> u32 {
-        self.params.analyzer_index(AnalyzerOption::Resolution)
+        self.display_preferences
+            .read()
+            .spectrum
+            .index(AnalyzerOption::Resolution)
     }
 
     /// analyzer speed index
     pub(in crate::editor) fn speed(&self) -> u32 {
-        self.params.analyzer_index(AnalyzerOption::Speed)
+        self.display_preferences
+            .read()
+            .spectrum
+            .index(AnalyzerOption::Speed)
     }
 
     /// spectrum smoothing index
     pub(in crate::editor) fn smoothing(&self) -> u32 {
-        self.params.analyzer_index(AnalyzerOption::Smoothing)
+        self.display_preferences
+            .read()
+            .spectrum
+            .index(AnalyzerOption::Smoothing)
     }
 
     pub(super) fn hold_index(&self) -> u32 {
-        self.params.analyzer_index(AnalyzerOption::Hold)
+        self.display_preferences
+            .read()
+            .spectrum
+            .index(AnalyzerOption::Hold)
     }
 
     pub(super) fn hold(&self) -> Hold {
@@ -55,7 +67,10 @@ impl EquartEditor {
 
     /// spectrum tilt index
     pub(in crate::editor) fn tilt(&self) -> u32 {
-        self.params.analyzer_index(AnalyzerOption::Tilt)
+        self.display_preferences
+            .read()
+            .spectrum
+            .index(AnalyzerOption::Tilt)
     }
 
     pub(in crate::editor) fn frozen(&self) -> bool {
@@ -232,19 +247,28 @@ impl EquartEditor {
     }
 
     pub(in crate::editor) fn phase_rows(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         dropdowns: &mut menu::Dropdown,
         group: egui::Id,
     ) {
         let accent = self.accent();
-        let phase = self.params.phase_curve.load(Ordering::Relaxed);
-        if menu::switch(ui, group.with("phase-curve"), "Phase curve", phase, accent) {
-            self.params.phase_curve.store(!phase, Ordering::Relaxed);
-            ui.ctx().request_repaint();
+        let layout = self.display_preferences.read().layout;
+
+        if menu::switch(
+            ui,
+            group.with("phase-curve"),
+            "Phase curve",
+            layout.phase_curve,
+            accent,
+        ) {
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.phase_curve = !layout.phase_curve;
+            });
         }
+
         dropdowns.new_group();
-        let index = usize::from(self.params.phase_unwrapped.load(Ordering::Relaxed));
+        let index = usize::from(layout.phase_unwrapped);
         dropdowns.combo(
             ui,
             menu::COMBO_PHASE,
@@ -256,34 +280,20 @@ impl EquartEditor {
         );
     }
 
-    /// save dropdown choice to params
-    pub(in crate::editor) fn apply_analysis_choice(&self, key: u32, index: usize) {
-        match key {
-            menu::COMBO_RESOLUTION => self
-                .params
-                .analyzer_resolution
-                .store(index as u32, Ordering::Relaxed),
-            menu::COMBO_SPEED => self
-                .params
-                .analyzer_speed
-                .store(index as u32, Ordering::Relaxed),
-            menu::COMBO_SMOOTHING => self
-                .params
-                .analyzer_smoothing
-                .store(index as u32, Ordering::Relaxed),
-            menu::COMBO_TILT => self
-                .params
-                .analyzer_tilt
-                .store(index as u32, Ordering::Relaxed),
-            menu::COMBO_HOLD => self
-                .params
-                .analyzer_hold
-                .store(index as u32, Ordering::Relaxed),
-            menu::COMBO_PHASE => self
-                .params
-                .phase_unwrapped
-                .store(index == 1, Ordering::Relaxed),
+    pub(in crate::editor) fn apply_analysis_choice(
+        &mut self,
+        ctx: &egui::Context,
+        key: u32,
+        index: usize,
+    ) {
+        self.save_display_preferences(ctx, |prefs| match key {
+            menu::COMBO_RESOLUTION => prefs.spectrum.resolution = index as u32,
+            menu::COMBO_SPEED => prefs.spectrum.speed = index as u32,
+            menu::COMBO_SMOOTHING => prefs.spectrum.smoothing = index as u32,
+            menu::COMBO_TILT => prefs.spectrum.tilt = index as u32,
+            menu::COMBO_HOLD => prefs.spectrum.peak_hold = index as u32,
+            menu::COMBO_PHASE => prefs.layout.phase_unwrapped = index == 1,
             _ => {}
-        }
+        });
     }
 }

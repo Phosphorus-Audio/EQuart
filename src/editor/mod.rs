@@ -1,6 +1,7 @@
 use crate::{
     Telemetry,
     band::{BAND_COUNT, BandControl},
+    display_preferences::{DisplayPreferences, DisplayStore},
     params::{
         AXIS_RANGES, DEFAULT_AXIS_RANGE, DEFAULT_SPECTRUM_RANGE, EquartParams, SPECTRUM_RANGES,
         UI_SCALES,
@@ -148,6 +149,7 @@ pub(crate) const POINT_COLORS: [Color32; BAND_COUNT] = {
 
 pub struct EquartEditor {
     params: Arc<EquartParams>,
+    display_preferences: Arc<DisplayStore>,
     telemetry: Arc<Telemetry>,
     analyzer_receiver: Arc<crate::analyzer::capture::Receiver>,
     spectrum_snapshot: crate::analyzer::capture::DisplaySpectrum,
@@ -192,9 +194,15 @@ struct Notice {
 }
 
 impl EquartEditor {
-    pub(crate) fn new(params: Arc<EquartParams>, telemetry: Arc<Telemetry>, analyzer_receiver: Arc<crate::analyzer::capture::Receiver>) -> Self {
+    pub(crate) fn new(
+        params: Arc<EquartParams>,
+        display_preferences: Arc<DisplayStore>,
+        telemetry: Arc<Telemetry>,
+        analyzer_receiver: Arc<crate::analyzer::capture::Receiver>,
+    ) -> Self {
         Self {
             params,
+            display_preferences,
             telemetry,
             analyzer_receiver,
             spectrum_snapshot: Default::default(),
@@ -243,6 +251,22 @@ impl EquartEditor {
             message: message.into(),
             expires_at: now + 2.5,
         });
+    }
+
+    fn save_display_preferences(
+        &mut self,
+        ctx: &egui::Context,
+        change: impl FnOnce(&mut DisplayPreferences),
+    ) {
+        if let Err(error) = self.display_preferences.update(change) {
+            nice_plug::nice_error!("Could not save EQuart display preferences: {error}");
+            self.notify(
+                "Could not save display preferences",
+                ctx.input(|input| input.time),
+            );
+        }
+
+        ctx.request_repaint();
     }
 
     /// Apply a parameter value as one host gesture.

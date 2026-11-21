@@ -187,6 +187,7 @@ fn editor() -> (egui::Context, EquartEditor) {
     configure_style(&ctx);
     let editor = EquartEditor::new(
         Arc::new(crate::params::EquartParams::default()),
+        Arc::new(DisplayStore::default()),
         Arc::new(crate::Telemetry::default()),
         Arc::new(crate::analyzer::capture::channel().1),
     );

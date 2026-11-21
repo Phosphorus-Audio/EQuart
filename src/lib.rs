@@ -1,6 +1,7 @@
 mod analyzer;
 mod audio_path;
 mod band;
+mod display_preferences;
 mod dsp;
 mod dynamics;
 mod editor;
@@ -183,6 +184,7 @@ impl Plugin for Equart {
             editor_settings(),
             editor::EquartEditor::new(
                 self.params.clone(),
+                display_preferences::DisplayStore::shared(),
                 self.telemetry.clone(),
                 self.analyzer_receiver.clone(),
             ),

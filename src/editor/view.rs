@@ -6,13 +6,18 @@ impl EquartEditor {
         snapshot: &mut crate::analyzer::capture::DisplaySpectrum,
         rate: f32,
     ) {
+        let settings = crate::analyzer::AnalyzerSettings::read(
+            &self.params,
+            self.display_preferences.read().spectrum,
+        );
+
         #[cfg(debug_assertions)]
         if std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/target/test-signal")).exists()
         {
             let analyzer = self
                 .demo
                 .get_or_insert_with(|| crate::analyzer::Analyzer::new(48_000.0));
-            analyzer.apply_settings(crate::analyzer::AnalyzerSettings::read(&self.params));
+            analyzer.apply_settings(settings);
             let mut left = [0.0; 800];
             let mut right = [0.0; 800];
             crate::engine::test_signal(&mut left, &mut right);
@@ -27,12 +32,7 @@ impl EquartEditor {
         let enabled = self.params.analyzer.load(Ordering::Relaxed);
         #[cfg(feature = "analyzer-profile")]
         let enabled = crate::analyzer::profile::enabled(enabled);
-        snapshot.update(
-            &self.analyzer_receiver,
-            rate,
-            crate::analyzer::AnalyzerSettings::read(&self.params),
-            enabled,
-        );
+        snapshot.update(&self.analyzer_receiver, rate, settings, enabled);
     }
 
     pub(super) fn restore_ui_scale(&self, ctx: &egui::Context) -> Result<(), std::io::Error> {
