@@ -53,7 +53,7 @@ pub(super) fn draw_spectrum(
         if levels.len() < BASS_CURVE_POINTS || levels.iter().all(|db| *db <= -plot.spectrum_range) {
             continue;
         }
-        let points = spectrum_path(plot, spectrum.bin_hz, levels);
+        let points = spectrum_path(plot, outer.left(), spectrum.bin_hz, levels);
         gradient_fill(
             &painter,
             &points,
@@ -93,7 +93,7 @@ pub(super) fn draw_spectrum(
             .iter()
             .map(|db| db.max(floor))
             .collect();
-        let points = spectrum_path(plot, spectrum.bin_hz, &held);
+        let points = spectrum_path(plot, outer.left(), spectrum.bin_hz, &held);
         // faint glow + main line
         for ((width, opacity), points) in [(3.2, 0.14), (1.1, 0.92)]
             .into_iter()
@@ -108,7 +108,7 @@ pub(super) fn draw_spectrum(
     }
 }
 
-pub(super) fn spectrum_path(plot: &Plot, bin_hz: f32, levels: &[f32]) -> Vec<Pos2> {
+fn spectrum_path(plot: &Plot, left: f32, bin_hz: f32, levels: &[f32]) -> Vec<Pos2> {
     let mut bins = levels.iter().enumerate().map(|(i, &db)| {
         // put DC at half-bin so log(0) won't happen
         let hz = (i as f32).max(0.5) * bin_hz;
@@ -170,6 +170,11 @@ pub(super) fn spectrum_path(plot: &Plot, bin_hz: f32, levels: &[f32]) -> Vec<Pos
     });
 
     let mut points = Vec::with_capacity(levels.len() + BASS_CURVE_SAMPLES);
+
+    if left < samples[0].x {
+        points.push(Pos2::new(left, samples[0].y));
+    }
+
     points.push(samples[0]);
     for i in (1..BASS_CURVE_SAMPLES).step_by(2) {
         let from = samples[i - 1];
@@ -195,4 +200,36 @@ pub(super) fn spectrum_path(plot: &Plot, bin_hz: f32, levels: &[f32]) -> Vec<Pos
     }
     points.push(previous);
     points
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyzer::RESOLUTIONS;
+
+    #[test]
+    fn spectrum_reaches_left_edge_at_every_resolution() {
+        let outer = Rect::from_min_size(Pos2::new(12.0, 0.0), Vec2::new(800.0, 500.0));
+
+        for rate in [44_100.0, 48_000.0, 96_000.0] {
+            let plot = Plot::new(outer, rate);
+
+            for fft_size in RESOLUTIONS {
+                let bin_hz = rate / fft_size as f32;
+                let mut levels = vec![-60.0; fft_size as usize / 2 + 1];
+                levels[0] = -40.0;
+
+                let points = spectrum_path(&plot, outer.left(), bin_hz, &levels);
+
+                assert!(
+                    points[0].x <= outer.left(),
+                    "{rate} Hz, FFT size {fft_size}: spectrum starts at x={}, beyond x={}",
+                    points[0].x,
+                    outer.left(),
+                );
+                assert_eq!(points[0].y, plot.spectrum_y(levels[0]));
+                assert!(points.windows(2).all(|pair| pair[0].x < pair[1].x));
+            }
+        }
+    }
 }
