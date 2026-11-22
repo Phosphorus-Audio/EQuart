@@ -501,6 +501,13 @@ impl EquartEditor {
             phase::draw_label(&p, &plot, outer, mode);
         }
 
+        let multiple_picked = markers
+            .iter()
+            .filter(|(index, _)| self.is_picked(*index))
+            .take(2)
+            .count()
+            == 2;
+
         for &(index, point) in &markers {
             let selected = self.selected == Some(index);
             let on = controls[index].enabled;
@@ -518,10 +525,12 @@ impl EquartEditor {
                     12.0,
                     color.gamma_multiply(if on { 0.16 } else { 0.08 }),
                 );
-            } else if self.is_picked(index) {
-                // thin ring for other multi-selected bands
-                p.circle_stroke(point, 10.5, Stroke::new(1.2, ink.gamma_multiply(0.5)));
             }
+
+            if multiple_picked && self.is_picked(index) {
+                p.circle_stroke(point, 10.5, Stroke::new(1.2, Color32::WHITE));
+            }
+
             p.circle_filled(point, 8.0, Color32::from_gray(27));
             p.circle_stroke(
                 point,
