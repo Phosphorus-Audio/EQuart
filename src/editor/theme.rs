@@ -7,6 +7,12 @@ pub(super) use preset_controls::PresetDialog;
 
 const FRAME_THEME: &str = "equart-frame-theme";
 
+pub(super) struct PendingTheme {
+    original: Theme,
+    edited: Theme,
+    deadline: f64,
+}
+
 pub(super) fn current(ctx: &egui::Context) -> Theme {
     ctx.data(|data| data.get_temp(egui::Id::unique(FRAME_THEME)))
         .unwrap_or_default()
@@ -61,11 +67,13 @@ pub(super) fn scroll<R>(
 
 impl EquartEditor {
     pub(super) fn theme_for_frame(&mut self, ctx: &egui::Context) -> Theme {
-        if let Some((theme, deadline)) = self.pending_theme {
+        if let Some(pending) = &self.pending_theme {
             let now = ctx.input(|input| input.time);
 
-            if self.theme_open && now < deadline {
-                ctx.request_repaint_after(Duration::from_secs_f64(deadline - now));
+            if self.theme_open && now < pending.deadline {
+                let mut theme = self.display_preferences.read().theme;
+                theme.merge_edits(&pending.original, &pending.edited);
+                ctx.request_repaint_after(Duration::from_secs_f64(pending.deadline - now));
                 return theme;
             }
 
@@ -76,11 +84,13 @@ impl EquartEditor {
     }
 
     pub(super) fn flush_theme(&mut self, ctx: Option<&egui::Context>) {
-        let Some((theme, _)) = self.pending_theme.take() else {
+        let Some(pending) = self.pending_theme.take() else {
             return;
         };
 
-        if let Err(error) = self.display_preferences.update(|prefs| prefs.theme = theme) {
+        if let Err(error) = self.display_preferences.update(|prefs| {
+            prefs.theme.merge_edits(&pending.original, &pending.edited);
+        }) {
             nice_plug::nice_error!("Could not save EQuart theme: {error}");
 
             if let Some(ctx) = ctx {
@@ -137,16 +147,25 @@ impl EquartEditor {
                 close = ui.button("Close").clicked();
             });
 
-        if draft != self.theme {
+        if selected_preset {
+            self.pending_theme = None;
+            self.save_display_preferences(ctx, |prefs| prefs.theme = draft);
+        } else if draft != self.theme {
             let deadline = ctx.input(|input| input.time) + 0.2;
-            self.pending_theme = Some((draft, deadline));
+            let pending = self.pending_theme.get_or_insert(PendingTheme {
+                original: self.theme,
+                edited: self.theme,
+                deadline,
+            });
+            pending.edited.merge_edits(&self.theme, &draft);
+            pending.deadline = deadline;
             ctx.request_repaint();
         }
 
         let dismissed = popup.is_some_and(|popup| popup.response.should_close());
         self.theme_open = !close && (!dismissed || modal_open);
 
-        if selected_preset || !self.theme_open {
+        if !self.theme_open {
             self.flush_theme(Some(ctx));
         }
 

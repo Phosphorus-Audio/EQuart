@@ -182,7 +182,14 @@ impl DisplayStore {
                 .values
                 .lock()
                 .expect("display preferences lock poisoned");
-            *values = read_file(path)?;
+            *values = match open_lock(path) {
+                Ok(lock) => {
+                    lock.lock_shared()?;
+                    read_file(path)?
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => DisplayFile::default(),
+                Err(error) => return Err(error),
+            };
         }
 
         Ok(())
@@ -213,12 +220,7 @@ impl DisplayStore {
 
         // merge with the last save from any other host process
         fs::create_dir_all(parent)?;
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path.with_extension("lock"))?;
+        let lock = open_lock(path)?;
         lock.lock()?;
 
         let mut next = read_file(path)?;
@@ -237,6 +239,15 @@ impl DisplayStore {
         *values = next;
         changed.map(|_| ())
     }
+}
+
+fn open_lock(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))
 }
 
 fn read_file(path: &Path) -> io::Result<DisplayFile> {
@@ -272,7 +283,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn display_preferences_survive_reload_and_merge_independent_saves() {
+    fn preferences_merge_concurrent_saves() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -322,21 +333,40 @@ mod tests {
         assert!(!legacy.preferences.layout.meter_visible);
         assert!(legacy.theme_presets.is_empty());
 
+        let original = first.read().theme;
+        let mut fill_edit = original;
+        fill_edit.spectrum_fill.mode = expected.theme.spectrum_fill.mode;
+        let mut color_edit = expected.theme;
+        color_edit.spectrum_fill.mode = original.spectrum_fill.mode;
+
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 first
-                    .update(|prefs| prefs.spectrum = expected.spectrum)
+                    .update(|prefs| {
+                        prefs.spectrum = expected.spectrum;
+                        prefs.theme.merge_edits(&original, &fill_edit);
+                    })
                     .unwrap()
             });
             scope.spawn(|| {
                 second
                     .update(|prefs| {
                         prefs.layout = expected.layout;
-                        prefs.theme = expected.theme;
+                        prefs.theme.merge_edits(&original, &color_edit);
                     })
                     .unwrap()
             });
             scope.spawn(|| first.save_theme_preset("测试配色", expected.theme, false).unwrap());
+            scope.spawn(|| {
+                let reader = DisplayStore {
+                    path: Some(path.clone()),
+                    ..DisplayStore::default()
+                };
+
+                for _ in 0..8 {
+                    reader.reload().unwrap();
+                }
+            });
         });
 
         first.reload().unwrap();

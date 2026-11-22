@@ -22,6 +22,10 @@ macro_rules! palette {
             pub(crate) fn edit(&mut self, mut edit_color: impl FnMut(&str, &mut Color32)) {
                 $(edit_color($label, &mut self.$field);)+
             }
+
+            fn merge_edits(&mut self, original: &Self, edited: &Self) {
+                $(merge_value(&mut self.$field, original.$field, edited.$field);)+
+            }
         }
     };
 }
@@ -179,6 +183,12 @@ impl Default for SpectrumPaint {
 }
 
 impl SpectrumPaint {
+    fn merge_edits(&mut self, original: &Self, edited: &Self) {
+        merge_value(&mut self.mode, original.mode, edited.mode);
+        merge_value(&mut self.solid, original.solid, edited.solid);
+        merge_colors(&mut self.stops, original.stops, edited.stops);
+    }
+
     pub(crate) fn color(self, t: f32) -> Color32 {
         match self.mode {
             ColorMode::Solid => self.solid,
@@ -209,6 +219,51 @@ pub(crate) struct Theme {
     pub(crate) band: [Color32; BAND_COUNT],
     #[serde(with = "color_array")]
     pub(crate) region: [Color32; REGION_COUNT],
+}
+
+impl Theme {
+    pub(crate) fn merge_edits(&mut self, original: &Self, edited: &Self) {
+        self.background
+            .merge_edits(&original.background, &edited.background);
+        self.grid.merge_edits(&original.grid, &edited.grid);
+        self.text.merge_edits(&original.text, &edited.text);
+        self.panel.merge_edits(&original.panel, &edited.panel);
+        self.knob
+            .colors
+            .merge_edits(&original.knob.colors, &edited.knob.colors);
+        merge_value(
+            &mut self.knob.follow_accent,
+            original.knob.follow_accent,
+            edited.knob.follow_accent,
+        );
+        self.meter.merge_edits(&original.meter, &edited.meter);
+        self.scrollbar
+            .merge_edits(&original.scrollbar, &edited.scrollbar);
+        self.curves.merge_edits(&original.curves, &edited.curves);
+        self.piano.merge_edits(&original.piano, &edited.piano);
+        self.spectrum_fill
+            .merge_edits(&original.spectrum_fill, &edited.spectrum_fill);
+        self.spectrum_trace
+            .merge_edits(&original.spectrum_trace, &edited.spectrum_trace);
+        merge_colors(&mut self.band, original.band, edited.band);
+        merge_colors(&mut self.region, original.region, edited.region);
+    }
+}
+
+fn merge_value<T: PartialEq>(current: &mut T, original: T, edited: T) {
+    if original != edited {
+        *current = edited;
+    }
+}
+
+fn merge_colors<const N: usize>(
+    current: &mut [Color32; N],
+    original: [Color32; N],
+    edited: [Color32; N],
+) {
+    for ((color, original), edited) in current.iter_mut().zip(original).zip(edited) {
+        merge_value(color, original, edited);
+    }
 }
 
 impl Default for Theme {

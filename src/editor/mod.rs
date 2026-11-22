@@ -84,7 +84,7 @@ pub struct EquartEditor {
     scale: controls::CardLife,
     layout: controls::CardLife,
     theme_open: bool,
-    pending_theme: Option<(Theme, f64)>,
+    pending_theme: Option<theme::PendingTheme>,
     theme_preset_dialog: Option<theme::PresetDialog>,
     theme: Theme,
     band_dropdowns: [controls::CardLife; 3],
