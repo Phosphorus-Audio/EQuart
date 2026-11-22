@@ -9,9 +9,21 @@ pub(crate) struct BandDrag {
     pub(crate) followers: Vec<(usize, (f32, f32))>,
 }
 
-pub(super) fn follow(from: (f32, f32), to: (f32, f32), at_start: (f32, f32)) -> (f32, f32) {
+pub(super) fn follow(
+    from: (f32, f32),
+    to: (f32, f32),
+    at_start: (f32, f32),
+    lead_has_gain: bool,
+) -> (f32, f32) {
     let ratio = if from.0 > 0.0 { to.0 / from.0 } else { 1.0 };
-    (at_start.0 * ratio, at_start.1 + (to.1 - from.1))
+    let gain_delta = to.1 - from.1;
+    let gain = if lead_has_gain && from.1 * at_start.1 < 0.0 {
+        at_start.1 - gain_delta
+    } else {
+        at_start.1 + gain_delta
+    };
+
+    (at_start.0 * ratio, gain)
 }
 
 const CUT_HANDLE_DB: f32 = 3.0103;

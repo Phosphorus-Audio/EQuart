@@ -328,7 +328,9 @@ impl EquartEditor {
                     hz
                 };
                 let db = plot.db(position.y);
-                if controls[drag.band].kind.has_gain() {
+                let lead_has_gain = controls[drag.band].kind.has_gain();
+
+                if lead_has_gain {
                     self.set(&setter, &band.gain, db);
                 } else if controls[drag.band].kind.is_cut()
                     && controls[drag.band].slope != CutSlope::Db6
@@ -342,7 +344,7 @@ impl EquartEditor {
 
                 // move other picked bands together
                 for &(index, at_start) in &drag.followers {
-                    let (moved_hz, moved_db) = follow(drag.origin, (hz, db), at_start);
+                    let (moved_hz, moved_db) = follow(drag.origin, (hz, db), at_start, lead_has_gain);
                     let follower = self.params.band(index);
                     if !follower.pitch.enabled.value() {
                         self.set(&setter, &follower.frequency, moved_hz);
