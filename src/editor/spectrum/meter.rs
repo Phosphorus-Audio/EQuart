@@ -51,13 +51,103 @@ pub(super) fn meter_segments(track: Rect, pixels_per_point: f32) -> Vec<Rect> {
     segments
 }
 
-pub(in crate::editor) fn draw_level_meter(
+impl EquartEditor {
+    pub(in crate::editor) fn level_meter(
+        &self,
+        ui: &mut egui::Ui,
+        p: &egui::Painter,
+        canvas: Rect,
+        values: &MeterReadings,
+    ) {
+        let visible = self.meter_visible();
+        let id = ui.make_persistent_id("level-meter-gain");
+        let mut pressing = false;
+
+        if let Some(gui) = &self.gui {
+            let gain = &self.params.global.output;
+            let setter = gui.param_setter();
+
+            if visible {
+                let response = ui
+                    .interact(meter_column(canvas), id, Sense::drag())
+                    .on_hover_and_drag_cursor(egui::CursorIcon::ResizeVertical);
+                pressing = response.dragged_by(egui::PointerButton::Primary);
+
+                if response.drag_started_by(egui::PointerButton::Primary) {
+                    setter.begin_set_parameter(gain);
+                    ui.data_mut(|data| data.insert_temp(id, gain.unmodulated_normalized_value()));
+                }
+
+                if pressing
+                    && let Some(delta) = response.total_drag_delta()
+                    && let Some(position) = response.interact_pointer_pos()
+                    && let Some(start) = ui.data(|data| data.get_temp::<f32>(id))
+                {
+                    let value = (start - delta.y * 0.004).clamp(0.0, 1.0);
+
+                    if value != gain.unmodulated_normalized_value() {
+                        setter.set_parameter(gain, gain.preview_plain(value));
+                    }
+
+                    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                        egui::Order::Tooltip,
+                        id.with("readout"),
+                    ));
+                    draw_gain_readout(
+                        &painter,
+                        canvas,
+                        position,
+                        gain.normalized_value_to_string(value, true),
+                    );
+                }
+            }
+
+            if !pressing && ui.data_mut(|data| data.remove_temp::<f32>(id)).is_some() {
+                setter.end_set_parameter(gain);
+            }
+        }
+
+        if visible {
+            draw_level_meter(
+                p,
+                canvas,
+                values,
+                self.spectrum_range(),
+                self.meter_fade(),
+                self.piano_keys_visible(),
+                pressing,
+            );
+        }
+    }
+}
+
+fn draw_gain_readout(p: &egui::Painter, canvas: Rect, pointer: Pos2, text: String) {
+    let galley = p.layout_no_wrap(text, FontId::monospace(12.0), TEXT);
+    let padding = Vec2::new(8.0, 4.0);
+    let size = galley.size() + padding * 2.0;
+    let min = Pos2::new(
+        (pointer.x - size.x - 12.0).max(canvas.left() + 4.0),
+        (pointer.y - size.y * 0.5).clamp(canvas.top() + 4.0, canvas.bottom() - size.y - 4.0),
+    );
+
+    p.rect(
+        Rect::from_min_size(min, size),
+        6.0,
+        Color32::from_gray(34),
+        Stroke::new(1.0, Color32::from_gray(68)),
+        egui::StrokeKind::Inside,
+    );
+    p.galley(min + padding, galley, TEXT);
+}
+
+fn draw_level_meter(
     p: &egui::Painter,
     canvas: Rect,
     values: &MeterReadings,
     spectrum_range: f32,
     fade_foot: bool,
     piano_keys_visible: bool,
+    pressing: bool,
 ) {
     let plot = Plot::with_ranges(
         Layout::plot_outer(canvas, true),
@@ -124,9 +214,12 @@ pub(in crate::editor) fn draw_level_meter(
         fade_meter_foot(p, column, plot.rect.bottom());
     }
 
+    if pressing {
+        p.rect_filled(column, 0.0, Color32::from_black_alpha(48));
+    }
+
     draw_meter_readout(p, column, rect.top(), peak_db);
 }
-
 
 fn fade_meter_foot(p: &egui::Painter, column: Rect, from: f32) {
     let top = from.clamp(column.top(), column.bottom());

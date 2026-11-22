@@ -35,7 +35,6 @@ use response::{ResponseInput, draw_response};
 use trace::draw_spectrum;
 
 pub(crate) use keys::keys_strip;
-pub(super) use meter::draw_level_meter;
 
 /// keyboard strip height + top gap
 pub(crate) const KEYS_BAND: f32 = 26.0;

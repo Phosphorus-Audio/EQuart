@@ -101,16 +101,7 @@ impl EquartEditor {
         }
 
         // keep the meter under the header and footer
-        if self.meter_visible() {
-            spectrum::draw_level_meter(
-                &p,
-                canvas,
-                &values,
-                self.spectrum_range(),
-                self.meter_fade(),
-                self.piano_keys_visible(),
-            );
-        }
+        self.level_meter(ui, &p, canvas, &values);
 
         // top header bar
         let header = Rect::from_min_max(at(0.0, 0.0), at(canvas.width(), Layout::HEADER));
