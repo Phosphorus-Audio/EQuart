@@ -85,7 +85,7 @@ pub(super) fn edit_value(
 
     egui::Popup::context_menu(response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .frame(egui::Frame::popup(ui.style()).fill(Color32::from_gray(38)))
+        .frame(egui::Frame::popup(ui.style()))
         .width(200.0)
         .show(|ui| {
             ui.label(label);

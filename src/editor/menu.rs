@@ -6,23 +6,16 @@ mod dropdown;
 
 pub(crate) use dropdown::Dropdown;
 
-/// popup card background
-const CARD: Color32 = Color32::from_gray(33);
-const EDGE: Color32 = Color32::from_gray(64);
-
 const ROW: f32 = 26.0;
-const HOVER: Color32 = Color32::from_gray(50);
-const SELECTED: Color32 = Color32::from_gray(58);
 const LABEL_SIZE: f32 = 12.5;
 const VALUE_SIZE: f32 = 11.0;
-const SECTION: Color32 = Color32::from_gray(134);
-const BODY: Color32 = Color32::from_gray(200);
-const VALUE: Color32 = Color32::from_gray(142);
 
-pub(crate) fn card() -> egui::Frame {
+pub(crate) fn card(ctx: &egui::Context) -> egui::Frame {
+    let panel = theme::current(ctx).panel;
+
     egui::Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0, EDGE))
+        .fill(panel.menu)
+        .stroke(Stroke::new(1.0, panel.border))
         .corner_radius(egui::CornerRadius::same(9))
         .inner_margin(egui::Margin::same(7))
         .shadow(egui::epaint::Shadow {
@@ -49,7 +42,7 @@ pub(crate) fn section(ui: &mut egui::Ui, text: &str) {
     ui.label(
         egui::RichText::new(text)
             .size(10.0)
-            .color(SECTION)
+            .color(theme::current(ui.ctx()).text.heading)
             .family(egui::FontFamily::Name(GLOBAL_FONT.into())),
     );
     ui.add_space(4.0);
@@ -62,7 +55,7 @@ pub(crate) fn divider(ui: &mut egui::Ui) {
     ui.painter().hline(
         rect.x_range(),
         rect.center().y,
-        Stroke::new(1.0, Color32::from_gray(52)),
+        Stroke::new(1.0, theme::current(ui.ctx()).panel.border),
     );
     ui.add_space(5.0);
 }
@@ -90,11 +83,12 @@ pub(super) fn row_response(
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
     let painter = ui.painter();
+    let palette = theme::current(ui.ctx());
     let hover = hover_amount(&response);
     if ticked {
-        painter.rect_filled(rect, 5.0, SELECTED);
+        painter.rect_filled(rect, 5.0, palette.panel.selected);
     } else if hover > 0.0 {
-        painter.rect_filled(rect, 5.0, fade(HOVER, hover));
+        painter.rect_filled(rect, 5.0, fade(palette.panel.hover, hover));
     }
 
     let anchor = rect.left_center() + Vec2::new(9.0, 0.0);
@@ -110,7 +104,7 @@ pub(super) fn row_response(
         egui::Align2::LEFT_CENTER,
         label,
         FontId::proportional(LABEL_SIZE),
-        if ticked { TEXT } else { BODY },
+        if ticked { palette.text.primary } else { palette.text.body },
     );
 
     if let Some(value) = value {
@@ -127,7 +121,7 @@ pub(super) fn row_response(
             egui::Align2::RIGHT_CENTER,
             value,
             FontId::proportional(VALUE_SIZE),
-            VALUE,
+            palette.text.value,
         );
     }
 
@@ -158,7 +152,7 @@ pub(crate) fn note(ui: &mut egui::Ui, text: &str) {
         egui::Align2::LEFT_CENTER,
         text,
         font,
-        Color32::from_gray(134),
+        theme::current(ui.ctx()).text.heading,
     );
 }
 
@@ -178,8 +172,6 @@ pub(crate) const COMBO_BUTTON_H: f32 = 24.0;
 /// gap above dropdowns (except first after section header)
 const COMBO_LEAD: f32 = 10.0;
 const OPTION_H: f32 = 23.0;
-const OPTION_PLATE: Color32 = Color32::from_gray(42);
-const OPTION_EDGE: Color32 = Color32::from_gray(86);
 const SWITCH_W: f32 = 32.0;
 const SWITCH_H: f32 = 17.0;
 
@@ -194,13 +186,14 @@ fn paint_combo_button(
 ) {
     let rect = response.rect;
     let p = ui.painter();
+    let palette = theme::current(ui.ctx());
     let hover = hover_amount(response);
     let fill = if !available {
-        CARD
+        palette.panel.menu
     } else if open {
-        SELECTED
+        palette.panel.selected
     } else {
-        Color32::from_gray(46).lerp_to_gamma(SELECTED, hover)
+        palette.panel.option.lerp_to_gamma(palette.panel.selected, hover)
     };
     p.rect_filled(rect, 6.0, fill);
     p.rect_stroke(
@@ -226,7 +219,7 @@ fn paint_combo_button(
         egui::Align2::LEFT_CENTER,
         value,
         font,
-        if available { TEXT } else { MUTED },
+        if available { palette.text.primary } else { palette.text.muted },
     );
 
     if available {
@@ -234,11 +227,11 @@ fn paint_combo_button(
         let dir = if open { -1.0 } else { 1.0 };
         p.line_segment(
             [tip + Vec2::new(-4.0, -2.0 * dir), tip],
-            Stroke::new(1.2, VALUE),
+            Stroke::new(1.2, palette.text.value),
         );
         p.line_segment(
             [tip, tip + Vec2::new(4.0, -2.0 * dir)],
-            Stroke::new(1.2, VALUE),
+            Stroke::new(1.2, palette.text.value),
         );
     }
 }
@@ -254,10 +247,11 @@ fn paint_option(
     opacity: f32,
     flash: Option<LabelFlash>,
 ) {
+    let palette = theme::current(p.ctx());
     if chosen {
-        p.rect_filled(rect, 5.0, fade(SELECTED, opacity));
+        p.rect_filled(rect, 5.0, fade(palette.panel.selected, opacity));
     } else if hover > 0.0 {
-        p.rect_filled(rect, 5.0, fade(HOVER, opacity * hover));
+        p.rect_filled(rect, 5.0, fade(palette.panel.hover, opacity * hover));
     }
     let anchor = rect.left_center() + Vec2::new(9.0, 0.0);
     let font = FontId::proportional(11.5);
@@ -269,7 +263,7 @@ fn paint_option(
         egui::Align2::LEFT_CENTER,
         label,
         font,
-        fade(if chosen { TEXT } else { BODY }, opacity),
+        fade(if chosen { palette.text.primary } else { palette.text.body }, opacity),
     );
     if chosen {
         let tip = Pos2::new(rect.right() - 11.0, rect.center().y);
@@ -349,9 +343,10 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
         false,
     );
 
-    let mut frame = card()
-        .fill(OPTION_PLATE)
-        .stroke(Stroke::new(1.0, OPTION_EDGE))
+    let panel = theme::current(ui.ctx()).panel;
+    let mut frame = card(ui.ctx())
+        .fill(panel.option)
+        .stroke(Stroke::new(1.0, panel.option_border))
         .corner_radius(8)
         .inner_margin(egui::Margin::same(5));
     frame.shadow.blur = 16;
@@ -492,14 +487,15 @@ pub(crate) fn switch(
             .animate_bool_with_time_and_easing(id, value, 0.22, egui::emath::easing::cubic_out);
 
     let p = ui.painter();
+    let palette = theme::current(ui.ctx());
     let hover = hover_amount(&response);
     if hover > 0.0 {
-        p.rect_filled(rect, 5.0, fade(HOVER, hover));
+        p.rect_filled(rect, 5.0, fade(palette.panel.hover, hover));
     }
     let anchor = rect.left_center() + Vec2::new(9.0, 0.0);
     let font = FontId::proportional(LABEL_SIZE);
     label_plate(ui, label, font.clone(), anchor, egui::Align2::LEFT_CENTER);
-    p.text(anchor, egui::Align2::LEFT_CENTER, label, font, TEXT);
+    p.text(anchor, egui::Align2::LEFT_CENTER, label, font, palette.text.primary);
 
     let track = Rect::from_center_size(
         rect.right_center() - Vec2::new(SWITCH_W * 0.5 + 9.0, 0.0),
@@ -509,7 +505,7 @@ pub(crate) fn switch(
         let glow = Rect::from_center_size(track.center(), track.size() + Vec2::splat(6.0 * t));
         p.rect_filled(glow, SWITCH_H * 0.5, fade(accent, 0.10 * t));
     }
-    p.rect_filled(track, SWITCH_H * 0.5, Color32::from_gray(62));
+    p.rect_filled(track, SWITCH_H * 0.5, palette.panel.border);
     p.rect_filled(track, SWITCH_H * 0.5, fade(accent.gamma_multiply(0.85), t));
 
     let radius = SWITCH_H * 0.5 - 2.5;
@@ -518,7 +514,7 @@ pub(crate) fn switch(
     p.circle_filled(
         Pos2::new(x, track.center().y),
         radius,
-        Color32::from_gray(232),
+        palette.text.primary,
     );
 
     response.clicked()

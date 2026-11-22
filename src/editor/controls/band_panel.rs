@@ -69,7 +69,7 @@ pub(in crate::editor) fn panel_plate(p: &egui::Painter, panel: Rect) {
     p.rect_filled(
         panel,
         BAND_PANEL_RADIUS,
-        Color32::from_rgba_unmultiplied(38, 38, 38, 242),
+        theme::with_alpha(theme::current(p.ctx()).panel.parameter, 242),
     );
 }
 
@@ -164,14 +164,15 @@ pub(in crate::editor) fn panel_actions(
             );
         }
         let color = if glyph == Glyph::Listen && panel_listening(ui, &response) {
+            let palette = theme::current(ui.ctx());
             match target {
-                modifiers::ModifierTarget::Band(index) => POINT_COLORS[index],
-                modifiers::ModifierTarget::Region(_) => crate::editor::regions::REGION_COLOR,
+                modifiers::ModifierTarget::Band(index) => palette.band[index],
+                modifiers::ModifierTarget::Region(index) => palette.region[index],
             }
         } else if enabled {
-            TEXT
+            ui.visuals().text_color()
         } else {
-            MUTED
+            ui.visuals().weak_text_color()
         };
         icons::draw(
             p,
@@ -268,7 +269,7 @@ pub(in crate::editor) fn panel_power(
     power_icon(
         p,
         rect.center(),
-        if on { lighten(accent, 0.35) } else { MUTED },
+        if on { lighten(accent, 0.35) } else { ui.visuals().weak_text_color() },
         18.0,
     );
     response
@@ -334,40 +335,45 @@ impl EquartEditor {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
             |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(panel));
-                egui::ScrollArea::horizontal()
+                let area = egui::ScrollArea::horizontal()
                     .id_salt(("band-controls", index))
                     .auto_shrink([false, false])
-                    .max_height(panel.height())
-                    .show(ui, |content| {
-                        let origin = content.cursor().min;
-                        content.set_min_size(Vec2::new(
-                            Layout::PANEL_W
-                                + attached().map(modifiers::Modifier::width).sum::<f32>(),
-                            panel.height() - 5.0,
-                        ));
-                        let base =
-                            Rect::from_min_size(origin, Vec2::new(Layout::PANEL_W, panel.height()));
-                        self.band_panel_contents(content, base, index);
-                        if self.selected != Some(index) {
-                            return;
-                        }
-                        let mut left = base.right_top();
-                        for modifier in attached() {
-                            let module = Rect::from_min_size(
-                                left,
-                                Vec2::new(modifier.width(), panel.height() - 5.0),
+                    .max_height(panel.height());
+
+                theme::scroll(ui, area, self.theme.scrollbar, |content| {
+                    let origin = content.cursor().min;
+                    content.set_min_size(Vec2::new(
+                        Layout::PANEL_W + attached().map(modifiers::Modifier::width).sum::<f32>(),
+                        panel.height() - 5.0,
+                    ));
+                    let base =
+                        Rect::from_min_size(origin, Vec2::new(Layout::PANEL_W, panel.height()));
+                    self.band_panel_contents(content, base, index);
+
+                    if self.selected != Some(index) {
+                        return;
+                    }
+
+                    let mut left = base.right_top();
+
+                    for modifier in attached() {
+                        let module = Rect::from_min_size(
+                            left,
+                            Vec2::new(modifier.width(), panel.height() - 5.0),
+                        );
+
+                        if self.reveal_modifier == Some((index, modifier)) {
+                            content.scroll_to_rect(
+                                Rect::from_min_size(module.min, Vec2::ZERO),
+                                Some(egui::Align::Min),
                             );
-                            if self.reveal_modifier == Some((index, modifier)) {
-                                content.scroll_to_rect(
-                                    Rect::from_min_size(module.min, Vec2::ZERO),
-                                    Some(egui::Align::Min),
-                                );
-                                self.reveal_modifier = None;
-                            }
-                            modifier.show(self, content, module, index);
-                            left = module.right_top();
+                            self.reveal_modifier = None;
                         }
-                    });
+
+                        modifier.show(self, content, module, index);
+                        left = module.right_top();
+                    }
+                });
             },
         );
     }
@@ -375,7 +381,7 @@ impl EquartEditor {
     fn band_panel_contents(&mut self, ui: &mut egui::Ui, panel: Rect, index: usize) {
         let params = self.params.clone();
         let band = params.band(index);
-        let accent = POINT_COLORS[index];
+        let accent = self.theme.band[index];
         let p = ui.painter().clone();
         let rel = |x: f32, y: f32| panel.min + Vec2::new(x, y);
         let bold = |size: f32| FontId::new(size, egui::FontFamily::Name(GLOBAL_FONT.into()));
@@ -428,7 +434,7 @@ impl EquartEditor {
             caret_icon(
                 &p,
                 rect.center(),
-                Color32::from_gray(186).lerp_to_gamma(TEXT, hover),
+                self.theme.panel.muted_label.lerp_to_gamma(self.theme.panel.label, hover),
                 22.0,
                 rightwards,
             );
@@ -443,7 +449,7 @@ impl EquartEditor {
             egui::Align2::CENTER_CENTER,
             format!("{}", index + 1),
             bold(11.0),
-            TEXT,
+            self.theme.panel.label,
         );
 
         let Some(gui) = &self.gui else { return };

@@ -1,6 +1,5 @@
 use super::*;
 
-const INK: Color32 = Color32::from_rgb(142, 190, 203);
 const HALF_TURN: f32 = 180.0;
 const TURN: f32 = 2.0 * HALF_TURN;
 
@@ -221,12 +220,13 @@ fn paths(mode: Mode, axis: &Axis, rect: Rect, samples: &[(f32, Option<f32>)]) ->
 }
 
 pub(super) fn draw(p: &egui::Painter, plot: &Plot, mode: Mode, samples: &[(f32, Option<f32>)]) {
+    let phase_color = theme::current(p.ctx()).curves.phase;
     let axis = Axis::new(mode, samples);
     let curve = p.with_clip_rect(plot.rect);
     for path in paths(mode, &axis, plot.rect, samples) {
         curve.extend(egui::Shape::dashed_line(
             &path,
-            Stroke::new(1.35, INK),
+            Stroke::new(1.35, phase_color),
             6.0,
             3.5,
         ));
@@ -242,7 +242,7 @@ pub(super) fn draw(p: &egui::Painter, plot: &Plot, mode: Mode, samples: &[(f32, 
             angle => format!("+{angle:.0}°"),
         };
         let y = axis.y(plot.rect, degrees);
-        let ink = INK.gamma_multiply(0.85);
+        let ink = phase_color.gamma_multiply(0.85);
         p.line_segment(
             [Pos2::new(x - 5.0, y), Pos2::new(x, y)],
             Stroke::new(1.0, ink),
@@ -263,7 +263,7 @@ pub(super) fn draw_label(p: &egui::Painter, plot: &Plot, outer: Rect, mode: Mode
         egui::Align2::CENTER_CENTER,
         mode.label(),
         FontId::proportional(10.0),
-        INK,
+        theme::current(p.ctx()).curves.phase,
     );
 }
 

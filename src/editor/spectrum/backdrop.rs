@@ -111,22 +111,25 @@ pub(super) fn soft_wash(p: &egui::Painter, rect: Rect, alpha: f32) {
 
 pub(super) fn edge_fade(p: &egui::Painter, outer: Rect, plate: Rect, axis: Rect) {
     let painter = p.with_clip_rect(outer);
+    let background = theme::current(p.ctx()).background;
 
     // The backdrop is a vertical gradient, so the mask has to follow it; a flat
     // colour would show up as a band of the wrong brightness inside the fade.
     let at = |y: f32| ((y - plate.top()) / plate.height().max(1.0)).clamp(0.0, 1.0);
     let plate_color = |y: f32| {
         let t = at(y);
-        let lerp = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
-        Color32::from_gray(lerp(PLATE_TOP.r(), PLATE_BOTTOM.r()))
+        background.top.lerp_to_gamma(background.bottom, t)
     };
     let tinted = |color: Color32, alpha: f32| {
         Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (alpha * 255.0) as u8)
     };
     // The sides sit a shade under the plate, so the fade is a visible vignette
     // and not just a wash that happens to match what is behind it.
-    let side_color =
-        |y: f32| Color32::from_gray(plate_color(y).r().saturating_sub(FADE_SIDE_SHADE));
+    let side_color = |y: f32| {
+        let [r, g, b, _] = plate_color(y).to_array();
+        let shade = |value: u8| value.saturating_sub(FADE_SIDE_SHADE);
+        Color32::from_rgb(shade(r), shade(g), shade(b))
+    };
 
     // Left and right: the ramp runs across x, and the colour follows the plate
     // down the height, so the band has to be split into rows. The left one is

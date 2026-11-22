@@ -59,8 +59,10 @@ pub(super) fn draw_keys(
     bottom_fade: bool,
 ) {
     let rect = keys_strip(outer);
+    let palette = theme::current(p.ctx());
+    let keys = palette.piano;
     let painter = p.with_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, Color32::from_gray(15));
+    painter.rect_filled(rect, 0.0, keys.well);
 
     let hovered = pointer
         .filter(|pos| {
@@ -96,8 +98,8 @@ pub(super) fn draw_keys(
         gradient_rect(
             &painter,
             key,
-            Color32::from_gray(198),
-            Color32::from_gray(138),
+            keys.white_top,
+            keys.white_bottom,
         );
         if hovered.is_some_and(|(_, _, h)| h == note) {
             painter.rect_filled(key, 0.0, highlight);
@@ -134,7 +136,7 @@ pub(super) fn draw_keys(
             continue;
         }
 
-        painter.rect_filled(key, 1.0, Color32::from_gray(18));
+        painter.rect_filled(key, 1.0, keys.black);
         if hovered.is_some_and(|(_, _, h)| h == note) {
             painter.rect_filled(key, 1.0, tint.gamma_multiply(0.62));
         }
@@ -145,7 +147,7 @@ pub(super) fn draw_keys(
         Stroke::new(1.0, Color32::from_gray(9)),
     );
 
-    let backdrop = Color32::from_gray(15);
+    let backdrop = keys.well;
     let wash = |alpha: u8| {
         Color32::from_rgba_unmultiplied(backdrop.r(), backdrop.g(), backdrop.b(), alpha)
     };
@@ -174,7 +176,7 @@ pub(super) fn draw_keys(
     if let Some((pointer_x, hz, note)) = hovered {
         let text = format!("{}  {}", note_name(note), format_hz(hz));
         let font = FontId::new(10.0, egui::FontFamily::Name(GLOBAL_FONT.into()));
-        let size = p.layout_no_wrap(text.clone(), font.clone(), TEXT).size();
+        let size = p.layout_no_wrap(text.clone(), font.clone(), palette.text.primary).size();
         let width = size.x + 12.0;
         let height = size.y + 6.0;
         let right = (rect.right() - width).max(rect.left());
@@ -190,7 +192,7 @@ pub(super) fn draw_keys(
             egui::Align2::CENTER_CENTER,
             text,
             font,
-            TEXT,
+            palette.text.primary,
         );
     }
 }

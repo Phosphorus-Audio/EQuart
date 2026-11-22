@@ -84,6 +84,7 @@ pub(super) fn draw_response(
     input: ResponseInput<'_>,
 ) {
     const POINTS: usize = 512;
+    let palette = theme::current(p.ctx());
     let ResponseInput {
         controls,
         offsets,
@@ -269,7 +270,7 @@ pub(super) fn draw_response(
             top.push(Pos2::new(x, plot.y_free(a.max(b).max(base))));
             bottom.push(Pos2::new(x, plot.y_free(a.min(b).min(base))));
         }
-        let color = POINT_COLORS[band];
+        let color = palette.band[band];
         let opacity = if selected == Some(band) { 0.23 } else { 0.14 };
         gradient_fill(
             &painter,
@@ -297,7 +298,7 @@ pub(super) fn draw_response(
             .map(|(&x, &value)| Pos2::new(x, plot.y_free(value)))
             .collect();
         let selected = selected == Some(band);
-        let color = POINT_COLORS[band];
+        let color = palette.band[band];
         let strength = if selected { 0.22 } else { 0.14 };
 
         if responses[band].range.is_none() {
@@ -344,7 +345,7 @@ pub(super) fn draw_response(
             let start = handle_y + 8.0 * distance.signum();
             painter.add(egui::Shape::line(
                 vec![Pos2::new(x, start), Pos2::new(x, foot)],
-                Stroke::new(1.2, POINT_COLORS[band].gamma_multiply(0.8)),
+                Stroke::new(1.2, palette.band[band].gamma_multiply(0.8)),
             ));
         }
     }
@@ -364,11 +365,11 @@ pub(super) fn draw_response(
         .collect();
     painter.add(egui::Shape::line(
         combined.clone(),
-        Stroke::new(5.0, COMBINED.gamma_multiply(0.14)),
+        Stroke::new(5.0, palette.curves.response.gamma_multiply(0.14)),
     ));
     painter.add(egui::Shape::line(
         combined,
-        Stroke::new(1.9, COMBINED.gamma_multiply(0.95)),
+        Stroke::new(1.9, palette.curves.response.gamma_multiply(0.95)),
     ));
     if let Some(mode) = phase_mode {
         let samples = match phase_response {

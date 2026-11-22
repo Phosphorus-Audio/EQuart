@@ -62,22 +62,24 @@ impl EquartEditor {
         }
 
         let values = self.telemetry.meters();
+        self.theme = self.theme_for_frame(ui.ctx());
         let accent = self.accent();
-        if accent != self.accent_shown {
+
+        if accent != self.accent_shown || self.theme != theme::current(ui.ctx()) {
             self.accent_shown = accent;
-            ui.ctx().style_mut_of(egui::Theme::Dark, |style| {
-                style.visuals.selection.bg_fill = accent.gamma_multiply(0.3);
-                style.visuals.selection.stroke = Stroke::new(1.0, accent);
-            });
+            theme::install(ui.ctx(), self.theme, accent);
+            ui.set_style(ui.ctx().style_of(egui::Theme::Dark));
         }
 
+        let palette = self.theme;
         let canvas = ui.max_rect();
         ui.allocate_rect(canvas, Sense::hover());
         let origin = canvas.min.to_vec2();
         let at = |x: f32, y: f32| Pos2::new(x, y) + origin;
 
         let p = ui.painter_at(canvas);
-        gradient_rect(&p, canvas, PLATE_TOP, PLATE_BOTTOM);
+        let background = palette.background;
+        gradient_rect(&p, canvas, background.top, background.bottom);
 
         // draw plot first so translucent header sits on top
         let mut snapshot = std::mem::take(&mut self.spectrum_snapshot);
@@ -108,8 +110,8 @@ impl EquartEditor {
         gradient_rect(
             &p,
             header,
-            Color32::from_rgba_unmultiplied(56, 56, 56, HEADER_ALPHA),
-            Color32::from_rgba_unmultiplied(36, 36, 36, HEADER_ALPHA),
+            theme::with_alpha(background.header_top, HEADER_ALPHA),
+            theme::with_alpha(background.header_bottom, HEADER_ALPHA),
         );
         p.line_segment(
             [at(0.0, 1.0), at(canvas.width(), 1.0)],
@@ -128,7 +130,7 @@ impl EquartEditor {
             &p,
             at(11.0, (Layout::HEADER - logo_size) / 2.0),
             logo_size,
-            TEXT,
+            palette.text.primary,
         );
 
         let title = FontId::new(22.0, egui::FontFamily::Name(GLOBAL_FONT.into()));
@@ -144,7 +146,7 @@ impl EquartEditor {
             egui::Align2::LEFT_CENTER,
             crate::NAME,
             title,
-            TEXT.gamma_multiply(0.85),
+            palette.text.primary.gamma_multiply(0.85),
         );
 
         let footer = Rect::from_min_max(
@@ -154,21 +156,42 @@ impl EquartEditor {
         gradient_rect(
             &p,
             footer,
-            Color32::from_rgba_unmultiplied(46, 46, 46, BAR_ALPHA),
-            Color32::from_rgba_unmultiplied(27, 27, 27, BAR_ALPHA),
+            theme::with_alpha(background.footer_top, BAR_ALPHA),
+            theme::with_alpha(background.footer_bottom, BAR_ALPHA),
         );
 
         if self.display_preferences.read().layout.footer_border {
             p.line_segment(
                 [footer.left_top(), footer.right_top()],
-                Stroke::new(1.0, Color32::from_gray(76)),
+                Stroke::new(1.0, background.footer_border),
             );
         }
+
+        let style = (self.selected.is_some() || self.selected_region.is_some()).then(|| {
+            let style = Arc::clone(ui.style());
+            let panel = palette.panel;
+            let visuals = ui.visuals_mut();
+            visuals.override_text_color = Some(panel.label);
+            visuals.weak_text_color = Some(panel.muted_label);
+            visuals.window_fill = panel.parameter;
+
+            if panel.parameter.intensity() > 0.5 {
+                visuals.widgets = egui::Visuals::light().widgets;
+                visuals.text_edit_bg_color = Some(panel.parameter.lerp_to_gamma(Color32::WHITE, 0.35));
+            }
+
+            style
+        });
 
         self.band_panel(ui, canvas);
         if self.selected_region.is_some() {
             self.region_panel(ui, canvas, values.sample_rate);
         }
+
+        if let Some(style) = style {
+            ui.set_style(style);
+        }
+
         self.footer(ui, footer, &values);
         // draw dial last so it sits over header/footer
         self.axis_dial(ui, canvas);
@@ -190,9 +213,9 @@ impl EquartEditor {
             let anchor = Pos2::new(origin.x - 8.0, y);
             let font = FontId::proportional(9.0);
             menu::label_plate_on(p, label, font.clone(), anchor, egui::Align2::RIGHT_CENTER);
-            p.text(anchor, egui::Align2::RIGHT_CENTER, label, font, MUTED);
+            p.text(anchor, egui::Align2::RIGHT_CENTER, label, font, self.theme.text.muted);
             let rect = Rect::from_min_size(Pos2::new(origin.x, y - 2.0), Vec2::new(width, 4.0));
-            p.rect_filled(rect, 0.0, Color32::from_gray(26));
+            p.rect_filled(rect, 0.0, self.theme.meter.compact_track);
             let fraction = if peak > 0.0 {
                 ((20.0 * peak.log10() + 60.0) / 66.0).clamp(0.0, 1.0)
             } else {
@@ -204,9 +227,9 @@ impl EquartEditor {
                 fill,
                 0.0,
                 if peak > 1.0 {
-                    RED
+                    self.theme.meter.red
                 } else {
-                    Color32::from_gray(155)
+                    self.theme.meter.compact_level
                 },
             );
         }
@@ -235,7 +258,7 @@ impl EquartEditor {
             egui::Align2::CENTER_CENTER,
             &notice.message,
             FontId::proportional(12.0),
-            TEXT,
+            self.theme.text.primary,
         );
         ctx.request_repaint_after(Duration::from_millis(120));
     }

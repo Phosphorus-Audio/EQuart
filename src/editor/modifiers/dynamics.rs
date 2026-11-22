@@ -9,7 +9,7 @@ impl EquartEditor {
         let band = self.params.band(index);
         let dynamic = &band.dynamics;
         let (level, offset) = self.telemetry.dynamic_meter(index);
-        let accent = POINT_COLORS[index];
+        let accent = self.theme.band[index];
         let divider = Stroke::new(1.0, Color32::from_white_alpha(18));
 
         ui.painter().vline(rect.left(), rect.y_range(), divider);

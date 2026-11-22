@@ -1,4 +1,5 @@
 use super::*;
+use crate::display_preferences::theme::Meter;
 
 pub(in crate::editor) fn meter_column(canvas: Rect) -> Rect {
     Rect::from_min_max(
@@ -17,15 +18,15 @@ pub(super) fn meter_rect(canvas: Rect, plot: &Plot) -> Rect {
     )
 }
 
-pub(super) fn meter_color(db: f32) -> Color32 {
+fn meter_color(colors: Meter, db: f32) -> Color32 {
     if db >= -1.0 {
-        RED
+        colors.red
     } else if db >= -6.0 {
-        Color32::from_rgb(232, 142, 52)
+        colors.high
     } else if db >= -18.0 {
-        Color32::from_rgb(224, 198, 72)
+        colors.medium
     } else {
-        Color32::from_rgb(104, 192, 108)
+        colors.low
     }
 }
 
@@ -122,7 +123,8 @@ impl EquartEditor {
 }
 
 fn draw_gain_readout(p: &egui::Painter, canvas: Rect, pointer: Pos2, text: String) {
-    let galley = p.layout_no_wrap(text, FontId::monospace(12.0), TEXT);
+    let palette = theme::current(p.ctx());
+    let galley = p.layout_no_wrap(text, FontId::monospace(12.0), palette.text.primary);
     let padding = Vec2::new(8.0, 4.0);
     let size = galley.size() + padding * 2.0;
     let min = Pos2::new(
@@ -133,11 +135,11 @@ fn draw_gain_readout(p: &egui::Painter, canvas: Rect, pointer: Pos2, text: Strin
     p.rect(
         Rect::from_min_size(min, size),
         6.0,
-        Color32::from_gray(34),
-        Stroke::new(1.0, Color32::from_gray(68)),
+        palette.panel.menu,
+        Stroke::new(1.0, palette.panel.border),
         egui::StrokeKind::Inside,
     );
-    p.galley(min + padding, galley, TEXT);
+    p.galley(min + padding, galley, palette.text.primary);
 }
 
 fn draw_level_meter(
@@ -157,11 +159,12 @@ fn draw_level_meter(
         piano_keys_visible,
     );
 
+    let colors = theme::current(p.ctx()).meter;
     let column = meter_column(canvas);
-    p.rect_filled(column, 0.0, Color32::from_gray(14));
+    p.rect_filled(column, 0.0, colors.well);
     p.line_segment(
         [column.left_top(), column.left_bottom()],
-        Stroke::new(1.0, Color32::from_gray(44)),
+        Stroke::new(1.0, colors.edge),
     );
 
     let rect = meter_rect(canvas, &plot);
@@ -171,7 +174,7 @@ fn draw_level_meter(
         Pos2::new(rect.left() + 4.0, rect.top()),
         Pos2::new(rect.right() - 4.0, rect.bottom()),
     );
-    painter.rect_filled(track, 0.0, Color32::from_gray(22));
+    painter.rect_filled(track, 0.0, colors.track);
 
     let peak = values.output_peak;
     let peak_db = if peak > 0.0 {
@@ -182,7 +185,7 @@ fn draw_level_meter(
 
     for segment in meter_segments(track, painter.pixels_per_point()) {
         let db = plot.spectrum_db((segment.top() + segment.bottom()) * 0.5);
-        let color = meter_color(db);
+        let color = meter_color(colors, db);
         let rounding = egui::CornerRadius::same(METER_SEGMENT_ROUNDING);
         painter.rect_filled(
             segment,
@@ -202,40 +205,38 @@ fn draw_level_meter(
             Stroke::new(
                 1.5,
                 if peak > 1.0 {
-                    Color32::from_rgb(255, 214, 214)
+                    colors.clip
                 } else {
-                    Color32::from_white_alpha(150)
+                    theme::with_alpha(colors.peak, 150)
                 },
             ),
         );
     }
 
     if fade_foot {
-        fade_meter_foot(p, column, plot.rect.bottom());
+        fade_meter_foot(p, column, plot.rect.bottom(), colors.well);
     }
 
     if pressing {
         p.rect_filled(column, 0.0, Color32::from_black_alpha(48));
     }
 
-    draw_meter_readout(p, column, rect.top(), peak_db);
+    draw_meter_readout(p, column, rect.top(), peak_db, colors);
 }
 
-fn fade_meter_foot(p: &egui::Painter, column: Rect, from: f32) {
+fn fade_meter_foot(p: &egui::Painter, column: Rect, from: f32, well: Color32) {
     let top = from.clamp(column.top(), column.bottom());
     let height = column.bottom() - top;
     if height <= 1.0 {
         return;
     }
 
-    let well = Color32::from_gray(14);
     let steps = 10;
     let mut mesh = egui::Mesh::default();
     for step in 0..=steps {
         let t = step as f32 / steps as f32;
         let y = top + height * t;
-        let ink =
-            Color32::from_rgba_unmultiplied(well.r(), well.g(), well.b(), meter_fade_alpha(t));
+        let ink = theme::with_alpha(well, meter_fade_alpha(t));
         mesh.colored_vertex(Pos2::new(column.left(), y), ink);
         mesh.colored_vertex(Pos2::new(column.right(), y), ink);
     }
@@ -251,13 +252,17 @@ pub(super) fn meter_fade_alpha(t: f32) -> u8 {
     (t.clamp(0.0, 1.0).powf(1.7) * 255.0).round() as u8
 }
 
-fn draw_meter_readout(p: &egui::Painter, column: Rect, ladder_top: f32, peak_db: f32) {
+fn draw_meter_readout(p: &egui::Painter, column: Rect, ladder_top: f32, peak_db: f32, colors: Meter) {
     let head = Rect::from_min_max(column.min, Pos2::new(column.right(), ladder_top));
     if head.height() < 8.0 {
         return;
     }
 
-    let ink = meter_ink(peak_db);
+    let ink = if peak_db.is_finite() {
+        meter_color(colors, peak_db)
+    } else {
+        colors.silent
+    };
     let galley = p.layout_no_wrap(
         meter_readout_text(peak_db),
         FontId::monospace(METER_READOUT_SIZE),
@@ -276,13 +281,5 @@ pub(super) fn meter_readout_text(peak_db: f32) -> String {
         format!("{peak_db:.1}")
     } else {
         format!("{peak_db:.0}")
-    }
-}
-
-pub(super) fn meter_ink(peak_db: f32) -> Color32 {
-    if peak_db.is_finite() {
-        meter_color(peak_db)
-    } else {
-        Color32::from_gray(96)
     }
 }

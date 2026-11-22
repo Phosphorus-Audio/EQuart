@@ -67,8 +67,13 @@ impl Dropdown {
             anchor,
             egui::Align2::LEFT_CENTER,
         );
-        ui.painter()
-            .text(anchor, egui::Align2::LEFT_CENTER, heading, font, SECTION);
+        ui.painter().text(
+            anchor,
+            egui::Align2::LEFT_CENTER,
+            heading,
+            font,
+            theme::current(ui.ctx()).text.heading,
+        );
 
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(ui.available_width(), COMBO_BUTTON_H),
@@ -133,6 +138,7 @@ impl Dropdown {
 
         let t = progress;
         let p = ui.painter();
+        let panel = theme::current(ui.ctx()).panel;
         let scrim = ui.interact(bounds, self.group.with("scrim"), Sense::click());
 
         p.rect_filled(bounds, 8.0, Color32::from_black_alpha((78.0 * t) as u8));
@@ -153,11 +159,11 @@ impl Dropdown {
                 Color32::from_black_alpha((7.0 * t * (1.0 - layer as f32 / 10.0)) as u8),
             );
         }
-        p.rect_filled(plate, 8.0, fade(OPTION_PLATE, t));
+        p.rect_filled(plate, 8.0, fade(panel.option, t));
         p.rect_stroke(
             plate,
             8.0,
-            Stroke::new(1.0, fade(OPTION_EDGE, t)),
+            Stroke::new(1.0, fade(panel.option_border, t)),
             egui::StrokeKind::Inside,
         );
 

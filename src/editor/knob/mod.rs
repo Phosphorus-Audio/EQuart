@@ -369,15 +369,20 @@ pub(crate) fn knob(
     });
     let value = if read_only { target } else { animated_value };
 
-    //lets lighter
+    let palette = crate::editor::theme::current(ui.ctx()).knob;
+    let colors = palette.colors;
     let pointer = if ui.is_enabled() {
-        Color32::from_gray(238)
+        colors.pointer
     } else {
-        Color32::from_gray(96)
+        mix(colors.pointer, Color32::BLACK, 0.60)
     };
 
     let accent = if ui.is_enabled() {
-        ui.visuals().selection.stroke.color
+        if palette.follow_accent {
+            ui.visuals().selection.stroke.color
+        } else {
+            colors.arc
+        }
     } else {
         Color32::from_gray(163)
     };
@@ -411,7 +416,7 @@ pub(crate) fn knob(
             body_center
                 + Vec2::new(1.5, (5.0 + hover * 2.0) * (1.0 - press) + 2.0 * press) * gscale,
             body_radius + t * blur,
-            Color32::from_black_alpha((2.0 + 6.0 * (1.0 - t).powi(2)) as u8),
+            crate::editor::theme::with_alpha(colors.shadow, (2.0 + 6.0 * (1.0 - t).powi(2)) as u8),
         );
     }
 
@@ -430,7 +435,7 @@ pub(crate) fn knob(
         egui::Align2::CENTER_CENTER,
         label,
         font,
-        Color32::from_gray(158),
+        colors.caption,
     );
 
     for i in 0..=10 {
@@ -441,7 +446,7 @@ pub(crate) fn knob(
 
         p.line_segment(
             [center + direction * inner, center + direction * outer],
-            Stroke::new(1.0, Color32::from_gray(112)),
+            Stroke::new(1.0, colors.ticks),
         );
     }
 
@@ -486,43 +491,39 @@ pub(crate) fn knob(
             ring + 3.25 * gscale,
             value,
             end.clamp(0.0, 1.0),
-            Stroke::new(2.5 * gscale, Color32::from_gray(215)),
+            Stroke::new(2.5 * gscale, colors.gain_arc),
         );
     }
 
     let dim = if ui.is_enabled() { 0.0 } else { 0.45 };
-    let metal = |gray: u8| {
-        let lit = mix(
-            Color32::from_gray(gray),
-            Color32::from_gray(74),
-            hover * 0.30,
-        );
+    let metal = |ink: Color32| {
+        let lit = mix(ink, Color32::from_gray(74), hover * 0.30);
         let pressed = mix(lit, Color32::from_gray(0), press * 0.35);
         mix(pressed, Color32::from_gray(30), dim)
     };
 
     // lay
-    disc(p, body_center, body_radius + gscale, metal(30), metal(6));
+    disc(p, body_center, body_radius + gscale, metal(colors.rim_top), metal(colors.rim_bottom));
     disc(
         p,
         body_center,
         body_radius - 0.5 * gscale,
-        metal(8),
-        metal(26),
+        metal(colors.bezel_top),
+        metal(colors.bezel_bottom),
     );
     disc(
         p,
         body_center,
         body_radius - 2.0 * gscale,
-        metal(26),
-        metal(11),
+        metal(colors.shoulder_top),
+        metal(colors.shoulder_bottom),
     );
     disc(
         p,
         body_center - Vec2::new(0.0, 0.8 * gscale),
         body_radius - 4.0 * gscale,
-        metal(25),
-        metal(13),
+        metal(colors.face_top),
+        metal(colors.face_bottom),
     );
     // out
 
@@ -535,7 +536,7 @@ pub(crate) fn knob(
             a + Vec2::new(0.7, 0.8) * gscale,
             b + Vec2::new(0.7, 0.8) * gscale,
         ],
-        Stroke::new(4.6 * gscale, Color32::from_gray(0)),
+        Stroke::new(4.6 * gscale, colors.shadow),
     );
     p.line_segment([a, b], Stroke::new(3.6 * gscale, pointer));
 
@@ -563,9 +564,9 @@ pub(crate) fn knob(
         display,
         font,
         if ui.is_enabled() {
-            Color32::from_gray(128)
+            colors.value
         } else {
-            Color32::from_gray(151)
+            mix(colors.value, Color32::WHITE, 0.18)
         },
     );
 

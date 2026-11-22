@@ -3,7 +3,6 @@ use crate::params::FREQUENCY_MAX_HZ;
 use crate::region::{HarmonicControl, RegionControl};
 use spectrum::Plot;
 
-pub(super) const REGION_COLOR: Color32 = Color32::from_rgb(113, 161, 225);
 const REGION_PANEL_WIDTH: f32 = 344.0;
 
 impl EquartEditor {
@@ -32,7 +31,11 @@ impl EquartEditor {
             } else {
                 22
             };
-            let color = if region.bypass { MUTED } else { REGION_COLOR };
+            let color = if region.bypass {
+                self.theme.text.muted
+            } else {
+                self.theme.region[index]
+            };
             let rect = Rect::from_x_y_ranges(left..=right, plot.rect.y_range());
             painter.rect_filled(rect, 0.0, color.gamma_multiply(f32::from(fill) / 255.0));
 
@@ -107,7 +110,7 @@ impl EquartEditor {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
 
-            painter.rect_filled(chip, 5.0, Color32::from_gray(32));
+            painter.rect_filled(chip, 5.0, self.theme.panel.menu);
             painter.rect_stroke(
                 chip,
                 5.0,
@@ -377,19 +380,20 @@ impl EquartEditor {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
             |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(panel));
-                egui::ScrollArea::horizontal()
+                let area = egui::ScrollArea::horizontal()
                     .id_salt(("region-controls", index))
                     .auto_shrink([false, false])
-                    .max_height(panel.height())
-                    .show(ui, |content| {
-                        let origin = content.cursor().min;
-                        content.set_min_size(Vec2::new(width, panel.height() - 5.0));
-                        self.region_panel_contents(
-                            content,
-                            Rect::from_min_size(origin, Vec2::new(width, panel.height())),
-                            index,
-                        );
-                    });
+                    .max_height(panel.height());
+
+                theme::scroll(ui, area, self.theme.scrollbar, |content| {
+                    let origin = content.cursor().min;
+                    content.set_min_size(Vec2::new(width, panel.height() - 5.0));
+                    self.region_panel_contents(
+                        content,
+                        Rect::from_min_size(origin, Vec2::new(width, panel.height())),
+                        index,
+                    );
+                });
             },
         );
     }
@@ -443,12 +447,12 @@ impl EquartEditor {
             egui::Align2::LEFT_CENTER,
             format!("Spectral Region {}", index + 1),
             FontId::new(11.0, egui::FontFamily::Name(GLOBAL_FONT.into())),
-            TEXT,
+            self.theme.panel.label,
         );
         let Some(gui) = &self.gui else { return };
         let setter = gui.param_setter();
         let bypass = region.bypass.value();
-        if controls::panel_power(ui, base, target, !bypass, REGION_COLOR)
+        if controls::panel_power(ui, base, target, !bypass, self.theme.region[index])
             .on_hover_text(if bypass {
                 "Enable region"
             } else {

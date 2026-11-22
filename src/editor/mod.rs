@@ -1,7 +1,7 @@
 use crate::{
     Telemetry,
     band::{BAND_COUNT, BandControl},
-    display_preferences::{DisplayPreferences, DisplayStore},
+    display_preferences::{DisplayPreferences, DisplayStore, theme::Theme},
     params::{
         AXIS_RANGES, DEFAULT_AXIS_RANGE, DEFAULT_SPECTRUM_RANGE, EquartParams, SPECTRUM_RANGES,
         UI_SCALES,
@@ -33,16 +33,10 @@ mod menu;
 mod modifiers;
 mod regions;
 mod spectrum;
+mod theme;
 
 use knob::{RED, gradient_rect};
 
-pub(crate) const TEXT: Color32 = Color32::from_rgb(213, 214, 214);
-pub(crate) const MUTED: Color32 = Color32::from_rgb(145, 148, 150);
-pub(crate) const GRID: Color32 = Color32::from_rgb(54, 57, 59);
-/// unlabeled grid lines
-pub(crate) const TICK: Color32 = Color32::from_gray(34);
-/// summed response curve color
-pub(crate) const COMBINED: Color32 = Color32::from_rgb(245, 208, 76);
 pub(crate) const GLOBAL_FONT: &str = "global-bold";
 
 pub(crate) use layout::Layout;
@@ -53,99 +47,12 @@ pub(crate) const CANVAS_H: f32 = 700.0;
 #[cfg(test)]
 pub(crate) const CANVAS: Vec2 = Vec2::new(CANVAS_W, CANVAS_H);
 
-/// background gradient
-pub(crate) const PLATE_TOP: Color32 = Color32::from_gray(24);
-pub(crate) const PLATE_BOTTOM: Color32 = Color32::from_gray(32);
 const BAR_ALPHA: u8 = 160;
 /// header is more transparent than footer
 const HEADER_ALPHA: u8 = 112;
 
 /// 60fps cap when idle
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
-
-/// accent color when nothing is selected
-pub(crate) const NEUTRAL: Color32 = Color32::from_rgb(150, 157, 164);
-
-/// first 8 use palette, rest use golden-ratio hue
-const fn point_color(i: usize) -> Color32 {
-    const PALETTE: [Color32; 8] = [
-        RED,
-        Color32::from_rgb(196, 130, 45),
-        Color32::from_rgb(49, 153, 120),
-        Color32::from_rgb(80, 131, 200),
-        Color32::from_rgb(151, 108, 192),
-        Color32::from_rgb(203, 105, 151),
-        Color32::from_rgb(140, 159, 61),
-        Color32::from_rgb(50, 164, 182),
-    ];
-
-    if i < PALETTE.len() {
-        return PALETTE[i];
-    }
-
-    // const hsv->rgb without closures
-    let s = 0.62_f32;
-    let v = 0.82_f32;
-    let h = ((i as f32) * 0.618_034) % 1.0 * 6.0;
-
-    let rgb = [
-        {
-            let k = (h + 5.0) % 6.0;
-            let t = if k < 1.0 {
-                k
-            } else if k < 3.0 {
-                1.0
-            } else if k < 4.0 {
-                4.0 - k
-            } else {
-                0.0
-            };
-            v - v * s * t
-        },
-        {
-            let k = (h + 3.0) % 6.0;
-            let t = if k < 1.0 {
-                k
-            } else if k < 3.0 {
-                1.0
-            } else if k < 4.0 {
-                4.0 - k
-            } else {
-                0.0
-            };
-            v - v * s * t
-        },
-        {
-            let k = (h + 1.0) % 6.0;
-            let t = if k < 1.0 {
-                k
-            } else if k < 3.0 {
-                1.0
-            } else if k < 4.0 {
-                4.0 - k
-            } else {
-                0.0
-            };
-            v - v * s * t
-        },
-    ];
-
-    Color32::from_rgb(
-        (rgb[0] * 255.0) as u8,
-        (rgb[1] * 255.0) as u8,
-        (rgb[2] * 255.0) as u8,
-    )
-}
-
-pub(crate) const POINT_COLORS: [Color32; BAND_COUNT] = {
-    let mut colors = [Color32::BLACK; BAND_COUNT];
-    let mut i = 0;
-    while i < BAND_COUNT {
-        colors[i] = point_color(i);
-        i += 1;
-    }
-    colors
-};
 
 pub struct EquartEditor {
     params: Arc<EquartParams>,
@@ -176,6 +83,10 @@ pub struct EquartEditor {
     settings: controls::CardLife,
     scale: controls::CardLife,
     layout: controls::CardLife,
+    theme_open: bool,
+    pending_theme: Option<(Theme, f64)>,
+    theme_preset_dialog: Option<theme::PresetDialog>,
+    theme: Theme,
     band_dropdowns: [controls::CardLife; 3],
     band_dropdown_owner: Option<usize>,
     modifier_picker: Option<modifiers::Picker>,
@@ -200,6 +111,8 @@ impl EquartEditor {
         telemetry: Arc<Telemetry>,
         analyzer_receiver: Arc<crate::analyzer::capture::Receiver>,
     ) -> Self {
+        let theme = display_preferences.read().theme;
+
         Self {
             params,
             display_preferences,
@@ -218,11 +131,15 @@ impl EquartEditor {
             drag: None,
             slope_wheel: 0.0,
             axis_glow: [0.0; 2],
-            accent_shown: NEUTRAL,
+            accent_shown: theme.panel.accent,
             notice: None,
             settings: controls::CardLife::SHUT,
             scale: controls::CardLife::SHUT,
             layout: controls::CardLife::SHUT,
+            theme_open: false,
+            pending_theme: None,
+            theme_preset_dialog: None,
+            theme,
             band_dropdowns: [controls::CardLife::SHUT; 3],
             band_dropdown_owner: None,
             modifier_picker: None,
@@ -235,10 +152,11 @@ impl EquartEditor {
     }
 
     pub(crate) fn accent(&self) -> Color32 {
-        if self.selected_region.is_some() {
-            regions::REGION_COLOR
+        if let Some(index) = self.selected_region {
+            self.theme.region[index]
         } else {
-            self.selected.map_or(NEUTRAL, |index| POINT_COLORS[index])
+            self.selected
+                .map_or(self.theme.panel.accent, |index| self.theme.band[index])
         }
     }
 
@@ -306,6 +224,9 @@ impl NiceEguiApp for EquartEditor {
         self.gui = None;
         self.drag = None;
         self.dial.shut();
+        self.theme_open = false;
+        self.theme_preset_dialog = None;
+        self.flush_theme(None);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut nice_plug_egui::Frame) {
@@ -368,14 +289,14 @@ pub(crate) fn configure_style(ctx: &egui::Context) {
     );
     ctx.set_fonts(fonts);
 
-    let mut style = egui::Style {
+    let style = egui::Style {
         visuals: egui::Visuals::dark(),
         ..Default::default()
     };
-    style.visuals.panel_fill = Color32::from_gray(32);
-    style.visuals.override_text_color = Some(TEXT);
     ctx.set_style_of(egui::Theme::Dark, style);
     ctx.set_theme(egui::Theme::Dark);
+    let default = Theme::default();
+    theme::install(ctx, default, default.panel.accent);
 }
 
 fn lighten(color: Color32, amount: f32) -> Color32 {

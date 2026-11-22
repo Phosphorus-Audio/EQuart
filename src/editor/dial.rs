@@ -18,13 +18,6 @@ const EXIT_S: f32 = 0.15;
 const HUB_FADE_S: f32 = 0.07;
 const SPIN: f32 = 0.22;
 
-const FACE: Color32 = Color32::from_gray(46);
-const HOVER: Color32 = Color32::from_gray(64);
-const CHOSEN: Color32 = Color32::from_gray(78);
-const HUB_FACE: Color32 = Color32::from_gray(24);
-const LABEL: Color32 = Color32::from_gray(196);
-const LABEL_STRONG: Color32 = Color32::from_gray(232);
-const CHOSEN_TEXT: Color32 = Color32::from_gray(236);
 
 /// start straight up, cover 180 deg
 const START: f32 = -std::f32::consts::FRAC_PI_2;
@@ -214,6 +207,7 @@ impl Disc {
         current: Option<usize>,
         hovered: Option<usize>,
     ) {
+        let palette = theme::current(p.ctx());
         let count = labels.len().max(1);
         // twist fan slightly while opening
         let total = ARRIVAL_S + STAGGER_S * count.saturating_sub(1) as f32;
@@ -236,11 +230,11 @@ impl Disc {
             let label_fade = ((raw - 0.40) / 0.35).clamp(0.0, 1.0) * self.fade;
             let chosen = Some(index) == current;
             let (color, text, body) = if chosen {
-                (CHOSEN, CHOSEN_TEXT, BODY_LIT)
+                (palette.panel.selected, palette.text.primary, BODY_LIT)
             } else {
                 (
-                    FACE.lerp_to_gamma(HOVER, hover),
-                    LABEL.lerp_to_gamma(LABEL_STRONG, hover),
+                    palette.panel.option.lerp_to_gamma(palette.panel.hover, hover),
+                    palette.text.body.lerp_to_gamma(palette.text.primary, hover),
                     egui::lerp(BODY..=BODY_LIT, hover),
                 )
             };
@@ -268,11 +262,12 @@ impl Disc {
         if values <= 0.01 {
             return;
         }
+        let palette = theme::current(p.ctx());
         let mesh = self.fan(
             0.0,
             SPAN,
             &[(0.0, 1.0), (HUB * 0.72, 0.95), (HUB, 0.30)],
-            HUB_FACE,
+            palette.panel.menu,
             values,
             0.0,
         );
@@ -288,14 +283,14 @@ impl Disc {
             egui::Align2::CENTER_CENTER,
             label,
             FontId::proportional(14.5),
-            CHOSEN_TEXT.gamma_multiply(values),
+            palette.text.primary.gamma_multiply(values),
         );
         p.text(
             middle + Vec2::new(0.0, 11.0),
             egui::Align2::CENTER_CENTER,
             "dB",
             FontId::new(7.0, egui::FontFamily::Name(GLOBAL_FONT.into())),
-            MUTED.gamma_multiply(values),
+            palette.text.muted.gamma_multiply(values),
         );
     }
 

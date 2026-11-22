@@ -37,7 +37,7 @@ impl EquartEditor {
 
     /// true if any footer popup is open (so plot won't treat clicks as blank)
     pub(super) fn footer_menu_is_up(&self) -> bool {
-        self.settings.is_up() || self.scale.is_up() || self.layout.is_up()
+        self.settings.is_up() || self.scale.is_up() || self.layout.is_up() || self.theme_open
     }
 
     /// bottom bar with icons
@@ -141,10 +141,27 @@ impl EquartEditor {
         }
         self.settings = card_life;
 
+        let right_button = rect.width() - 14.0 - FOOTER_GLYPH * 0.5;
+        let theme = icon_button(
+            ui,
+            ("footer-theme", 0),
+            row(right_button - 27.0),
+            icons::Glyph::Theme,
+            self.theme_open,
+            accent,
+        )
+        .on_hover_text("Theme");
+
+        if theme.clicked() && !self.theme_open {
+            self.layout.release(now);
+        }
+
+        self.theme_popup(&theme);
+
         let layout = icon_button(
             ui,
             ("footer-layout", 0),
-            row(rect.width() - 14.0 - FOOTER_GLYPH * 0.5),
+            row(right_button),
             icons::Glyph::Layout,
             self.layout.is_up(),
             accent,
@@ -154,6 +171,9 @@ impl EquartEditor {
         let mut life = self.layout;
 
         if layout.clicked() {
+            self.theme_open = false;
+            self.flush_theme(Some(ui.ctx()));
+
             if life.is_up() {
                 life.release(now);
             } else {
@@ -531,12 +551,18 @@ fn icon_button(
         .on_hover_cursor(egui::CursorIcon::PointingHand);
 
     let hover = hover_amount(&response);
-    let ink = if active {
-        lighten(accent, 0.45)
-    } else if response.is_pointer_button_down_on() {
-        Color32::from_gray(248)
+    let text = theme::current(ui.ctx()).text;
+    let highlight = if text.primary.intensity() > 0.5 {
+        Color32::WHITE
     } else {
-        Color32::from_gray(165).lerp_to_gamma(Color32::from_gray(222), hover)
+        Color32::BLACK
+    };
+    let ink = if active {
+        accent.lerp_to_gamma(highlight, 0.45)
+    } else if response.is_pointer_button_down_on() {
+        text.primary.lerp_to_gamma(highlight, 0.83)
+    } else {
+        text.muted.lerp_to_gamma(text.primary, 0.3 + 0.7 * hover)
     };
 
     icons::draw(
@@ -556,7 +582,7 @@ fn footer_menu<'a>(button: &'a Response, width: f32) -> egui::Popup<'a> {
         .open(true)
         .align(egui::emath::RectAlign::TOP_START)
         .width(width)
-        .frame(menu::card())
+        .frame(menu::card(&button.ctx))
 }
 
 fn settings_group() -> egui::Id {
@@ -577,6 +603,7 @@ fn settings_card<'a>(button: &'a Response) -> egui::Popup<'a> {
 /// card background with shadow and top accent flash
 fn card_plate(ui: &mut egui::Ui, rect: Rect, t: f32, accent: Color32) {
     let p = ui.painter();
+    let panel = theme::current(ui.ctx()).panel;
     for layer in (0..14).rev() {
         let f = layer as f32 / 13.0;
         let grow = 2.0 + 16.0 * f;
@@ -588,11 +615,11 @@ fn card_plate(ui: &mut egui::Ui, rect: Rect, t: f32, accent: Color32) {
         );
     }
 
-    knob::gradient_rounded(p, rect, 9.0, Color32::from_gray(38), Color32::from_gray(30));
+    knob::gradient_rounded(p, rect, 9.0, panel.top, panel.bottom);
     p.rect_stroke(
         rect,
         9.0,
-        Stroke::new(1.0, Color32::from_gray(76)),
+        Stroke::new(1.0, panel.border),
         egui::StrokeKind::Inside,
     );
 

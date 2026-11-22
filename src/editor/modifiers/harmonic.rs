@@ -20,7 +20,7 @@ impl EquartEditor {
         let region = &self.params.regions[index];
         let harmonic = &region.harmonic;
         let bypassed = harmonic.bypassed.value();
-        let accent = regions::REGION_COLOR;
+        let accent = self.theme.region[index];
         let header = Rect::from_min_size(rect.min, Vec2::new(HEADER_WIDTH, rect.height()));
         let (toggle, remove) = modifier_header(ui, header, index, "HARMONIC", !bypassed, accent);
 

@@ -512,7 +512,7 @@ impl EquartEditor {
         for &(index, point) in &markers {
             let selected = self.selected == Some(index);
             let on = controls[index].enabled;
-            let color = POINT_COLORS[index];
+            let color = self.theme.band[index];
             // dim ghost marker for disabled bands
             let ink = if on {
                 color
@@ -532,7 +532,7 @@ impl EquartEditor {
                 p.circle_stroke(point, 10.5, Stroke::new(1.2, Color32::WHITE));
             }
 
-            p.circle_filled(point, 8.0, Color32::from_gray(27));
+            p.circle_filled(point, 8.0, self.theme.panel.marker);
             p.circle_stroke(
                 point,
                 8.0,
@@ -586,9 +586,9 @@ impl EquartEditor {
             text,
             FontId::monospace(11.0),
             if control.enabled {
-                TEXT
+                self.theme.text.primary
             } else {
-                Color32::from_gray(110)
+                self.theme.text.muted.gamma_multiply(0.76)
             },
         );
     }

@@ -16,10 +16,13 @@ pub(crate) enum Glyph {
     ToRegion,
     ToBand,
     Layout,
+    Theme,
+    SavePreset,
+    DeletePreset,
 }
 
 impl Glyph {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 13] = [
         Self::Bypass,
         Self::Scale,
         Self::Options,
@@ -30,6 +33,9 @@ impl Glyph {
         Self::ToRegion,
         Self::ToBand,
         Self::Layout,
+        Self::Theme,
+        Self::SavePreset,
+        Self::DeletePreset,
     ];
 
     fn name(self) -> &'static str {
@@ -44,6 +50,9 @@ impl Glyph {
             Self::ToRegion => "equart-icon-to-region",
             Self::ToBand => "equart-icon-to-band",
             Self::Layout => "equart-icon-layout",
+            Self::Theme => "equart-icon-theme",
+            Self::SavePreset => "equart-icon-save-preset",
+            Self::DeletePreset => "equart-icon-delete-preset",
         }
     }
 
@@ -61,6 +70,9 @@ impl Glyph {
             }
             Self::ToBand => include_bytes!("../../assets/icons/circle-bold.alpha"),
             Self::Layout => include_bytes!("../../assets/icons/layout-bold.alpha"),
+            Self::Theme => include_bytes!("../../assets/icons/palette-bold.alpha"),
+            Self::SavePreset => include_bytes!("../../assets/icons/floppy-disk-bold.alpha"),
+            Self::DeletePreset => include_bytes!("../../assets/icons/trash-simple-bold.alpha"),
         }
     }
 }

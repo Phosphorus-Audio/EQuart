@@ -42,6 +42,7 @@ pub(super) fn spectrum_ticks(floor: f32) -> [f32; 4] {
 }
 
 pub(super) fn draw_grid_lines(p: &egui::Painter, plot: &Plot, outer: Rect) {
+    let colors = theme::current(p.ctx()).grid;
     let top = outer.top() + Layout::HEADER;
     for (hz, labelled) in frequency_ticks(plot.max_hz) {
         let x = plot.x(hz);
@@ -50,7 +51,7 @@ pub(super) fn draw_grid_lines(p: &egui::Painter, plot: &Plot, outer: Rect) {
         }
         p.line_segment(
             [Pos2::new(x, top), Pos2::new(x, outer.bottom())],
-            Stroke::new(1.0, if labelled { GRID } else { TICK }),
+            Stroke::new(1.0, if labelled { colors.major } else { colors.minor }),
         );
     }
 
@@ -64,9 +65,9 @@ pub(super) fn draw_grid_lines(p: &egui::Painter, plot: &Plot, outer: Rect) {
             Stroke::new(
                 if db == 0.0 { 1.2 } else { 1.0 },
                 if db == 0.0 {
-                    Color32::from_gray(72)
+                    colors.zero
                 } else {
-                    GRID
+                    colors.major
                 },
             ),
         );
@@ -80,6 +81,8 @@ pub(super) fn draw_axis_labels(
     eq_highlight: f32,
     spectrum_highlight: f32,
 ) {
+    let text = theme::current(p.ctx()).text;
+
     for (rect, alpha) in [
         (
             Rect::from_min_max(
@@ -104,7 +107,7 @@ pub(super) fn draw_axis_labels(
         egui::Align2::LEFT_CENTER,
         format!("EQ dB ±{:.0}", plot.range),
         FontId::proportional(10.0),
-        MUTED,
+        text.muted,
     );
 
     p.text(
@@ -112,7 +115,7 @@ pub(super) fn draw_axis_labels(
         egui::Align2::RIGHT_CENTER,
         format!("{:.0} dBFS", plot.spectrum_range),
         FontId::proportional(10.0),
-        MUTED,
+        text.muted,
     );
 
     for (hz, labelled) in frequency_ticks(plot.max_hz) {
@@ -130,11 +133,11 @@ pub(super) fn draw_axis_labels(
             egui::Align2::CENTER_CENTER,
             label,
             FontId::monospace(10.0),
-            MUTED,
+            text.muted,
         );
     }
 
-    let eq_ink = MUTED.lerp_to_gamma(TEXT, (eq_highlight / AXIS_HOVER_ALPHA).clamp(0.0, 1.0));
+    let eq_ink = text.muted.lerp_to_gamma(text.primary, (eq_highlight / AXIS_HOVER_ALPHA).clamp(0.0, 1.0));
     for db in axis_ticks(plot.range) {
         p.text(
             Pos2::new(plot.rect.left() - 9.0, plot.y(db)),
@@ -152,8 +155,8 @@ pub(super) fn draw_axis_labels(
             egui::Align2::RIGHT_CENTER,
             format!("{db:.0}"),
             FontId::monospace(9.5),
-            Color32::from_gray(112).lerp_to_gamma(
-                TEXT,
+            text.spectrum_scale.lerp_to_gamma(
+                text.primary,
                 (spectrum_highlight / AXIS_HOVER_ALPHA).clamp(0.0, 1.0),
             ),
         );

@@ -2,28 +2,8 @@ use super::*;
 
 const BASS_CURVE_POINTS: usize = 34;
 const BASS_CURVE_SAMPLES: usize = 64;
-const SPECTRUM_HUES: [[u8; 3]; 5] = [
-    [186, 214, 120],
-    [126, 205, 148],
-    [104, 190, 190],
-    [100, 146, 186],
-    [120, 112, 178],
-];
 pub(super) const SPECTRUM_DEPTH: [f32; 5] = [0.0, 0.08, 0.22, 0.50, 1.0];
 const SPECTRUM_ALPHA: [f32; 5] = [0.55, 0.30, 0.11, 0.025, 0.0];
-
-pub(super) fn spectrum_color(t: f32, lift: f32, alpha: u8) -> Color32 {
-    let stop = t.clamp(0.0, 1.0) * (SPECTRUM_HUES.len() - 1) as f32;
-    let first = (stop as usize).min(SPECTRUM_HUES.len() - 2);
-    let weight = stop - first as f32;
-    let [r, g, b] = std::array::from_fn(|channel| {
-        let a = f32::from(SPECTRUM_HUES[first][channel]);
-        let b = f32::from(SPECTRUM_HUES[first + 1][channel]);
-        let hue = a + (b - a) * weight;
-        (hue + (255.0 - hue) * lift).round() as u8
-    });
-    Color32::from_rgba_unmultiplied(r, g, b, alpha)
-}
 
 pub(super) fn draw_spectrum(
     p: &egui::Painter,
@@ -39,6 +19,9 @@ pub(super) fn draw_spectrum(
         Pos2::new(outer.right(), plot.spectrum_bottom),
     ));
     let axis = plot.rect;
+    let palette = theme::current(p.ctx());
+    let fill = palette.spectrum_fill;
+    let trace = palette.spectrum_trace;
     let hue_at = move |x: f32| (x - axis.left()) / axis.width();
     let bottom = plot.spectrum_bottom;
     let fade_height = (bottom - plot.spectrum_top) * (30.0 / plot.spectrum_range);
@@ -61,17 +44,17 @@ pub(super) fn draw_spectrum(
             &SPECTRUM_DEPTH,
             |i, stop| {
                 let point = points[i];
-                spectrum_color(hue_at(point.x), 0.0, 255)
+                fill.color(hue_at(point.x))
                     .gamma_multiply(SPECTRUM_ALPHA[stop] * fade(point.y))
             },
         );
         if output {
-            for ((width, lift, opacity), points) in [(5.0, 0.0, 0.13), (1.6, 0.42, 1.0)]
+            for ((width, opacity), points) in [(5.0, 0.13), (1.6, 1.0)]
                 .into_iter()
                 .zip([points.clone(), points])
             {
                 let stroke = egui::epaint::PathStroke::new_uv(width, move |_, point| {
-                    spectrum_color(hue_at(point.x), lift, 255)
+                    trace.color(hue_at(point.x))
                         .gamma_multiply(opacity * fade(point.y))
                 });
                 painter.add(egui::Shape::line(points, stroke));
@@ -94,6 +77,8 @@ pub(super) fn draw_spectrum(
             .map(|db| db.max(floor))
             .collect();
         let points = spectrum_path(plot, outer.left(), spectrum.bin_hz, &held);
+        let ink = palette.curves.peak_hold;
+
         // faint glow + main line
         for ((width, opacity), points) in [(3.2, 0.14), (1.1, 0.92)]
             .into_iter()
@@ -101,7 +86,7 @@ pub(super) fn draw_spectrum(
         {
             let stroke = egui::epaint::PathStroke::new_uv(width, move |_, point| {
                 let alpha = (255.0 * opacity * fade(point.y)).round() as u8;
-                Color32::from_rgba_unmultiplied(238, 243, 245, alpha)
+                theme::with_alpha(ink, alpha)
             });
             painter.add(egui::Shape::line(points, stroke));
         }

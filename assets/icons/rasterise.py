@@ -236,6 +236,8 @@ def main():
         "align-center-horizontal-simple-bold",
         "circle-bold",
         "layout-bold",
+        "palette-bold",
+        "floppy-disk-bold",
         "headphones-bold",
     ):
         source = Path("assets/icons", f"{name}.svg").read_text(encoding="utf-8")

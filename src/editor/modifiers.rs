@@ -146,8 +146,8 @@ impl EquartEditor {
             return;
         }
         let (choices, accent) = match target {
-            ModifierTarget::Band(index) => (Modifier::BAND.as_slice(), POINT_COLORS[index]),
-            ModifierTarget::Region(_) => (Modifier::REGION.as_slice(), regions::REGION_COLOR),
+            ModifierTarget::Band(index) => (Modifier::BAND.as_slice(), self.theme.band[index]),
+            ModifierTarget::Region(index) => (Modifier::REGION.as_slice(), self.theme.region[index]),
         };
         let unavailable = |modifier: Modifier| match target {
             ModifierTarget::Band(index) => modifier.unavailable(self.params.band(index)),
@@ -163,7 +163,7 @@ impl EquartEditor {
             .gap(4.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .width(172.0)
-            .frame(menu::card());
+            .frame(menu::card(&button.ctx));
         let mut add = false;
         let dismissed = Self::animated_card(
             popup,
@@ -271,7 +271,7 @@ impl EquartEditor {
         let res = &region.resonance;
         let bypassed = res.bypassed.value();
         let header = Rect::from_min_size(rect.min, Vec2::new(HEADER_WIDTH, rect.height()));
-        let (toggle, remove) = modifier_header(ui, header, index, "RESONANCE", !bypassed, regions::REGION_COLOR);
+        let (toggle, remove) = modifier_header(ui, header, index, "RESONANCE", !bypassed, self.theme.region[index]);
         if toggle {
             self.set(&setter, &res.bypassed, !bypassed);
         }
@@ -365,7 +365,7 @@ impl EquartEditor {
         let setter = gui.param_setter();
         let band = self.params.band(index);
         let pitch = &band.pitch;
-        let accent = POINT_COLORS[index];
+        let accent = self.theme.band[index];
         let active = !pitch.bypassed.value();
         let header = Rect::from_min_size(rect.min, Vec2::new(HEADER_WIDTH, rect.height()));
         let (toggle, remove) =
@@ -594,7 +594,7 @@ fn picker_button(
         egui::Align2::CENTER_CENTER,
         label,
         FontId::proportional(12.0),
-        if enabled { TEXT } else { MUTED },
+        ui.visuals().text_color().gamma_multiply(if enabled { 1.0 } else { 0.68 }),
     );
     response.clicked()
 }
@@ -608,13 +608,15 @@ fn modifier_header(
     accent: Color32,
 ) -> (bool, bool) {
     let painter = ui.painter();
+    let text = ui.visuals().text_color();
+    let muted = ui.visuals().weak_text_color();
     painter.rect_filled(rect, 0.0, Color32::from_white_alpha(7));
     painter.vline(
         rect.right(),
         rect.y_range(),
         Stroke::new(1.0, Color32::from_white_alpha(18)),
     );
-    let ink = if active { TEXT } else { MUTED };
+    let ink = if active { text } else { muted };
     let galley = painter.layout_no_wrap(
         name.to_owned(),
         FontId::new(10.0, egui::FontFamily::Name(GLOBAL_FONT.into())),
@@ -660,7 +662,7 @@ fn modifier_header(
     controls::power_icon(
         ui.painter(),
         power.rect.center(),
-        if active { lighten(accent, 0.35) } else { MUTED },
+        if active { lighten(accent, 0.35) } else { muted },
         HEADER_ICON_SIZE,
     );
     let menu_button = button(ui, HEADER_BUTTON_OFFSET, "menu", "Modifier menu");
@@ -669,10 +671,10 @@ fn modifier_header(
         ui.ctx(),
         icons::Glyph::ModifierMenu,
         Rect::from_center_size(menu_button.rect.center(), Vec2::splat(HEADER_ICON_SIZE)),
-        TEXT,
+        text,
     );
     let remove = egui::Popup::menu(&menu_button)
-        .frame(menu::card())
+        .frame(menu::card(ui.ctx()))
         .width(144.0)
         .show(|ui| {
             let clicked = menu::row(ui, "Remove modifier", None, false, accent);
