@@ -18,6 +18,7 @@ pub struct Controls {
     pub bands: [BandControl; BAND_COUNT],
     pub regions: [RegionControl; REGION_COUNT],
     pub output_db: f32,
+    pub pan: f32,
     pub mix: f32,
     pub bypass: bool,
     pub oversampling: Oversampling,
@@ -50,6 +51,7 @@ pub struct Engine {
     delta_mix: f32,
     mix: f32,
     initialize_mix: bool,
+    pan: Option<f64>,
     /// Frames since the last coefficient update.
     frame: usize,
     alpha: f32,
@@ -91,6 +93,7 @@ impl Engine {
             delta_mix: 0.0,
             mix: 1.0,
             initialize_mix: true,
+            pan: None,
             frame: 0,
             alpha: 1.0 - (-(COEFF_FRAMES as f32) / (0.012 * rate)).exp(),
             step: COEFF_FRAMES as f32 / (0.008 * rate),
@@ -129,6 +132,7 @@ impl Engine {
         self.detector_frames = 0;
         self.frame = 0;
         self.initialize_mix = true;
+        self.pan = None;
         self.fault = None;
         self.input_peak = 0.0;
         self.output_peak = 0.0;
@@ -304,12 +308,24 @@ impl Engine {
         sidechain: Option<Sidechain<'_, T>>,
         controls: &Controls,
     ) {
+        self.process_channels(left, right, sidechain, controls, true);
+    }
+
+    fn process_channels<T: HostSample>(
+        &mut self,
+        left: &mut [T],
+        right: &mut [T],
+        sidechain: Option<Sidechain<'_, T>>,
+        controls: &Controls,
+        stereo: bool,
+    ) {
         #[cfg(all(debug_assertions, not(test)))]
         if self.test_signal {
             test_signal(left, right);
         }
 
         let frames = left.len().min(right.len());
+        let target_pan = if controls.bypass { 0.0 } else { f64::from(controls.pan) };
         let sidechain = sidechain.filter(|[l, r]| l.len() >= frames && r.len() >= frames);
         let detects = controls
             .bands
@@ -443,6 +459,10 @@ impl Engine {
                 });
             self.audition.process(left, right, self.rate, focus);
 
+            if stereo {
+                self.apply_pan(left, right, target_pan);
+            }
+
             let output_peak = dsp::peak(left, right);
             if !input_peak.is_finite() {
                 self.fault = Some("equart: non-finite audio input");
@@ -466,6 +486,26 @@ impl Engine {
         }
     }
 
+    fn apply_pan<T: HostSample>(&mut self, left: &mut [T], right: &mut [T], target: f64) {
+        let pan = self.pan.get_or_insert(target);
+
+        if *pan == target {
+            if target > 0.0 {
+                T::scale(left, T::value(1.0 - target));
+            } else if target < 0.0 {
+                T::scale(right, T::value(1.0 + target));
+            }
+            return;
+        }
+
+        let step = 1.0 / (0.005 * f64::from(self.rate));
+        for (left, right) in left.iter_mut().zip(right) {
+            *pan += (target - *pan).clamp(-step, step);
+            *left = *left * T::value(1.0 - (*pan).max(0.0));
+            *right = *right * T::value(1.0 + (*pan).min(0.0));
+        }
+    }
+
     /// Duplicate a mono buffer into both channels before filtering.
     pub fn process_mono<T: HostSample>(
         &mut self,
@@ -483,7 +523,7 @@ impl Engine {
             let start = index * TILE;
             let end = start + tile.len();
             let sidechain = sidechain.map(|[l, r]| [&l[start..end], &r[start..end]]);
-            self.process_block_with_sidechain(tile, right, sidechain, controls);
+            self.process_channels(tile, right, sidechain, controls, false);
         }
     }
 

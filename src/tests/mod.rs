@@ -39,6 +39,7 @@ fn controls(bands: [BandControl; crate::band::BAND_COUNT]) -> Controls {
         bands,
         regions: Default::default(),
         output_db: 0.0,
+        pan: 0.0,
         mix: 1.0,
         bypass: false,
         oversampling: crate::oversample::Oversampling::Off,

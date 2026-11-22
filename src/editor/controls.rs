@@ -11,8 +11,8 @@ pub(super) use band_panel::{
 pub(super) use card::{CardLife, Fall};
 
 const MENU_KNOB_RADIUS: f32 = 14.0;
-const MENU_KNOB_Y: f32 = 28.0;
-const MENU_KNOB_BOX: f32 = 66.0;
+const MENU_KNOB_Y: f32 = 36.0;
+const MENU_KNOB_BOX: f32 = 74.0;
 /// extra gap so label doesn't hit tick ring
 const MENU_KNOB_LABEL_GAP: f32 = knob::LABEL_GAP + 12.0;
 /// extra top clip room for raised knob labels
@@ -464,7 +464,6 @@ impl EquartEditor {
         }
     }
 
-    /// OUT and MIX knobs
     fn level_controls(&self, ui: &mut egui::Ui) {
         // reserve row height manually since knobs use absolute centers
         let row = Rect::from_min_size(
@@ -481,8 +480,9 @@ impl EquartEditor {
             child.visuals_mut().selection.bg_fill = accent.gamma_multiply(0.3);
             child.visuals_mut().selection.stroke = Stroke::new(1.0, accent);
             for (param, label, across) in [
-                (&self.params.global.output, "OUT", 0.36),
-                (&self.params.global.mix, "MIX", 0.74),
+                (&self.params.global.output, "OUT", 0.20),
+                (&self.params.global.pan, "PAN", 0.50),
+                (&self.params.global.mix, "MIX", 0.80),
             ] {
                 let center = Pos2::new(row.left() + row.width() * across, row.top() + MENU_KNOB_Y);
                 knob::knob(

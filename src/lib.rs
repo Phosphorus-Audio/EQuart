@@ -75,6 +75,7 @@ impl Equart {
             bands: std::array::from_fn(|i| self.params.control(i)),
             regions: std::array::from_fn(|i| self.params.regions[i].control()),
             output_db: self.params.global.output.value(),
+            pan: self.params.global.pan.value(),
             mix: self.params.global.mix.value() * 0.01,
             bypass: self.params.global.bypass.value(),
             oversampling: mode.oversampling(self.params.global.oversampling.value()),

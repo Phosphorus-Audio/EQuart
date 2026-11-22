@@ -74,6 +74,9 @@ pub struct GlobalParams {
     #[id = "output"]
     pub output: FloatParam,
 
+    #[id = "pan"]
+    pub pan: FloatParam,
+
     #[id = "mix"]
     pub mix: FloatParam,
 
@@ -93,6 +96,8 @@ pub struct GlobalParams {
 
 impl Default for GlobalParams {
     fn default() -> Self {
+        let parse_pan = formatters::s2v_f32_panning();
+
         Self {
             output: FloatParam::new(
                 "Output Gain",
@@ -112,6 +117,11 @@ impl Default for GlobalParams {
                 },
             )
             .display_as("%", 1),
+            pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 })
+                .with_value_to_string(formatters::v2s_f32_panning())
+                .with_string_to_value(std::sync::Arc::new(move |text| {
+                    parse_pan(text).filter(|value| value.is_finite())
+                })),
             bypass: BoolParam::new("Bypass", false).make_bypass(),
             oversampling: EnumParam::new("Oversampling", Oversampling::Off).non_automatable(),
             processing_mode: EnumParam::new("Processing Mode", Default::default())
@@ -385,7 +395,7 @@ mod tests {
         }
 
         for (group, automated, manual) in [
-            ("Global", 3, 4),
+            ("Global", 4, 4),
             ("Filter", 3 * BAND_COUNT, 4 * BAND_COUNT),
             ("Dynamic", 16 * BAND_COUNT, 5 * BAND_COUNT),
             ("F0 Follow", 7 * BAND_COUNT, 6 * BAND_COUNT),
@@ -409,7 +419,7 @@ mod tests {
             assert_eq!(counts[&(group.to_owned(), false)], manual, "{group}");
         }
         assert_eq!(counts.len(), 14);
-        assert_eq!(ids.len(), 1529);
+        assert_eq!(ids.len(), 1530);
 
         let band = &params.bands[0];
         let pitch = &band.pitch.detection;
