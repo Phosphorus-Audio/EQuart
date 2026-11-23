@@ -1,6 +1,7 @@
 mod filter_controls;
 mod modifier_interactions;
 mod objects;
+mod presets;
 mod selection;
 
 use super::*;
@@ -119,8 +120,11 @@ fn marker_count(ctx: &egui::Context, editor: &mut EquartEditor, time: f64) -> us
     count
 }
 
-/// dummy host that writes param changes right back
-struct TestHost;
+/// dummy host that writes param changes right back, and stores state the way
+/// the wrappers do
+struct TestHost {
+    params: Arc<crate::params::EquartParams>,
+}
 
 impl GuiContextInner for TestHost {
     fn plugin_api(&self) -> PluginApi {
@@ -137,19 +141,20 @@ impl GuiContextInner for TestHost {
     unsafe fn raw_end_set_parameter(&self, _: ParamPtr) {}
 
     fn get_state(&self) -> PluginState {
-        PluginState {
-            version: String::new(),
-            params: Default::default(),
-            fields: Default::default(),
-        }
+        crate::presets::state_of(&self.params)
     }
 
-    fn set_state(&self, _: PluginState) {}
+    fn set_state(&self, state: PluginState) {
+        crate::presets::restore(&self.params, &state);
+    }
+
     fn request_restart(&self) {}
 }
 
 fn attach_host(editor: &mut EquartEditor) {
-    editor.gui = Some(GuiContext::new(Arc::new(TestHost)));
+    editor.gui = Some(GuiContext::new(Arc::new(TestHost {
+        params: Arc::clone(&editor.params),
+    })));
 }
 
 /// enable band 0 with given filter kind
@@ -190,6 +195,8 @@ fn editor() -> (egui::Context, EquartEditor) {
         Arc::new(DisplayStore::default()),
         Arc::new(crate::Telemetry::default()),
         Arc::new(crate::analyzer::capture::channel().1),
+        Arc::new(crate::presets::Store::default()),
+        Arc::new(std::sync::Mutex::new(None)),
     );
     (ctx, editor)
 }

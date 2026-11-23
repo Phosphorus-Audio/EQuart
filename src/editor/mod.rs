@@ -31,6 +31,7 @@ mod icons;
 mod knob;
 mod menu;
 mod modifiers;
+mod presets;
 mod regions;
 mod spectrum;
 mod theme;
@@ -91,6 +92,8 @@ pub struct EquartEditor {
     band_dropdown_owner: Option<usize>,
     modifier_picker: Option<modifiers::Picker>,
     reveal_modifier: Option<(usize, modifiers::Modifier)>,
+    /// `.equart` presets: stepper in the footer, browser card
+    preset: presets::Browser,
     /// dB range fan menu and which axis opened it
     dial: dial::Dial,
     dial_axis: spectrum::AxisScale,
@@ -110,6 +113,8 @@ impl EquartEditor {
         display_preferences: Arc<DisplayStore>,
         telemetry: Arc<Telemetry>,
         analyzer_receiver: Arc<crate::analyzer::capture::Receiver>,
+        presets: Arc<crate::presets::Store>,
+        current_preset: Arc<std::sync::Mutex<Option<crate::presets::Entry>>>,
     ) -> Self {
         let theme = display_preferences.read().theme;
 
@@ -144,6 +149,7 @@ impl EquartEditor {
             band_dropdown_owner: None,
             modifier_picker: None,
             reveal_modifier: None,
+            preset: presets::Browser::new(presets, current_preset),
             dial: dial::Dial::SHUT,
             dial_axis: spectrum::AxisScale::Eq,
             #[cfg(debug_assertions)]
@@ -226,6 +232,7 @@ impl NiceEguiApp for EquartEditor {
         self.dial.shut();
         self.theme_open = false;
         self.theme_preset_dialog = None;
+        self.preset.close();
         self.flush_theme(None);
     }
 
@@ -249,6 +256,7 @@ impl NiceEguiApp for EquartEditor {
             || self.layout.is_shown()
             || self.scale.is_shown()
             || self.dial.is_shown()
+            || self.preset.is_shown()
             || self.drag.is_some()
             || self.marquee.is_some()
             || self.held_delta.is_some()

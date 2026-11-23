@@ -244,12 +244,11 @@ fn mix(x: u64) -> u64 {
 
 
 fn pose_card(ctx: &egui::Context, layer: egui::LayerId, pivot: Pos2, pose: Pose) {
-    let clip = ctx.viewport_rect();
+    let viewport = ctx.viewport_rect();
     let options = ctx.tessellation_options(|options| *options);
     let font_size = ctx.fonts(|fonts| fonts.font_image_size());
 
-    let mut mesh = egui::epaint::Mesh::default();
-
+    let mut batches: Vec<(Rect, egui::epaint::Mesh)> = Vec::new();
     let mut tessellator =
         egui::epaint::Tessellator::new(ctx.pixels_per_point(), options, font_size, Vec::new());
 
@@ -257,22 +256,50 @@ fn pose_card(ctx: &egui::Context, layer: egui::LayerId, pivot: Pos2, pose: Pose)
         let Some(list) = graphics.get_mut(layer) else {
             return;
         };
+
         for index in 0..list.next_idx().0 {
             list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                let clip_rect = clipped.clip_rect;
                 let shape = std::mem::replace(&mut clipped.shape, egui::Shape::Noop);
+                let mut mesh = egui::epaint::Mesh::default();
                 tessellator.tessellate_shape(shape, &mut mesh);
+
+                if mesh.vertices.is_empty() {
+                    return;
+                }
+
+                match batches.last_mut() {
+                    Some((last_clip, last_mesh))
+                        if *last_clip == clip_rect && last_mesh.texture_id == mesh.texture_id =>
+                    {
+                        last_mesh.append(mesh);
+                    }
+                    _ => batches.push((clip_rect, mesh)),
+                }
             });
         }
 
-        if mesh.vertices.is_empty() {
-            return;
-        }
+        for (clip_rect, mut mesh) in batches {
+            for vertex in &mut mesh.vertices {
+                vertex.pos = pose.apply(pivot, vertex.pos);
+                vertex.color = vertex.color.gamma_multiply(pose.fade);
+            }
 
-        for vertex in &mut mesh.vertices {
-            vertex.pos = pose.apply(pivot, vertex.pos);
-            vertex.color = vertex.color.gamma_multiply(pose.fade);
-        }
+            let clip = if clip_rect.is_finite() {
+                let corners = [
+                    pose.apply(pivot, clip_rect.left_top()),
+                    pose.apply(pivot, clip_rect.right_top()),
+                    pose.apply(pivot, clip_rect.right_bottom()),
+                    pose.apply(pivot, clip_rect.left_bottom()),
+                ];
+                Rect::from_points(&corners).intersect(viewport)
+            } else {
+                viewport
+            };
 
-        list.add(clip, egui::Shape::Mesh(mesh.into()));
+            if clip.is_positive() {
+                list.add(clip, egui::Shape::Mesh(mesh.into()));
+            }
+        }
     });
 }

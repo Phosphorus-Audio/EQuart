@@ -549,7 +549,7 @@ impl EquartEditor {
     }
 }
 
-fn picker_button(
+pub(super) fn picker_button(
     ui: &mut egui::Ui,
     label: &str,
     width: f32,

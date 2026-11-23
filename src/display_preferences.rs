@@ -263,7 +263,7 @@ fn read_file(path: &Path) -> io::Result<DisplayFile> {
     }
 }
 
-fn user_config_dir() -> Option<PathBuf> {
+pub(crate) fn user_config_dir() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
         env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {

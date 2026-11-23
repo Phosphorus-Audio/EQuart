@@ -37,7 +37,11 @@ impl EquartEditor {
 
     /// true if any footer popup is open (so plot won't treat clicks as blank)
     pub(super) fn footer_menu_is_up(&self) -> bool {
-        self.settings.is_up() || self.scale.is_up() || self.layout.is_up() || self.theme_open
+        self.settings.is_up()
+            || self.scale.is_up()
+            || self.layout.is_up()
+            || self.theme_open
+            || self.preset.is_shown()
     }
 
     /// bottom bar with icons
@@ -85,6 +89,7 @@ impl EquartEditor {
 
         let mut scale_life = self.scale;
         if scale.clicked() {
+            self.preset.release(now);
             if scale_life.is_up() {
                 scale_life.release(now);
             } else {
@@ -114,6 +119,7 @@ impl EquartEditor {
         );
         let mut card_life = self.settings;
         if options.clicked() {
+            self.preset.release(now);
             if card_life.is_up() {
                 card_life.release(now);
             } else {
@@ -154,6 +160,7 @@ impl EquartEditor {
 
         if theme.clicked() && !self.theme_open {
             self.layout.release(now);
+            self.preset.release(now);
         }
 
         self.theme_popup(&theme);
@@ -173,6 +180,7 @@ impl EquartEditor {
         if layout.clicked() {
             self.theme_open = false;
             self.flush_theme(Some(ui.ctx()));
+            self.preset.release(now);
 
             if life.is_up() {
                 life.release(now);
@@ -204,6 +212,10 @@ impl EquartEditor {
         }
 
         self.layout = life;
+
+        // preset stepper, split off from the icon row by a hairline
+        let divider = rect.left() + right_button - 49.0;
+        self.preset_bar(ui, rect, now, divider - 10.0, divider);
     }
 
     fn layout_menu(
@@ -601,7 +613,7 @@ fn settings_card<'a>(button: &'a Response) -> egui::Popup<'a> {
 }
 
 /// card background with shadow and top accent flash
-fn card_plate(ui: &mut egui::Ui, rect: Rect, t: f32, accent: Color32) {
+pub(super) fn card_plate(ui: &mut egui::Ui, rect: Rect, t: f32, accent: Color32) {
     let p = ui.painter();
     let panel = theme::current(ui.ctx()).panel;
     for layer in (0..14).rev() {

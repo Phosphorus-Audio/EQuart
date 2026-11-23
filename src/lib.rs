@@ -11,6 +11,7 @@ mod oversample;
 mod params;
 mod pitch;
 mod precision;
+mod presets;
 mod processing_mode;
 mod realtime;
 #[cfg(test)]
@@ -26,7 +27,7 @@ use nice_plug_egui::{
     EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor,
 };
 use params::EquartParams;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 use telemetry::Telemetry;
 
 /// shared product & maker names so UI stays synced with plugin metadata
@@ -44,6 +45,7 @@ pub struct Equart {
     analyzer_capture: analyzer::capture::Publisher,
     analyzer_receiver: Arc<analyzer::capture::Receiver>,
     editor_state: Arc<EguiEditorState>,
+    current_preset: Arc<Mutex<Option<presets::Entry>>>,
     engine: Engine,
     /// Latency last handed to the host, so it is only told when it changes.
     reported_latency: u32,
@@ -52,15 +54,21 @@ pub struct Equart {
 impl Default for Equart {
     fn default() -> Self {
         let (analyzer_capture, analyzer_receiver) = analyzer::capture::channel();
+        let params = Arc::new(EquartParams::default());
+        #[cfg(not(test))]
+        let initial_preset = presets::seed_instance(&params, &presets::Store::shared());
+        #[cfg(test)]
+        let initial_preset = None;
         Self {
             analyzer_capture,
             analyzer_receiver: Arc::new(analyzer_receiver),
-            params: Arc::new(EquartParams::default()),
+            params,
             telemetry: Arc::new(Telemetry::default()),
             editor_state: EguiEditorState::from_size(
                 LogicalSize::new(EDITOR_SIZE[0], EDITOR_SIZE[1]),
                 1.0,
             ),
+            current_preset: Arc::new(Mutex::new(initial_preset)),
             engine: Engine::new(48_000.0),
             reported_latency: 0,
         }
@@ -188,6 +196,8 @@ impl Plugin for Equart {
                 display_preferences::DisplayStore::shared(),
                 self.telemetry.clone(),
                 self.analyzer_receiver.clone(),
+                presets::Store::shared(),
+                self.current_preset.clone(),
             ),
         )
     }

@@ -172,6 +172,19 @@ def subpaths(d):
     return out
 
 
+def fit(paths, box=24.0, size=256.0):
+    """Scale a path drawn in a `box`-unit square into the size-unit frame."""
+    scale = size / box
+    centre = box / 2.0
+    out = []
+    for sub in paths:
+        points = []
+        for x, y in sub:
+            points.append(((x - centre) * scale + size / 2.0, (y - centre) * scale + size / 2.0))
+        out.append(points)
+    return out
+
+
 def rasterise(paths, size=256, supersample=SS, even_odd=False):
     """Scanline fill with exact horizontal coverage, nonzero or even-odd."""
     height = size * supersample
@@ -255,6 +268,20 @@ def main():
         )
         # `rasterise` already box-filtered the supersamples, so this is a plain
         # area average over the 8x8 blocks that make up one stored pixel.
+        mask = raw.reshape(out_size, factor, out_size, factor).mean(axis=(1, 3))
+        alpha = np.round(mask * 255.0).astype(np.uint8)
+        alpha.tofile(f"assets/icons/{name}.alpha")
+        Image.fromarray(alpha, "L").save(f"target/{name}_icon.png")
+        print(name, "coverage", round(float(mask.mean()), 3), "max", int(alpha.max()))
+
+    # The boxicons carets are drawn in a 24-unit box, so they get scaled up to
+    # the 256-unit frame first. Left and right come straight from the files.
+    for name in ("caret-left", "caret-right"):
+        caret = ElementTree.fromstring(
+            Path(f"assets/icons/bx-{name}.svg").read_text(encoding="utf-8")
+        ).find("{http://www.w3.org/2000/svg}path")
+        fitted = fit(subpaths(caret.attrib["d"]), box=24.0, size=float(size))
+        raw = rasterise(fitted, size=size, supersample=SS)
         mask = raw.reshape(out_size, factor, out_size, factor).mean(axis=(1, 3))
         alpha = np.round(mask * 255.0).astype(np.uint8)
         alpha.tofile(f"assets/icons/{name}.alpha")
