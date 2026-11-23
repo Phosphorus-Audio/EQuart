@@ -207,7 +207,7 @@ fn paint_combo_button(
             if open {
                 accent.gamma_multiply(0.85)
             } else {
-                colors.border.gamma_multiply(0.6)
+                colors.border.gamma_multiply(0.18)
             },
         ),
         egui::StrokeKind::Inside,

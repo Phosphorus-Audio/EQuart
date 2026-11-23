@@ -39,7 +39,7 @@ pub(super) fn install(ctx: &egui::Context, theme: Theme, accent: Color32) {
 
         visuals.widgets.inactive.weak_bg_fill = dropdown.background;
         visuals.widgets.inactive.bg_fill = dropdown.background;
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, dropdown.border);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, dropdown.border.gamma_multiply(0.35));
         visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, dropdown.text);
 
         visuals.widgets.hovered.weak_bg_fill = dropdown.hover;
