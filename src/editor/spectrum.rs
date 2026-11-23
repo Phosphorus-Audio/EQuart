@@ -177,19 +177,21 @@ impl EquartEditor {
         let pointer = response.interact_pointer_pos();
         let nearest = pointer.and_then(point_at);
         let pressed_at = ui.input(|i| i.pointer.press_origin());
-        let pressed_band_id = response.id.with("pressed-tracked-band");
+        let pressed_band_id = response.id.with("pressed-band");
+
         if ui.input(|i| i.pointer.primary_pressed()) {
-            let tracked = pressed_at.and_then(point_at).filter(|&i| {
-                response.is_pointer_button_down_on()
-                    && controls[i].enabled
-                    && controls[i].pitch.enabled
-            });
-            ui.data_mut(|data| data.insert_temp(pressed_band_id, tracked));
+            let pressed = pressed_at
+                .and_then(point_at)
+                .filter(|_| response.is_pointer_button_down_on())
+                .map(|i| (i, controls[i].enabled && controls[i].pitch.enabled));
+            ui.data_mut(|data| data.insert_temp(pressed_band_id, pressed));
         }
-        // keep tracked band from press pos in case it moved
-        let pressed_band = ui
-            .data(|data| data.get_temp::<Option<usize>>(pressed_band_id))
+
+        let press_target = ui
+            .data(|data| data.get_temp::<Option<(usize, bool)>>(pressed_band_id))
             .flatten();
+        // keep tracked band from press pos in case it moved
+        let pressed_band = press_target.and_then(|(index, tracked)| tracked.then_some(index));
         let clicked_band = pressed_band.or(nearest);
 
         if response.clicked()
@@ -462,15 +464,19 @@ impl EquartEditor {
         if linear_phase {
             self.fir_response.update(&self.telemetry.fir);
         }
-        let preview_hover = hover.filter(|&position| {
-            self.gui.is_some()
-                && !popup_open
-                && self.drag.is_none()
-                && self.marquee.is_none()
-                && !ui.input(|input| input.pointer.any_down())
+        let (pointer_down, primary_down) =
+            ui.input(|input| (input.pointer.any_down(), input.pointer.primary_down()));
+        let plot_hover = hover.filter(|&position| {
+            !popup_open
+                && !pointer_down
                 && response.hovered()
                 && !brand_rect.contains(position)
                 && !panel.is_some_and(|rect| rect.contains(position))
+        });
+        let preview_hover = plot_hover.filter(|&position| {
+            self.gui.is_some()
+                && self.drag.is_none()
+                && self.marquee.is_none()
                 && point_at(position).is_none()
                 && controls.iter().any(|control| !control.enabled)
         });
@@ -529,7 +535,29 @@ impl EquartEditor {
             .count()
             == 2;
 
+        let hovered_marker = plot_hover.and_then(point_at);
+        let pressed_marker = self.drag.as_ref().map(|drag| drag.band).or_else(|| {
+            press_target
+                .filter(|_| {
+                    primary_down && response.is_pointer_button_down_on() && !over_panel && !popup_open
+                })
+                .map(|(index, _)| index)
+        });
+
         for &(index, point) in &markers {
+            let target_scale = if pressed_marker == Some(index) {
+                0.92
+            } else if hovered_marker == Some(index) {
+                1.14
+            } else {
+                1.0
+            };
+            let scale = ui.ctx().animate_value_with_time(
+                response.id.with(("band-marker-scale", index)),
+                target_scale,
+                0.10,
+            );
+
             let selected = self.selected == Some(index);
             let on = controls[index].enabled;
             let color = self.theme.band[index];
@@ -543,26 +571,26 @@ impl EquartEditor {
             if selected {
                 p.circle_filled(
                     point,
-                    12.0,
+                    12.0 * scale,
                     color.gamma_multiply(if on { 0.16 } else { 0.08 }),
                 );
             }
 
             if multiple_picked && self.is_picked(index) {
-                p.circle_stroke(point, 10.5, Stroke::new(1.2, Color32::WHITE));
+                p.circle_stroke(point, 10.5 * scale, Stroke::new(1.2, Color32::WHITE));
             }
 
-            p.circle_filled(point, 8.0, self.theme.panel.marker);
+            p.circle_filled(point, 8.0 * scale, self.theme.panel.marker);
             p.circle_stroke(
                 point,
-                8.0,
+                8.0 * scale,
                 Stroke::new(if selected { 2.4 } else { 1.4 }, ink),
             );
             p.text(
                 point,
                 egui::Align2::CENTER_CENTER,
                 format!("{}", index + 1),
-                FontId::monospace(9.5),
+                FontId::monospace(9.5 * scale),
                 ink,
             );
         }
