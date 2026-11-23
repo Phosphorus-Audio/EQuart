@@ -462,7 +462,19 @@ impl EquartEditor {
         if linear_phase {
             self.fir_response.update(&self.telemetry.fir);
         }
-        draw_response(
+        let preview_hover = hover.filter(|&position| {
+            self.gui.is_some()
+                && !popup_open
+                && self.drag.is_none()
+                && self.marquee.is_none()
+                && !ui.input(|input| input.pointer.any_down())
+                && response.hovered()
+                && !brand_rect.contains(position)
+                && !panel.is_some_and(|rect| rect.contains(position))
+                && point_at(position).is_none()
+                && controls.iter().any(|control| !control.enabled)
+        });
+        let preview = draw_response(
             &p,
             &plot,
             outer,
@@ -483,6 +495,7 @@ impl EquartEditor {
                         .center_at(design_rate)
                 }),
                 fir_response: &self.fir_response,
+                preview_hover,
             },
         );
 
@@ -502,6 +515,11 @@ impl EquartEditor {
 
         if let Some(mode) = phase_mode {
             phase::draw_label(&p, &plot, outer, mode);
+        }
+
+        if let Some(point) = preview {
+            p.circle_filled(point, 5.0, self.theme.panel.marker);
+            p.circle_stroke(point, 5.0, Stroke::new(2.0, self.theme.curves.response));
         }
 
         let multiple_picked = markers

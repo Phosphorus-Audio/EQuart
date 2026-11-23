@@ -73,6 +73,29 @@ pub(super) struct ResponseInput<'a> {
     pub(super) phase_mode: Option<phase::Mode>,
     pub(super) linear_center: Option<usize>,
     pub(super) fir_response: &'a crate::telemetry::FirResponse,
+    pub(super) preview_hover: Option<Pos2>,
+}
+
+fn preview_point(curve: &[Pos2], pointer: Pos2, plot: Rect) -> Option<Pos2> {
+    const HOVER_RADIUS: f32 = 12.0;
+
+    curve
+        .windows(2)
+        .filter(|segment| {
+            segment[0].x <= pointer.x + HOVER_RADIUS && segment[1].x >= pointer.x - HOVER_RADIUS
+        })
+        .filter_map(|segment| {
+            let start = segment[0];
+            let delta = segment[1] - start;
+            let t = ((pointer - start).dot(delta) / delta.length_sq()).clamp(0.0, 1.0);
+            let point = start + delta * t;
+            let distance = point.distance_sq(pointer);
+
+            (distance <= HOVER_RADIUS * HOVER_RADIUS && plot.contains(point))
+                .then_some((point, distance))
+        })
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(point, _)| point)
 }
 
 /// draw each band's curve and the total sum line
@@ -82,7 +105,7 @@ pub(super) fn draw_response(
     outer: Rect,
     db: &mut [Vec<f32>; BAND_COUNT],
     input: ResponseInput<'_>,
-) {
+) -> Option<Pos2> {
     const POINTS: usize = 512;
     let palette = theme::current(p.ctx());
     let ResponseInput {
@@ -95,6 +118,7 @@ pub(super) fn draw_response(
         phase_mode,
         linear_center,
         fir_response,
+        preview_hover,
     } = input;
 
     let responses: Vec<_> = controls
@@ -363,6 +387,8 @@ pub(super) fn draw_response(
             Some(Pos2::new(x, plot.y_free(db)))
         })
         .collect();
+    let preview = preview_hover.and_then(|pointer| preview_point(&combined, pointer, plot.rect));
+
     painter.add(egui::Shape::line(
         combined.clone(),
         Stroke::new(5.0, palette.curves.response.gamma_multiply(0.14)),
@@ -381,4 +407,6 @@ pub(super) fn draw_response(
         };
         phase::draw(p, plot, mode, &samples);
     }
+
+    preview
 }
