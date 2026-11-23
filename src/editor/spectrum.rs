@@ -644,7 +644,7 @@ impl EquartEditor {
                 point,
                 egui::Align2::CENTER_CENTER,
                 format!("{}", index + 1),
-                FontId::monospace(9.5 * scale),
+                FontId::monospace(9.5),
                 ink,
             );
         }
