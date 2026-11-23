@@ -132,10 +132,7 @@ impl EquartEditor {
             &mut card_life,
             now,
             None,
-            |ui, progress, flash, fall| {
-                self.settings_menu(ui, values, progress, flash, fall);
-                false
-            },
+            |ui, progress, flash, fall| self.settings_menu(ui, values, progress, flash, fall),
         );
         // don't close if we just clicked the toggle button
         if dismissed && !options.clicked() {
@@ -344,7 +341,6 @@ impl EquartEditor {
         picked
     }
 
-    /// two-column settings card
     pub(super) fn settings_menu(
         &mut self,
         ui: &mut egui::Ui,
@@ -352,13 +348,14 @@ impl EquartEditor {
         progress: f32,
         flash: f32,
         fall: Option<Fall>,
-    ) {
+    ) -> bool {
         let accent = self.accent();
         let t = progress.clamp(0.0, 1.0);
         let group = settings_group();
         let mut dropdowns = menu::Dropdown::new(ui.ctx(), group);
         let card = Rect::from_min_size(ui.cursor().min, Vec2::new(MENU_CARD_W, MENU_CARD_H));
         menu::LabelFlash::begin(ui, card, flash);
+        let mut close = false;
 
         {
             ui.allocate_rect(card, Sense::hover());
@@ -461,18 +458,27 @@ impl EquartEditor {
                 self.flatten_all();
             }
 
-            // push version note to bottom
             menu::divider(&mut r);
-            let floor = r.max_rect().bottom() - 24.0;
+
+            r.add_space(3.0);
+            if menu::row(&mut r, "About", None, false, accent) {
+                self.about.open(ui.input(|input| input.time));
+                close = true;
+            }
+
+            let note_height = r.text_style_height(&egui::TextStyle::Body);
+            let floor = r.max_rect().bottom() - 2.0 * (note_height + r.spacing().item_spacing.y);
             r.add_space((floor - r.cursor().top()).max(0.0));
+
+            if values.sample_rate > 0.0 {
+                let rate_khz = values.sample_rate / 1_000.0;
+                let latency_ms = values.latency_samples as f32 / rate_khz;
+                menu::note(&mut r, &format!("{rate_khz:.1} kHz  and  {latency_ms:.2} ms latency maybe"));
+            }
+
             menu::note(
                 &mut r,
-                &format!(
-                    "{} {}   {:.1} kHz",
-                    crate::NAME,
-                    env!("CARGO_PKG_VERSION"),
-                    values.sample_rate / 1_000.0
-                ),
+                &format!("{} {}", crate::NAME, env!("CARGO_PKG_VERSION")),
             );
         }
 
@@ -509,6 +515,8 @@ impl EquartEditor {
                 self.apply_analysis_choice(ui.ctx(), key, index);
             }
         }
+
+        close
     }
 
     fn level_controls(&self, ui: &mut egui::Ui) {

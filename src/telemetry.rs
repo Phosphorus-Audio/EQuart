@@ -14,6 +14,7 @@ pub(crate) struct MeterReadings {
     pub(crate) input_peak: f32,
     pub(crate) output_peak: f32,
     pub(crate) sample_rate: f32,
+    pub(crate) latency_samples: u32,
 }
 
 pub(crate) struct Telemetry {
@@ -21,6 +22,7 @@ pub(crate) struct Telemetry {
     input_peak: AtomicU32,
     output_peak: AtomicU32,
     sample_rate: AtomicU32,
+    latency_samples: AtomicU32,
     /// live dynamic gain offset per band for UI
     dynamic: [AtomicU32; BAND_COUNT],
     dynamic_levels: [AtomicU32; BAND_COUNT],
@@ -40,6 +42,7 @@ impl Default for Telemetry {
             input_peak: AtomicU32::new(0),
             output_peak: AtomicU32::new(0),
             sample_rate: AtomicU32::new(0),
+            latency_samples: AtomicU32::new(0),
             dynamic: std::array::from_fn(|_| AtomicU32::new(0)),
             dynamic_levels: std::array::from_fn(|_| AtomicU32::new(f32::NEG_INFINITY.to_bits())),
             detected_pitch: std::array::from_fn(|_| AtomicU32::new(0)),
@@ -79,6 +82,8 @@ impl Telemetry {
             .store(engine.output_peak.to_bits(), Ordering::Relaxed);
         self.sample_rate
             .store(engine.rate.to_bits(), Ordering::Relaxed);
+        self.latency_samples
+            .store(engine.latency(), Ordering::Relaxed);
 
         self.fir.publish(engine);
 
@@ -120,6 +125,7 @@ impl Telemetry {
             input_peak: f32::from_bits(self.input_peak.load(Ordering::Relaxed)),
             output_peak: f32::from_bits(self.output_peak.load(Ordering::Relaxed)),
             sample_rate: self.sample_rate(),
+            latency_samples: self.latency_samples.load(Ordering::Relaxed),
         }
     }
 
