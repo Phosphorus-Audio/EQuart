@@ -8,10 +8,16 @@ use std::{
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 pub(crate) mod theme;
+
+pub(crate) const THEME_FOLDER: &str = "Themes";
+pub(crate) const THEME_EXTENSION: &str = "equartheme";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -19,14 +25,6 @@ pub(crate) struct DisplayPreferences {
     pub(crate) spectrum: SpectrumPreferences,
     pub(crate) layout: LayoutPreferences,
     pub(crate) theme: theme::Theme,
-}
-
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct DisplayFile {
-    #[serde(flatten)]
-    preferences: DisplayPreferences,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    theme_presets: BTreeMap<String, theme::Theme>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,15 +90,18 @@ impl Default for LayoutPreferences {
 #[derive(Default)]
 pub(crate) struct DisplayStore {
     path: Option<PathBuf>,
-    values: Mutex<DisplayFile>,
+    values: Mutex<DisplayPreferences>,
+    themes: Mutex<BTreeMap<String, theme::Theme>>,
 }
 
 impl DisplayStore {
     pub(crate) fn shared() -> Arc<Self> {
         static STORE: OnceLock<Arc<DisplayStore>> = OnceLock::new();
+
         let store = STORE.get_or_init(|| {
             let path = user_config_dir()
                 .map(|root| root.join(crate::VENDOR).join("EQuart").join("display.json"));
+
             if path.is_none() {
                 nice_plug::nice_warn!("EQuart could not locate the user configuration directory");
             }
@@ -122,26 +123,41 @@ impl DisplayStore {
     pub(crate) fn with_values(values: DisplayPreferences) -> Self {
         Self {
             path: None,
-            values: Mutex::new(DisplayFile {
-                preferences: values,
-                ..DisplayFile::default()
-            }),
+            values: Mutex::new(values),
+            themes: Mutex::new(BTreeMap::new()),
         }
     }
 
+    fn themes_dir(&self) -> Option<PathBuf> {
+        self.path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(|parent| parent.join(THEME_FOLDER))
+    }
+
     pub(crate) fn read(&self) -> DisplayPreferences {
-        self.values
+        *self
+            .values
             .lock()
             .expect("display preferences lock poisoned")
-            .preferences
     }
 
     pub(crate) fn theme_presets(&self) -> BTreeMap<String, theme::Theme> {
-        self.values
+        self.themes
             .lock()
-            .expect("display preferences lock poisoned")
-            .theme_presets
+            .expect("theme presets lock poisoned")
             .clone()
+    }
+
+    pub(crate) fn reload_theme_presets(&self) -> io::Result<()> {
+        let Some(dir) = self.themes_dir() else {
+            return Ok(());
+        };
+
+        let loaded = read_theme_dir(&dir)?;
+        *self.themes.lock().expect("theme presets lock poisoned") = loaded;
+
+        Ok(())
     }
 
     pub(crate) fn save_theme_preset(
@@ -152,28 +168,83 @@ impl DisplayStore {
     ) -> io::Result<()> {
         let name = name.trim();
 
-        if name.is_empty() || theme::presets::is_builtin_name(name) {
+        if !crate::presets::is_valid_name(name) || theme::presets::is_builtin_name(name) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Choose a custom preset name",
+                "Choose a valid custom preset name",
             ));
         }
 
-        self.update_file(|file| {
-            if !replace && file.theme_presets.contains_key(name) {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "A theme preset already uses this name",
-                ));
-            }
+        let dir = self.themes_dir().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "user configuration directory is unavailable",
+            )
+        })?;
 
-            let changed = file.theme_presets.insert(name.to_owned(), palette) != Some(palette);
-            Ok(changed)
-        })
+        fs::create_dir_all(&dir)?;
+
+        let path = theme_file_path(&dir, name);
+
+        if !replace && path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "A theme preset already uses this name",
+            ));
+        }
+
+        write_theme_file(&path, &palette)?;
+
+        self.themes
+            .lock()
+            .expect("theme presets lock poisoned")
+            .insert(name.to_owned(), palette);
+
+        Ok(())
     }
 
     pub(crate) fn delete_theme_preset(&self, name: &str) -> io::Result<()> {
-        self.update_file(|file| Ok(file.theme_presets.remove(name).is_some()))
+        let name = name.trim();
+
+        if !crate::presets::is_valid_name(name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid theme preset name",
+            ));
+        }
+
+        let dir = self.themes_dir().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "user configuration directory is unavailable",
+            )
+        })?;
+
+        let path = theme_file_path(&dir, name);
+
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        self.themes
+            .lock()
+            .expect("theme presets lock poisoned")
+            .remove(name);
+
+        Ok(())
+    }
+
+    pub(crate) fn reveal_theme_folder(&self) -> io::Result<()> {
+        let dir = self.themes_dir().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "user configuration directory is unavailable",
+            )
+        })?;
+
+        crate::presets::open_folder(&dir)
     }
 
     fn reload(&self) -> io::Result<()> {
@@ -182,28 +253,37 @@ impl DisplayStore {
                 .values
                 .lock()
                 .expect("display preferences lock poisoned");
+
             *values = match open_lock(path) {
                 Ok(lock) => {
                     lock.lock_shared()?;
                     read_file(path)?
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => DisplayFile::default(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    DisplayPreferences::default()
+                }
                 Err(error) => return Err(error),
             };
+            drop(values);
+
+            self.reload_theme_presets()?;
         }
 
         Ok(())
     }
 
     pub(crate) fn update(&self, change: impl FnOnce(&mut DisplayPreferences)) -> io::Result<()> {
-        self.update_file(|file| {
-            let previous = file.preferences;
-            change(&mut file.preferences);
-            Ok(previous != file.preferences)
+        self.update_file(|prefs| {
+            let previous = *prefs;
+            change(prefs);
+            Ok(previous != *prefs)
         })
     }
 
-    fn update_file(&self, change: impl FnOnce(&mut DisplayFile) -> io::Result<bool>) -> io::Result<()> {
+    fn update_file(
+        &self,
+        change: impl FnOnce(&mut DisplayPreferences) -> io::Result<bool>,
+    ) -> io::Result<()> {
         let mut values = self
             .values
             .lock()
@@ -241,6 +321,81 @@ impl DisplayStore {
     }
 }
 
+fn theme_file_path(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!("{name}.{THEME_EXTENSION}"))
+}
+
+fn write_theme_file(path: &Path, palette: &theme::Theme) -> io::Result<()> {
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let bytes = serde_json::to_vec_pretty(palette).map_err(io::Error::other)?;
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let stem = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("theme");
+    let temp = path.with_file_name(format!("{stem}.{}.{seq}.tmp", std::process::id()));
+
+    let mut file = fs::File::create(&temp)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+
+    if let Err(error) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+fn read_theme_dir(dir: &Path) -> io::Result<BTreeMap<String, theme::Theme>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => return Err(error),
+    };
+
+    let mut presets = BTreeMap::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if !path
+            .extension()
+            .is_some_and(|ext| ext == THEME_EXTENSION)
+        {
+            continue;
+        }
+
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+
+        if theme::presets::is_builtin_name(name) {
+            continue;
+        }
+
+        match fs::read_to_string(&path).and_then(|text| {
+            serde_json::from_str::<theme::Theme>(&text).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{}: {error}", path.display()),
+                )
+            })
+        }) {
+            Ok(palette) => {
+                presets.insert(name.to_owned(), palette);
+            }
+            Err(error) => {
+                nice_plug::nice_warn!("EQuart could not load theme preset {name}: {error}");
+            }
+        }
+    }
+
+    Ok(presets)
+}
+
 fn open_lock(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
         .create(true)
@@ -250,7 +405,7 @@ fn open_lock(path: &Path) -> io::Result<fs::File> {
         .open(path.with_extension("lock"))
 }
 
-fn read_file(path: &Path) -> io::Result<DisplayFile> {
+fn read_file(path: &Path) -> io::Result<DisplayPreferences> {
     match fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).map_err(|error| {
             io::Error::new(
@@ -258,7 +413,7 @@ fn read_file(path: &Path) -> io::Result<DisplayFile> {
                 format!("{}: {error}", path.display()),
             )
         }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DisplayFile::default()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DisplayPreferences::default()),
         Err(error) => Err(error),
     }
 }
@@ -327,11 +482,11 @@ mod tests {
         first.reload().unwrap();
         assert_eq!(first.read(), DisplayPreferences::default());
         assert!(!first.read().layout.footer_border);
-        let legacy: DisplayFile =
+
+        let partial: DisplayPreferences =
             serde_json::from_str(r#"{"layout":{"meter_visible":false}}"#).unwrap();
-        assert_eq!(legacy.preferences.theme, theme::Theme::default());
-        assert!(!legacy.preferences.layout.meter_visible);
-        assert!(legacy.theme_presets.is_empty());
+        assert_eq!(partial.theme, theme::Theme::default());
+        assert!(!partial.layout.meter_visible);
 
         let original = first.read().theme;
         let mut fill_edit = original;
@@ -373,14 +528,21 @@ mod tests {
         second.reload().unwrap();
         assert_eq!(first.read(), expected);
         assert_eq!(second.read(), expected);
+
         let saved = read_file(&path).unwrap();
-        assert_eq!(saved.preferences, expected);
-        assert_eq!(saved.theme_presets.get("测试配色"), Some(&expected.theme));
-        assert_eq!(second.theme_presets(), saved.theme_presets);
+        assert_eq!(saved, expected);
+
+        let theme_file = dir.join(THEME_FOLDER).join(format!("测试配色.{THEME_EXTENSION}"));
+        assert!(theme_file.exists());
+        assert_eq!(second.theme_presets().get("测试配色"), Some(&expected.theme));
 
         let builtin = theme::presets::builtins()[1].1;
         assert_eq!(
             second.save_theme_preset("DEFAULT", builtin, true).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput,
+        );
+        assert_eq!(
+            second.save_theme_preset("../escape", builtin, true).unwrap_err().kind(),
             io::ErrorKind::InvalidInput,
         );
         assert_eq!(
@@ -394,11 +556,13 @@ mod tests {
         assert_eq!(first.read(), expected);
 
         first.delete_theme_preset("测试配色").unwrap();
+        assert!(!theme_file.exists());
         second.reload().unwrap();
         assert!(second.theme_presets().is_empty());
         assert_eq!(second.read().theme, expected.theme);
 
         let state = crate::params::EquartParams::default().serialize_fields();
+
         for id in [
             "analyzer_resolution",
             "analyzer_speed",
@@ -419,8 +583,6 @@ mod tests {
             );
         }
 
-        fs::remove_file(&path).unwrap();
-        fs::remove_file(path.with_extension("lock")).unwrap();
-        fs::remove_dir(dir).unwrap();
+        fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -141,11 +141,45 @@ palette!(Curves {
     peak_hold: "Peak hold" = rgb(238, 243, 245),
 });
 
+palette!(DropdownColors {
+    background: "Background" = gray(42),
+    hover: "Hover" = gray(50),
+    selected: "Selected / open" = gray(58),
+    border: "Border" = gray(86),
+    text: "Text" = rgb(213, 214, 214),
+    arrow: "Arrow" = gray(142),
+    popup: "Popup background" = gray(42),
+});
+
+palette!(SwitchColors {
+    track_off: "Track off" = gray(64),
+    track_on: "Track on" = rgb(128, 134, 140),
+    thumb: "Thumb" = rgb(213, 214, 214),
+});
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct Switch {
+    pub(crate) colors: SwitchColors,
+    pub(crate) follow_accent: bool,
+}
+
+impl Default for Switch {
+    fn default() -> Self {
+        Self {
+            colors: SwitchColors::default(),
+            follow_accent: true,
+        }
+    }
+}
+
 palette!(Piano {
     well: "Background" = gray(15),
     white_top: "White key top" = gray(198),
     white_bottom: "White key bottom" = gray(138),
     black: "Black keys" = gray(18),
+    tip_background: "Tooltip background" = rgb(22, 26, 24),
+    tip_text: "Tooltip text" = rgb(213, 214, 214),
 });
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +242,9 @@ pub(crate) struct Theme {
     pub(crate) grid: Grid,
     pub(crate) text: Text,
     pub(crate) panel: Panel,
+    pub(crate) dropdown: DropdownColors,
+    pub(crate) panel_dropdown: DropdownColors,
+    pub(crate) switch: Switch,
     pub(crate) knob: Knob,
     pub(crate) meter: Meter,
     pub(crate) scrollbar: Scrollbar,
@@ -228,6 +265,18 @@ impl Theme {
         self.grid.merge_edits(&original.grid, &edited.grid);
         self.text.merge_edits(&original.text, &edited.text);
         self.panel.merge_edits(&original.panel, &edited.panel);
+        self.dropdown
+            .merge_edits(&original.dropdown, &edited.dropdown);
+        self.panel_dropdown
+            .merge_edits(&original.panel_dropdown, &edited.panel_dropdown);
+        self.switch
+            .colors
+            .merge_edits(&original.switch.colors, &edited.switch.colors);
+        merge_value(
+            &mut self.switch.follow_accent,
+            original.switch.follow_accent,
+            edited.switch.follow_accent,
+        );
         self.knob
             .colors
             .merge_edits(&original.knob.colors, &edited.knob.colors);
@@ -276,6 +325,9 @@ impl Default for Theme {
             grid: Grid::default(),
             text: Text::default(),
             panel: Panel::default(),
+            dropdown: DropdownColors::default(),
+            panel_dropdown: DropdownColors::default(),
+            switch: Switch::default(),
             knob: Knob::default(),
             meter: Meter::default(),
             scrollbar: Scrollbar::default(),

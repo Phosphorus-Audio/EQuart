@@ -93,7 +93,8 @@ impl Dropdown {
             self.stepped = Some((key, index));
         }
 
-        paint_combo_button(ui, &response, value, open, true, accent, true);
+        let colors = theme::current(ui.ctx()).dropdown;
+        paint_combo_button(ui, &response, value, open, true, accent, true, &colors);
 
         let progress = ui.ctx().animate_bool_with_time_and_easing(
             self.group.with(key),
@@ -138,7 +139,7 @@ impl Dropdown {
 
         let t = progress;
         let p = ui.painter();
-        let panel = theme::current(ui.ctx()).panel;
+        let colors = theme::current(ui.ctx()).dropdown;
         let scrim = ui.interact(bounds, self.group.with("scrim"), Sense::click());
 
         p.rect_filled(bounds, 8.0, Color32::from_black_alpha((78.0 * t) as u8));
@@ -151,6 +152,7 @@ impl Dropdown {
         let scale = 0.94 + 0.06 * egui::emath::easing::back_out(t);
         let plate = Rect::from_center_size(list.center(), list.size() * scale)
             .translate(Vec2::new(0.0, (1.0 - t) * -7.0));
+
         for layer in (0..10).rev() {
             let grow = 1.0 + 8.0 * layer as f32 / 9.0;
             p.rect_filled(
@@ -159,15 +161,17 @@ impl Dropdown {
                 Color32::from_black_alpha((7.0 * t * (1.0 - layer as f32 / 10.0)) as u8),
             );
         }
-        p.rect_filled(plate, 8.0, fade(panel.option, t));
+
+        p.rect_filled(plate, 8.0, fade(colors.popup, t));
         p.rect_stroke(
             plate,
             8.0,
-            Stroke::new(1.0, fade(panel.option_border, t)),
+            Stroke::new(1.0, fade(colors.border, t)),
             egui::StrokeKind::Inside,
         );
 
         let mut picked = None;
+
         for (index, option) in options.iter().enumerate() {
             let row = Rect::from_min_size(
                 Pos2::new(
@@ -189,7 +193,9 @@ impl Dropdown {
                 accent,
                 row_t,
                 None,
+                &colors,
             );
+
             if open && response.clicked() {
                 picked = Some((key, index));
             }

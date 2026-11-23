@@ -176,7 +176,8 @@ pub(super) fn draw_keys(
     if let Some((pointer_x, hz, note)) = hovered {
         let text = format!("{}  {}", note_name(note), format_hz(hz));
         let font = FontId::new(10.0, egui::FontFamily::Name(GLOBAL_FONT.into()));
-        let size = p.layout_no_wrap(text.clone(), font.clone(), palette.text.primary).size();
+        let size = p.layout_no_wrap(text.clone(), font.clone(), keys.tip_text).size();
+
         let width = size.x + 12.0;
         let height = size.y + 6.0;
         let right = (rect.right() - width).max(rect.left());
@@ -185,14 +186,20 @@ pub(super) fn draw_keys(
             Pos2::new(left, rect.top() - height - 3.0),
             Vec2::new(width, height),
         );
-        let plate = Color32::from_rgb(22, 26, 24).lerp_to_gamma(tint, 0.22);
-        p.rect_filled(label, 3.0, plate.gamma_multiply(0.94));
+
+        p.rect_filled(label, 3.0, keys.tip_background.gamma_multiply(0.96));
+        p.rect_stroke(
+            label,
+            3.0,
+            Stroke::new(1.0, palette.panel.border.gamma_multiply(0.7)),
+            egui::StrokeKind::Inside,
+        );
         p.text(
             label.center(),
             egui::Align2::CENTER_CENTER,
             text,
             font,
-            palette.text.primary,
+            keys.tip_text,
         );
     }
 }

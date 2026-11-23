@@ -513,29 +513,7 @@ impl Store {
             )
         })?;
 
-        fs::create_dir_all(root)?;
-
-        #[cfg(target_os = "windows")]
-        let mut command = {
-            let mut command = std::process::Command::new("explorer");
-            command.arg(root);
-            command
-        };
-        #[cfg(target_os = "macos")]
-        let mut command = {
-            let mut command = std::process::Command::new("open");
-            command.arg(root);
-            command
-        };
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let mut command = {
-            let mut command = std::process::Command::new("xdg-open");
-            command.arg(root);
-            command
-        };
-
-        // explorer returns non-zero even when it opens the window
-        command.spawn().map(drop)
+        open_folder(root)
     }
 
     fn seed(&self) -> io::Result<()> {
@@ -627,6 +605,32 @@ fn folder_rank(name: &str) -> u8 {
         USER => 1,
         _ => 2,
     }
+}
+
+pub(crate) fn open_folder(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        command.arg(dir);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(dir);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(dir);
+        command
+    };
+
+    // explorer returns non-zero even when it opens the window
+    command.spawn().map(drop)
 }
 
 pub(crate) fn is_valid_name(name: &str) -> bool {

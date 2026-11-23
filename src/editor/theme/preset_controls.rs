@@ -57,14 +57,29 @@ impl EquartEditor {
                 });
 
             if preset_icon(ui, icons::Glyph::SavePreset, "Save theme preset").clicked() {
-                let name = saved
-                    .contains_key(selected)
-                    .then(|| selected.to_owned())
-                    .unwrap_or_default();
+                let name = if saved.contains_key(selected) {
+                    selected.to_owned()
+                } else {
+                    String::new()
+                };
+
                 self.theme_preset_dialog = Some(PresetDialog::Save {
                     name,
                     focus_name: true,
                 });
+            }
+
+            if ui
+                .button("Folder")
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Open theme folder")
+                .clicked()
+                && let Err(error) = self.display_preferences.reveal_theme_folder()
+            {
+                self.notify(
+                    format!("Could not open the theme folder: {error}"),
+                    ui.input(|input| input.time),
+                );
             }
         });
 
@@ -94,7 +109,10 @@ impl EquartEditor {
                         } else {
                             "Save preset"
                         };
-                        (label, !name.is_empty() && !presets::is_builtin_name(name))
+                        let valid =
+                            crate::presets::is_valid_name(name) && !presets::is_builtin_name(name);
+
+                        (label, valid)
                     }
                     PresetDialog::Delete(name) => {
                         ui.heading("Delete theme preset?");

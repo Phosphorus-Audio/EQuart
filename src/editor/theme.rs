@@ -26,17 +26,36 @@ pub(super) fn install(ctx: &egui::Context, theme: Theme, accent: Color32) {
     ctx.data_mut(|data| data.insert_temp(egui::Id::unique(FRAME_THEME), theme));
     ctx.style_mut_of(egui::Theme::Dark, |style| {
         let visuals = &mut style.visuals;
+        let dropdown = theme.dropdown;
+
         visuals.panel_fill = theme.background.bottom;
         visuals.window_fill = theme.panel.menu;
         visuals.window_stroke.color = theme.panel.border;
         visuals.override_text_color = Some(theme.text.primary);
         visuals.weak_text_color = Some(theme.text.muted);
-        visuals.text_edit_bg_color = Some(theme.panel.option);
+        visuals.text_edit_bg_color = Some(dropdown.background);
         visuals.selection.bg_fill = accent.gamma_multiply(0.3);
         visuals.selection.stroke = Stroke::new(1.0, accent);
-        visuals.widgets.inactive.weak_bg_fill = theme.panel.option;
-        visuals.widgets.hovered.weak_bg_fill = theme.panel.hover;
-        visuals.widgets.active.weak_bg_fill = theme.panel.selected;
+
+        visuals.widgets.inactive.weak_bg_fill = dropdown.background;
+        visuals.widgets.inactive.bg_fill = dropdown.background;
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, dropdown.border);
+        visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, dropdown.text);
+
+        visuals.widgets.hovered.weak_bg_fill = dropdown.hover;
+        visuals.widgets.hovered.bg_fill = dropdown.hover;
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, dropdown.border);
+        visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, dropdown.text);
+
+        visuals.widgets.active.weak_bg_fill = dropdown.selected;
+        visuals.widgets.active.bg_fill = dropdown.selected;
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent);
+        visuals.widgets.active.fg_stroke = Stroke::new(1.0, dropdown.text);
+
+        visuals.widgets.open.weak_bg_fill = dropdown.selected;
+        visuals.widgets.open.bg_fill = dropdown.selected;
+        visuals.widgets.open.bg_stroke = Stroke::new(1.0, accent);
+        visuals.widgets.open.fg_stroke = Stroke::new(1.0, dropdown.text);
     });
 }
 
@@ -107,6 +126,11 @@ impl EquartEditor {
 
         if button.clicked() {
             self.theme_open = !self.theme_open;
+
+            if self.theme_open {
+                let _ = self.display_preferences.reload_theme_presets();
+            }
+
             ctx.request_repaint();
         }
 
@@ -221,6 +245,18 @@ fn edit_theme(ui: &mut egui::Ui, theme: &mut Theme) {
     section!("Grid", theme.grid);
     section!("Text", theme.text);
     section!("Panels and controls", theme.panel);
+    section!("Menu dropdowns", theme.dropdown);
+    section!("Panel dropdowns", theme.panel_dropdown);
+    egui::CollapsingHeader::new("Switch").show(ui, |ui| {
+        ui.checkbox(
+            &mut theme.switch.follow_accent,
+            "Use the current accent when on",
+        );
+        theme
+            .switch
+            .colors
+            .edit(|label, color| edit_color(ui, label, color));
+    });
     section!("EQ and phase curves", theme.curves);
     section!("Level meters", theme.meter);
     section!("Scrollbars", theme.scrollbar);

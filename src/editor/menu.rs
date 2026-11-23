@@ -175,6 +175,7 @@ const OPTION_H: f32 = 23.0;
 const SWITCH_W: f32 = 32.0;
 const SWITCH_H: f32 = 17.0;
 
+#[allow(clippy::too_many_arguments)]
 fn paint_combo_button(
     ui: &egui::Ui,
     response: &Response,
@@ -183,18 +184,20 @@ fn paint_combo_button(
     available: bool,
     accent: Color32,
     flash: bool,
+    colors: &crate::display_preferences::theme::DropdownColors,
 ) {
     let rect = response.rect;
     let p = ui.painter();
-    let palette = theme::current(ui.ctx());
     let hover = hover_amount(response);
+
     let fill = if !available {
-        palette.panel.menu
+        colors.background.gamma_multiply(0.6)
     } else if open {
-        palette.panel.selected
+        colors.selected
     } else {
-        palette.panel.option.lerp_to_gamma(palette.panel.selected, hover)
+        colors.background.lerp_to_gamma(colors.hover, hover)
     };
+
     p.rect_filled(rect, 6.0, fill);
     p.rect_stroke(
         rect,
@@ -204,34 +207,42 @@ fn paint_combo_button(
             if open {
                 accent.gamma_multiply(0.85)
             } else {
-                Color32::from_white_alpha(10)
+                colors.border.gamma_multiply(0.6)
             },
         ),
         egui::StrokeKind::Inside,
     );
+
     let anchor = rect.left_center() + Vec2::new(10.0, 0.0);
     let font = FontId::proportional(11.0);
+
     if flash {
         label_plate(ui, value, font.clone(), anchor, egui::Align2::LEFT_CENTER);
     }
+
     p.text(
         anchor,
         egui::Align2::LEFT_CENTER,
         value,
         font,
-        if available { palette.text.primary } else { palette.text.muted },
+        if available {
+            colors.text
+        } else {
+            colors.text.gamma_multiply(0.55)
+        },
     );
 
     if available {
         let tip = Pos2::new(rect.right() - 14.0, rect.center().y);
         let dir = if open { -1.0 } else { 1.0 };
+
         p.line_segment(
             [tip + Vec2::new(-4.0, -2.0 * dir), tip],
-            Stroke::new(1.2, palette.text.value),
+            Stroke::new(1.2, colors.arrow),
         );
         p.line_segment(
             [tip, tip + Vec2::new(4.0, -2.0 * dir)],
-            Stroke::new(1.2, palette.text.value),
+            Stroke::new(1.2, colors.arrow),
         );
     }
 }
@@ -246,28 +257,33 @@ fn paint_option(
     accent: Color32,
     opacity: f32,
     flash: Option<LabelFlash>,
+    colors: &crate::display_preferences::theme::DropdownColors,
 ) {
-    let palette = theme::current(p.ctx());
     if chosen {
-        p.rect_filled(rect, 5.0, fade(palette.panel.selected, opacity));
+        p.rect_filled(rect, 5.0, fade(colors.selected, opacity));
     } else if hover > 0.0 {
-        p.rect_filled(rect, 5.0, fade(palette.panel.hover, opacity * hover));
+        p.rect_filled(rect, 5.0, fade(colors.hover, opacity * hover));
     }
+
     let anchor = rect.left_center() + Vec2::new(9.0, 0.0);
     let font = FontId::proportional(11.5);
+
     if let Some(flash) = flash {
         flash.paint(p, label, font.clone(), anchor, egui::Align2::LEFT_CENTER);
     }
+
     p.text(
         anchor,
         egui::Align2::LEFT_CENTER,
         label,
         font,
-        fade(if chosen { palette.text.primary } else { palette.text.body }, opacity),
+        fade(colors.text, opacity),
     );
+
     if chosen {
         let tip = Pos2::new(rect.right() - 11.0, rect.center().y);
         let stroke = Stroke::new(1.4, fade(accent, opacity));
+
         p.line_segment(
             [tip + Vec2::new(-4.0, 0.0), tip + Vec2::new(-1.0, 3.0)],
             stroke,
@@ -310,10 +326,12 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
         Sense::hover()
     };
     let response = ui.interact(rect, id, sense);
+    let colors = theme::current(ui.ctx()).panel_dropdown;
     let value = label(current);
+
     if !available {
         life.shut();
-        paint_combo_button(ui, &response, value.as_ref(), false, false, accent, false);
+        paint_combo_button(ui, &response, value.as_ref(), false, false, accent, false, &colors);
         return None;
     }
 
@@ -333,6 +351,7 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
             life.open(now);
         }
     }
+
     paint_combo_button(
         ui,
         &response,
@@ -341,32 +360,36 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
         true,
         accent,
         false,
+        &colors,
     );
 
-    let panel = theme::current(ui.ctx()).panel;
     let mut frame = card(ui.ctx())
-        .fill(panel.option)
-        .stroke(Stroke::new(1.0, panel.option_border))
+        .fill(colors.popup)
+        .stroke(Stroke::new(1.0, colors.border))
         .corner_radius(8)
         .inner_margin(egui::Margin::same(5));
     frame.shadow.blur = 16;
+
     let popup = egui::Popup::menu(&response)
         .open(true)
         .gap(4.0)
         .frame(frame)
         .width(rect.width());
     let mut picked = None;
+
     let dismissed = EquartEditor::animated_card(popup, life, now, None, |ui, _, flash, fall| {
         ui.spacing_mut().item_spacing.y = 1.0;
         let flash = fall
             .is_none()
             .then(|| LabelFlash::new(ui.max_rect(), flash));
+
         for &choice in choices {
             let (row, response) = ui.allocate_exact_size(
                 Vec2::new(rect.width() - 12.0, OPTION_H - 1.0),
                 Sense::click(),
             );
             let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+
             paint_option(
                 ui.painter(),
                 row,
@@ -376,11 +399,14 @@ pub(crate) fn combo_popup<T: Copy + PartialEq, L: AsRef<str>>(
                 accent,
                 1.0,
                 flash,
+                &colors,
             );
+
             if fall.is_none() && response.clicked() {
                 picked = Some(choice);
             }
         }
+
         picked.is_some()
     });
     if dismissed && !response.clicked() {
@@ -497,25 +523,30 @@ pub(crate) fn switch(
     label_plate(ui, label, font.clone(), anchor, egui::Align2::LEFT_CENTER);
     p.text(anchor, egui::Align2::LEFT_CENTER, label, font, palette.text.primary);
 
+    let switch = palette.switch;
+    let track_on = if switch.follow_accent {
+        accent.gamma_multiply(0.85)
+    } else {
+        switch.colors.track_on
+    };
+
     let track = Rect::from_center_size(
         rect.right_center() - Vec2::new(SWITCH_W * 0.5 + 9.0, 0.0),
         Vec2::new(SWITCH_W, SWITCH_H),
     );
+
     if t > 0.01 {
         let glow = Rect::from_center_size(track.center(), track.size() + Vec2::splat(6.0 * t));
-        p.rect_filled(glow, SWITCH_H * 0.5, fade(accent, 0.10 * t));
+        p.rect_filled(glow, SWITCH_H * 0.5, fade(track_on, 0.12 * t));
     }
-    p.rect_filled(track, SWITCH_H * 0.5, palette.panel.border);
-    p.rect_filled(track, SWITCH_H * 0.5, fade(accent.gamma_multiply(0.85), t));
+
+    p.rect_filled(track, SWITCH_H * 0.5, switch.colors.track_off);
+    p.rect_filled(track, SWITCH_H * 0.5, fade(track_on, t));
 
     let radius = SWITCH_H * 0.5 - 2.5;
     let pad = radius + 2.5;
     let x = track.left() + pad + t * (track.width() - 2.0 * pad);
-    p.circle_filled(
-        Pos2::new(x, track.center().y),
-        radius,
-        palette.text.primary,
-    );
+    p.circle_filled(Pos2::new(x, track.center().y), radius, switch.colors.thumb);
 
     response.clicked()
 }

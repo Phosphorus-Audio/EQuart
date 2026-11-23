@@ -99,6 +99,24 @@ fn im_disperser_light() -> Theme {
         marker: cream,
         accent: fern,
     };
+    theme.dropdown = DropdownColors {
+        background: hex(0xd7ebdf),
+        hover: hex(0xcce6d6),
+        selected: hex(0xb5d9c4),
+        border: edge,
+        text: ink,
+        arrow: fern,
+        popup: cream,
+    };
+    theme.panel_dropdown = theme.dropdown;
+    theme.switch = Switch {
+        colors: SwitchColors {
+            track_off: edge,
+            track_on: fern,
+            thumb: cream,
+        },
+        follow_accent: false,
+    };
     metal(
         &mut theme.knob.colors,
         [0xf9fff9, 0xd8ede0],
@@ -137,6 +155,8 @@ fn im_disperser_light() -> Theme {
         white_top: cream,
         white_bottom: mint,
         black: hex(0x36584a),
+        tip_background: cream,
+        tip_text: ink,
     };
     theme.band = theme.band.map(|color| color.lerp_to_gamma(ink, 0.25));
     theme.band[0] = fern;
@@ -201,6 +221,24 @@ fn im_disperser_dark() -> Theme {
         marker: black,
         accent: mint,
     };
+    theme.dropdown = DropdownColors {
+        background: raised,
+        hover: hex(0x23342a),
+        selected: hex(0x294534),
+        border: edge,
+        text: mint,
+        arrow: mint,
+        popup: surface,
+    };
+    theme.panel_dropdown = theme.dropdown;
+    theme.switch = Switch {
+        colors: SwitchColors {
+            track_off: edge,
+            track_on: hex(0x3d8058),
+            thumb: cream,
+        },
+        follow_accent: false,
+    };
 
     theme.knob.follow_accent = false;
     let knob = &mut theme.knob.colors;
@@ -227,6 +265,8 @@ fn im_disperser_dark() -> Theme {
         white_top: hex(0x36483b),
         white_bottom: hex(0x233128),
         black,
+        tip_background: surface,
+        tip_text: mint,
     };
     theme.band[0] = hex(0x67c67d);
     theme.region.fill(hex(0x69bd91));
@@ -283,6 +323,20 @@ fn dark_pink() -> Theme {
         marker: hex(0x171416),
         accent: ink,
     };
+    theme.dropdown = DropdownColors {
+        background: hex(0x332630),
+        hover: hex(0x453140),
+        selected: hex(0x583a4f),
+        border: hex(0x664757),
+        text: theme.text.primary,
+        arrow: ink,
+        popup: hex(0x261e24),
+    };
+    theme.panel_dropdown = theme.dropdown;
+    theme.switch.colors.track_off = hex(0x513b48);
+    theme.switch.colors.thumb = theme.text.primary;
+    theme.piano.tip_background = hex(0x261e24);
+    theme.piano.tip_text = theme.text.primary;
     metal(
         &mut theme.knob.colors,
         [0x353035, 0x1d1b1e],
@@ -337,6 +391,15 @@ fn f0lock() -> Theme {
     theme.panel.label = hex(0x3a3b3c);
     theme.panel.muted_label = gray(88);
     theme.panel.accent = hex(0x676c71);
+    theme.panel_dropdown = DropdownColors {
+        background: gray(194),
+        hover: gray(182),
+        selected: gray(168),
+        border: gray(148),
+        text: hex(0x3a3b3c),
+        arrow: gray(88),
+        popup: gray(208),
+    };
     metal(
         &mut theme.knob.colors,
         [0xe2e2e2, 0xc9c9c9],
@@ -405,6 +468,24 @@ fn in_warm() -> Theme {
         marker: hex(0xf3eadc),
         accent: blue,
     };
+    theme.dropdown = DropdownColors {
+        background: hex(0xe0d2c0),
+        hover: hex(0xd5c4ae),
+        selected: hex(0xccb99f),
+        border: hex(0xa19381),
+        text: ink,
+        arrow: hex(0x514234),
+        popup: hex(0xf1e7d7),
+    };
+    theme.panel_dropdown = theme.dropdown;
+    theme.switch = Switch {
+        colors: SwitchColors {
+            track_off: hex(0xc5b6a3),
+            track_on: blue,
+            thumb: hex(0xfcf3e6),
+        },
+        follow_accent: false,
+    };
     metal(
         &mut theme.knob.colors,
         [0xfcf3e6, 0xd6c8b5],
@@ -427,6 +508,8 @@ fn in_warm() -> Theme {
         white_top: hex(0xfff1e0),
         white_bottom: hex(0xcabeab),
         black: hex(0x6d6156),
+        tip_background: hex(0xf8efe3),
+        tip_text: ink,
     };
     theme.scrollbar.track = hex(0xcfbeab);
     theme.scrollbar.thumb = hex(0x8c7e70);
