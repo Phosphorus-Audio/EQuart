@@ -23,9 +23,10 @@ impl EquartEditor {
             crate::engine::test_signal(&mut left, &mut right);
 
             for (l, r) in left.iter().zip(right.iter()) {
-                analyzer.push([*l, *r]);
+                analyzer.ingest([*l, *r]);
             }
 
+            analyzer.refresh();
             return;
         }
 

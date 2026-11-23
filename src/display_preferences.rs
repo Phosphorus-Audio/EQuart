@@ -1,6 +1,6 @@
 use crate::analyzer::{
-    AnalyzerOption, DEFAULT_HOLD, DEFAULT_RESOLUTION, DEFAULT_SPECTRUM_SMOOTHING,
-    DEFAULT_SPECTRUM_SPEED, DEFAULT_TILT,
+    AnalyzerOption, DEFAULT_FRAME_RATE, DEFAULT_HOLD, DEFAULT_RESOLUTION, DEFAULT_SPECTRUM_SMOOTHING,
+    DEFAULT_SPECTRUM_SPEED, DEFAULT_TILT, FRAME_RATES,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -35,6 +35,7 @@ pub(crate) struct SpectrumPreferences {
     pub(crate) smoothing: u32,
     pub(crate) tilt: u32,
     pub(crate) peak_hold: u32,
+    pub(crate) frame_rate: u32,
 }
 
 impl Default for SpectrumPreferences {
@@ -45,11 +46,16 @@ impl Default for SpectrumPreferences {
             smoothing: DEFAULT_SPECTRUM_SMOOTHING,
             tilt: DEFAULT_TILT,
             peak_hold: DEFAULT_HOLD,
+            frame_rate: DEFAULT_FRAME_RATE,
         }
     }
 }
 
 impl SpectrumPreferences {
+    pub(crate) fn fps(self) -> u32 {
+        FRAME_RATES[self.index(AnalyzerOption::FrameRate) as usize]
+    }
+
     pub(crate) fn index(self, option: AnalyzerOption) -> u32 {
         option.index(match option {
             AnalyzerOption::Resolution => self.resolution,
@@ -57,6 +63,7 @@ impl SpectrumPreferences {
             AnalyzerOption::Smoothing => self.smoothing,
             AnalyzerOption::Tilt => self.tilt,
             AnalyzerOption::Hold => self.peak_hold,
+            AnalyzerOption::FrameRate => self.frame_rate,
         })
     }
 }
@@ -468,6 +475,7 @@ mod tests {
                 smoothing: 0,
                 tilt: 0,
                 peak_hold: 0,
+                frame_rate: 0,
             },
             layout: LayoutPreferences {
                 meter_visible: false,
@@ -490,6 +498,7 @@ mod tests {
             serde_json::from_str(r#"{"layout":{"meter_visible":false}}"#).unwrap();
         assert_eq!(partial.theme, theme::Theme::default());
         assert!(!partial.layout.meter_visible);
+        assert_eq!(partial.spectrum.frame_rate, DEFAULT_FRAME_RATE);
         assert!(!partial.layout.auto_expand_eq_axis);
 
         let original = first.read().theme;
@@ -573,6 +582,7 @@ mod tests {
             "analyzer_smoothing",
             "analyzer_tilt",
             "analyzer_hold",
+            "analyzer_frame_rate",
             "meter_visible",
             "meter_fade",
             "piano_keys_visible",

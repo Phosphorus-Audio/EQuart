@@ -18,7 +18,7 @@ const MENU_KNOB_LABEL_GAP: f32 = knob::LABEL_GAP + 12.0;
 /// extra top clip room for raised knob labels
 const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 420.0;
-const MENU_CARD_H: f32 = 372.0;
+const MENU_CARD_H: f32 = 422.0;
 const LAYOUT_CARD_W: f32 = 220.0;
 const LAYOUT_CARD_H: f32 = 292.0;
 const MENU_CARD_MARGIN: f32 = 12.0;

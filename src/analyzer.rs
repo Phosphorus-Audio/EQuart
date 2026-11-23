@@ -79,7 +79,9 @@ pub const HOLD_MODES: [&str; 3] = ["Off", "Line", "Smooth"];
 /// like. Saved sessions keep whatever they had stored.
 pub const DEFAULT_HOLD: u32 = 2;
 
-const FPS: f32 = 60.0;
+pub(crate) const FRAME_RATES: [u32; 4] = [15, 30, 60, 120];
+pub(crate) const FRAME_RATE_LABELS: [&str; 4] = ["15 FPS", "30 FPS", "60 FPS", "120 FPS"];
+pub(crate) const DEFAULT_FRAME_RATE: u32 = 2;
 const INITIAL_DB: f32 = -240.0;
 
 /// How fast the peak-hold line falls at Normal, in decibels per second. Slow
@@ -110,6 +112,7 @@ pub(crate) enum AnalyzerOption {
     Smoothing,
     Tilt,
     Hold,
+    FrameRate,
 }
 
 impl AnalyzerOption {
@@ -120,6 +123,7 @@ impl AnalyzerOption {
             Self::Smoothing => (SPECTRUM_SMOOTHINGS.len(), DEFAULT_SPECTRUM_SMOOTHING),
             Self::Tilt => (TILTS.len(), DEFAULT_TILT),
             Self::Hold => (HOLD_MODES.len(), DEFAULT_HOLD),
+            Self::FrameRate => (FRAME_RATES.len(), DEFAULT_FRAME_RATE),
         };
         if (stored as usize) < count {
             stored
@@ -146,6 +150,7 @@ pub(crate) struct AnalyzerSettings {
     tilt: u32,
     frozen: bool,
     range: u32,
+    fps: u32,
 }
 
 impl AnalyzerSettings {
@@ -161,6 +166,7 @@ impl AnalyzerSettings {
             tilt: preferences.index(AnalyzerOption::Tilt),
             frozen: params.analyzer_frozen.load(Relaxed),
             range: spectrum_range(params.spectrum_range_db.load(Relaxed)),
+            fps: preferences.fps(),
         }
     }
 }
@@ -241,6 +247,8 @@ pub struct Analyzer {
     size: usize,
     hop: usize,
     hop_size: usize,
+    hop_remainder: usize,
+    fps: u32,
     rings: [Vec<f32>; 2],
     position: usize,
     dc_input: [f32; 2],
@@ -279,6 +287,8 @@ impl Analyzer {
             size: 0,
             hop: 0,
             hop_size: 0,
+            hop_remainder: 0,
+            fps: FRAME_RATES[DEFAULT_FRAME_RATE as usize],
             rings: std::array::from_fn(|_| vec![0.0; max_size]),
             position: 0,
             dc_input: [0.0; 2],
@@ -318,6 +328,11 @@ impl Analyzer {
         self.set_tilt(settings.tilt);
         self.set_frozen(settings.frozen);
         self.set_range(settings.range);
+
+        if self.fps != settings.fps {
+            self.fps = settings.fps;
+            self.configure_hop();
+        }
     }
 
     pub fn set_resolution(&mut self, resolution: u32) {
@@ -377,6 +392,7 @@ impl Analyzer {
         self.rings.iter_mut().for_each(|ring| ring.fill(0.0));
         self.position = 0;
         self.hop = 0;
+        self.hop_remainder = 0;
         self.dc_input = [0.0; 2];
         self.dc_output = [0.0; 2];
         self.display.fill(INITIAL_DB);
@@ -385,11 +401,16 @@ impl Analyzer {
 
     fn configure_transform(&mut self) {
         self.size = resolution_samples(self.rate, self.resolution);
-        self.hop_size = (self.rate / FPS).round() as usize;
+        self.configure_hop();
         self.display.fill(INITIAL_DB);
         self.hold.fill(INITIAL_DB);
         self.configure_tilt();
         self.configure_smoothing();
+    }
+
+    fn configure_hop(&mut self) {
+        self.hop_size = (self.rate / self.fps as f32).round() as usize;
+        self.hop_remainder = 0;
     }
 
     /// rebuild tilt table without resizing FFT
@@ -440,13 +461,17 @@ impl Analyzer {
     }
 
     pub(crate) fn refresh(&mut self) {
-        if self.hop >= self.hop_size {
+        let due = self.hop + self.hop_remainder;
+
+        if due >= self.hop_size {
+            // keep the cadence across uneven audio blocks and skip missed display frames
+            self.hop_remainder = due % self.hop_size;
             let elapsed = std::mem::take(&mut self.hop) as f32 / self.rate;
             self.analyze(elapsed);
         }
     }
 
-    #[cfg(any(test, debug_assertions))]
+    #[cfg(test)]
     pub fn push(&mut self, input: [f32; 2]) {
         self.ingest(input);
         self.refresh();

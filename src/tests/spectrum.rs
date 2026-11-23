@@ -1,4 +1,54 @@
 #[test]
+fn spectrum_frame_rate() {
+    use crate::analyzer::{Analyzer, AnalyzerSettings, FRAME_RATES};
+    use crate::display_preferences::SpectrumPreferences;
+
+    let params = crate::params::EquartParams::default();
+    let mut analyzer = Analyzer::new(48_000.0);
+
+    for rate in [48_000.0, 96_000.0] {
+        analyzer.retune(rate);
+
+        for (index, fps) in FRAME_RATES.into_iter().enumerate() {
+            analyzer.reset();
+            analyzer.apply_settings(AnalyzerSettings::read(
+                &params,
+                SpectrumPreferences {
+                    frame_rate: index as u32,
+                    ..Default::default()
+                },
+            ));
+
+            let hop = rate as usize / fps as usize;
+            let before = analyzer.spectrum().1[32];
+
+            for i in 0..hop - 1 {
+                let sample = (std::f32::consts::TAU * 375.0 * i as f32 / rate).sin();
+                analyzer.ingest([sample; 2]);
+            }
+
+            analyzer.refresh();
+            assert_eq!(analyzer.spectrum().1[32], before);
+
+            for _ in 0..8 {
+                analyzer.ingest([0.0; 2]);
+            }
+
+            analyzer.refresh();
+            let first = analyzer.spectrum().1[32];
+            assert!(first > before);
+
+            for _ in 0..hop - 7 {
+                analyzer.ingest([0.0; 2]);
+            }
+
+            analyzer.refresh();
+            assert_ne!(analyzer.spectrum().1[32], first);
+        }
+    }
+}
+
+#[test]
 fn analyser_follows_host_rate() {
     let rate = 96_000.0_f32;
     // Activated at 48 kHz, but the host processes at 96 kHz.

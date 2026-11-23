@@ -253,7 +253,6 @@ impl NiceEguiApp for EquartEditor {
         self.telemetry.set_delta_region(
             self.held_delta.filter(|&i| audition.is_none() && self.selected_region == Some(i)),
         );
-        // full framerate when animating, 60fps when idle
         let animated = self.settings.is_shown()
             || self.layout.is_shown()
             || self.scale.is_shown()
@@ -273,7 +272,14 @@ impl NiceEguiApp for EquartEditor {
         if animated {
             ui.ctx().request_repaint();
         } else {
-            ui.ctx().request_repaint_after(IDLE_FRAME_INTERVAL);
+            let mut interval = IDLE_FRAME_INTERVAL;
+
+            if self.params.analyzer.load(Ordering::Relaxed) && !self.params.global.bypass.value() {
+                let fps = self.display_preferences.read().spectrum.fps();
+                interval = interval.min(Duration::from_secs_f64(1.0 / f64::from(fps)));
+            }
+
+            ui.ctx().request_repaint_after(interval);
         }
     }
 }

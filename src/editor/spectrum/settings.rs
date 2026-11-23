@@ -244,6 +244,22 @@ impl EquartEditor {
             hold_index,
             accent,
         );
+
+        let frame_rate = self
+            .display_preferences
+            .read()
+            .spectrum
+            .index(AnalyzerOption::FrameRate) as usize;
+        let labels = &crate::analyzer::FRAME_RATE_LABELS;
+        dropdowns.combo(
+            ui,
+            menu::COMBO_FRAME_RATE,
+            "Frame rate",
+            labels[frame_rate],
+            labels,
+            frame_rate,
+            accent,
+        );
     }
 
     pub(in crate::editor) fn phase_rows(
@@ -292,6 +308,7 @@ impl EquartEditor {
             menu::COMBO_SMOOTHING => prefs.spectrum.smoothing = index as u32,
             menu::COMBO_TILT => prefs.spectrum.tilt = index as u32,
             menu::COMBO_HOLD => prefs.spectrum.peak_hold = index as u32,
+            menu::COMBO_FRAME_RATE => prefs.spectrum.frame_rate = index as u32,
             menu::COMBO_PHASE => prefs.layout.phase_unwrapped = index == 1,
             _ => {}
         });
