@@ -5,6 +5,7 @@ use crate::pitch::{DetectionMode, DetectionRange, PitchDetectionParams, TargetMo
 
 mod dynamics;
 mod harmonic;
+mod modulation;
 
 const HEADER_WIDTH: f32 = 36.0;
 const HEADER_BUTTON_OFFSET: f32 = 43.0;
@@ -19,12 +20,14 @@ const RESONANCE_WIDTH: f32 = HEADER_WIDTH + 2.0 * 10.0 + 145.0 + 140.0 + 140.0 +
 pub(super) enum Modifier {
     Dynamic,
     Pitch,
+    Mapping,
+    Lfo,
     Harmonic,
     Resonance,
 }
 
 impl Modifier {
-    pub(super) const BAND: [Self; 2] = [Self::Dynamic, Self::Pitch];
+    pub(super) const BAND: [Self; 4] = [Self::Dynamic, Self::Pitch, Self::Lfo, Self::Mapping];
     pub(super) const REGION: [Self; 2] = [Self::Harmonic, Self::Resonance];
 
     pub(super) fn attached_to_region(self, region: &crate::region::RegionParams) -> bool {
@@ -39,6 +42,8 @@ impl Modifier {
         match self {
             Self::Dynamic => "Dynamic",
             Self::Pitch => "f0lock",
+            Self::Mapping => "Mapping",
+            Self::Lfo => "LFO",
             Self::Harmonic => "Harmonic",
             Self::Resonance => "Resonance",
         }
@@ -48,6 +53,8 @@ impl Modifier {
         match self {
             Self::Dynamic => band.dynamics.enabled.value(),
             Self::Pitch => band.pitch.enabled.value(),
+            Self::Mapping => band.mapping.enabled.value(),
+            Self::Lfo => band.lfo.enabled.value(),
             Self::Harmonic | Self::Resonance => false,
         }
     }
@@ -56,6 +63,7 @@ impl Modifier {
         match self {
             Self::Dynamic => DYNAMIC_WIDTH,
             Self::Pitch => PITCH_WIDTH,
+            Self::Mapping | Self::Lfo => modulation::WIDTH,
             Self::Harmonic => harmonic::width(crate::region::FundamentalSource::Tracked),
             Self::Resonance => RESONANCE_WIDTH,
         }
@@ -88,6 +96,8 @@ impl Modifier {
         match self {
             Self::Dynamic => editor.dynamic_modifier(ui, rect, band),
             Self::Pitch => editor.pitch_modifier(ui, rect, band),
+            Self::Mapping => editor.mapping_modifier(ui, rect, band),
+            Self::Lfo => editor.lfo_modifier(ui, rect, band),
             Self::Harmonic => editor.harmonic_modifier(ui, rect, band),
             Self::Resonance => editor.resonance_modifier(ui, rect, band),
         }
@@ -236,6 +246,15 @@ impl EquartEditor {
                 (ModifierTarget::Band(index), Modifier::Pitch) => {
                     let pitch = &self.params.band(index).pitch;
                     (&pitch.enabled, &pitch.bypassed)
+                }
+                (ModifierTarget::Band(index), Modifier::Mapping) => {
+                    let band = self.params.band(index);
+                    self.lock_mapping_references(&setter, band);
+                    (&band.mapping.enabled, &band.mapping.bypass)
+                }
+                (ModifierTarget::Band(index), Modifier::Lfo) => {
+                    let lfo = &self.params.band(index).lfo;
+                    (&lfo.enabled, &lfo.bypass)
                 }
                 (ModifierTarget::Region(index), Modifier::Resonance) => {
                     let resonance = &self.params.regions[index].resonance;
@@ -495,9 +514,22 @@ impl EquartEditor {
         choices: &[T],
         label: impl Fn(T) -> &'static str,
     ) {
-        let current = param.value();
         let combo = egui::ComboBox::from_id_salt(param.name())
-            .width(ui.available_width() - 16.0)
+            .width(ui.available_width() - 16.0);
+        self.modifier_choice(ui, combo, setter, param, choices, label);
+    }
+
+    fn modifier_choice<T: nice_plug::prelude::Enum + Copy + PartialEq + 'static>(
+        &self,
+        ui: &mut egui::Ui,
+        combo: egui::ComboBox,
+        setter: &ParamSetter<'_>,
+        param: &EnumParam<T>,
+        choices: &[T],
+        label: impl Fn(T) -> &'static str,
+    ) {
+        let current = param.value();
+        let combo = combo
             .selected_text(label(current))
             .show_ui(ui, |ui| {
                 for &choice in choices {

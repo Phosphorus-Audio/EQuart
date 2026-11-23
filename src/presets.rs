@@ -834,6 +834,9 @@ mod tests {
             "region_gain_3",
             "res_depth_3",
             "harmonic_width_3",
+            "mapping_reference_q_3",
+            "lfo_wave_3",
+            "lfo_depth_hz_3",
         ] {
             assert!(preset.state.params.contains_key(id), "{id} is missing");
         }

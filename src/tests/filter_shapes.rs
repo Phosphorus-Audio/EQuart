@@ -111,7 +111,7 @@ fn cut_flat_passband() {
                 slope,
                 channel: ChannelMode::Stereo,
                 dynamics: DynamicControl::default(),
-                pitch: Default::default(),
+                ..BandControl::default()
             };
 
             let at_cutoff = ours_db(control, rate, cutoff);
@@ -175,7 +175,7 @@ fn cut_cutoff_gain_follows_q() {
                 slope,
                 channel: ChannelMode::Stereo,
                 dynamics: DynamicControl::default(),
-                pitch: Default::default(),
+                ..BandControl::default()
             };
 
             let at_cutoff = ours_db(control, rate, cutoff);

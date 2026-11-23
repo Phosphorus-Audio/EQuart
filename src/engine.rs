@@ -42,6 +42,7 @@ pub struct Engine {
     detectors_live: bool,
     detector_frames: usize,
     pitch: PitchRack,
+    modulation: crate::modulation::Rack,
     pub(crate) resonance: crate::region::resonance::Detector,
     resonance_live: bool,
     pub(crate) delta_request: Option<usize>,
@@ -84,6 +85,7 @@ impl Engine {
             detectors_live: false,
             detector_frames: 0,
             pitch: PitchRack::new(rate),
+            modulation: Default::default(),
             resonance: crate::region::resonance::Detector::new(),
             resonance_live: false,
             delta_request: None,
@@ -120,6 +122,7 @@ impl Engine {
             dynamic.reset();
         }
         self.pitch.reset();
+        self.modulation = Default::default();
         self.resonance.reset();
         self.resonance_live = false;
         self.delta_request = None;
@@ -233,6 +236,14 @@ impl Engine {
         self.pitch.harmonic_hz(index)
     }
 
+    pub(crate) fn set_transport(&mut self, transport: &nice_plug::prelude::Transport) {
+        self.modulation.clock.set(transport);
+    }
+
+    pub(crate) fn modulation(&self, index: usize) -> Option<crate::modulation::Live> {
+        self.modulation.live(index)
+    }
+
     /// live dB offset per band for UI
     pub fn dynamic_gains(&self) -> &[f32; BAND_COUNT] {
         &self.dynamic_gains
@@ -250,7 +261,9 @@ impl Engine {
             };
             (
                 self.pitch.detected_band(i),
-                self.pitch.band_target(i).map(|_| frequency),
+                self.pitch.band_target(i).map(|tracked| {
+                    if self.modulation.live(i).is_some() { tracked } else { frequency }
+                }),
             )
         })
     }
@@ -271,11 +284,17 @@ impl Engine {
         for (i, (dynamic, band)) in self.dynamics.iter_mut().zip(&controls.bands).enumerate() {
             let mut control = band.dynamics;
             control.enabled &= band.enabled;
+            let live = self.modulation.live(i);
+            let frequency = live.map_or_else(
+                || self.pitch.band_target(i).unwrap_or(band.frequency),
+                |live| live.frequency,
+            );
+            let q = live.map_or(band.q, |live| live.q);
             let active = dynamic.prepare(
                 control,
                 rate,
-                self.pitch.band_target(i).unwrap_or(band.frequency),
-                band.q,
+                frequency,
+                q,
                 band.kind,
                 sidechain.is_some(),
             );
@@ -447,9 +466,12 @@ impl Engine {
                 .and_then(|target| {
                     let focus = match target {
                         audition::Target::Band(index) => {
-                            let band = *controls.bands.get(index)?;
-                            let frequency = self.pitch.band_target(index).unwrap_or(band.frequency);
-                            audition::Focus::band(band, frequency)
+                            let mut band = *controls.bands.get(index)?;
+                            band.frequency = self.pitch.band_target(index).unwrap_or(band.frequency);
+                            if let Some(live) = self.modulation.live(index) {
+                                live.apply(&mut band);
+                            }
+                            audition::Focus::band(band, band.frequency)
                         }
                         audition::Target::Region(index) => {
                             audition::Focus::region(controls.regions.get(index)?.bounds())
@@ -474,6 +496,7 @@ impl Engine {
             self.block_output = self.block_output.max(output_peak.double() as f32);
 
             self.frame += end - offset;
+            self.modulation.clock.advance(end - offset);
             if self.frame >= COEFF_FRAMES {
                 self.frame = 0;
                 self.input_peak = (self.input_peak * self.decay).max(self.block_input);
@@ -560,6 +583,11 @@ impl Engine {
         {
             let mut control = band;
             control.frequency = self.pitch.band_target(index).unwrap_or(control.frequency);
+            if let Some(live) = self.modulation.live(index) {
+                live.apply(&mut control);
+            }
+            control.lfo = Default::default();
+            control.mapping = Default::default();
 
             if control.kind.has_gain() {
                 control.gain += self.dynamic_gains[index];
@@ -619,6 +647,7 @@ impl Engine {
             if let Some(hz) = self.pitch.refresh_band(i, &control, self.rate) {
                 control.frequency = hz;
             }
+            self.modulation.update(i, &mut control, self.rate, self.linear_phase.is_some());
             if control.kind.has_gain() {
                 control.gain += self.dynamic_gains[i];
             }

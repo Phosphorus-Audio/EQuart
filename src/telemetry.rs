@@ -2,6 +2,7 @@ use crate::band::BAND_COUNT;
 use crate::engine::Engine;
 
 mod fir;
+mod modulation;
 pub(crate) use fir::FirResponse;
 use crate::region::{
     REGION_COUNT,
@@ -28,6 +29,7 @@ pub(crate) struct Telemetry {
     dynamic_levels: [AtomicU32; BAND_COUNT],
     detected_pitch: [AtomicU32; BAND_COUNT],
     tracked_frequency: [AtomicU32; BAND_COUNT],
+    modulation: [modulation::Published; BAND_COUNT],
     harmonic_hz: [AtomicU32; REGION_COUNT],
     /// Momentary editor request. Zero means normal output.
     delta_region: AtomicU32,
@@ -47,6 +49,7 @@ impl Default for Telemetry {
             dynamic_levels: std::array::from_fn(|_| AtomicU32::new(f32::NEG_INFINITY.to_bits())),
             detected_pitch: std::array::from_fn(|_| AtomicU32::new(0)),
             tracked_frequency: std::array::from_fn(|_| AtomicU32::new(0)),
+            modulation: Default::default(),
             harmonic_hz: Default::default(),
             delta_region: AtomicU32::new(0),
             audition: AtomicU32::new(0),
@@ -100,6 +103,9 @@ impl Telemetry {
             self.detected_pitch[i].store(detected.unwrap_or(0.0).to_bits(), Ordering::Relaxed);
             self.tracked_frequency[i].store(tracked.unwrap_or(0.0).to_bits(), Ordering::Relaxed);
         }
+        for (index, band) in self.modulation.iter().enumerate() {
+            band.write(engine.modulation(index));
+        }
         for (row, cuts) in self.resonance.iter().zip(engine.resonance.reductions()) {
             for (atomic, cut) in row.iter().zip(cuts) {
                 let hz = cut.hz.round() as u16;
@@ -131,6 +137,10 @@ impl Telemetry {
 
     pub(crate) fn sample_rate(&self) -> f32 {
         f32::from_bits(self.sample_rate.load(Ordering::Relaxed))
+    }
+
+    pub(crate) fn modulation(&self, index: usize) -> Option<crate::modulation::Live> {
+        self.modulation[index].read()
     }
 
     pub(crate) fn dynamics(&self) -> [f32; BAND_COUNT] {

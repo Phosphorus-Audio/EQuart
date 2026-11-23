@@ -52,7 +52,7 @@ fn single_section_matches_rbj() {
                             },
                             channel: ChannelMode::Stereo,
                             dynamics: DynamicControl::default(),
-                            pitch: Default::default(),
+                            ..BandControl::default()
                         };
 
                         for hz in probes(rate) {

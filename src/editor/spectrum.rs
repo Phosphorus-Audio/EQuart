@@ -185,6 +185,14 @@ impl EquartEditor {
             })
             .collect();
 
+        for (index, control) in display_controls.iter_mut().enumerate() {
+            if (control.mapping.enabled || control.lfo.enabled)
+                && let Some(live) = self.telemetry.modulation(index)
+            {
+                live.apply(control);
+            }
+        }
+
         let response = ui.interact(
             plot.rect,
             ui.make_persistent_id("eq-plot"),
@@ -563,6 +571,7 @@ impl EquartEditor {
             &mut self.response_db,
             ResponseInput {
                 controls: &display_controls,
+                base: self.selected.map(|index| controls[index]),
                 offsets: &self.telemetry.dynamics(),
                 regions: &regions,
                 telemetry: &self.telemetry,

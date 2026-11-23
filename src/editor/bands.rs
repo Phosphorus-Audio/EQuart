@@ -74,6 +74,18 @@ impl EquartEditor {
         self.set(setter, &band.dynamics.below_enabled, false);
         self.set(setter, &band.pitch.enabled, false);
         self.set(setter, &band.pitch.bypassed, false);
+        for switch in [&band.mapping.enabled, &band.mapping.bypass, &band.lfo.enabled, &band.lfo.bypass] {
+            self.set(setter, switch, false);
+        }
+        self.set(setter, &band.mapping.source, band.mapping.source.default_plain_value());
+        self.set(setter, &band.mapping.target, band.mapping.target.default_plain_value());
+        self.set(setter, &band.lfo.target, band.lfo.target.default_plain_value());
+        self.set(setter, &band.lfo.wave, band.lfo.wave.default_plain_value());
+        self.set(setter, &band.lfo.division, band.lfo.division.default_plain_value());
+        self.set(setter, &band.lfo.timing, band.lfo.timing.default_plain_value());
+        for switch in [&band.lfo.sync, &band.lfo.unipolar, &band.lfo.transport] {
+            self.set(setter, switch, switch.default_plain_value());
+        }
         self.write_pitch_detection(setter, &band.pitch.detection, PitchControl::default());
         for detector in [&band.dynamics.detect, &band.dynamics.relative] {
             self.set(setter, &detector.mode, detector.mode.default_plain_value());
@@ -89,6 +101,15 @@ impl EquartEditor {
             &band.gain,
             &band.q,
             &band.pitch.multiplier,
+            &band.mapping.strength,
+            &band.mapping.reference_hz,
+            &band.mapping.reference_gain,
+            &band.mapping.reference_q,
+            &band.lfo.rate,
+            &band.lfo.depth_hz,
+            &band.lfo.depth_gain,
+            &band.lfo.depth_q,
+            &band.lfo.phase,
             &band.dynamics.threshold,
             &band.dynamics.range,
             &band.dynamics.attack,

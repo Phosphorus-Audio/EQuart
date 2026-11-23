@@ -23,7 +23,7 @@ fn band(frequency: f32, gain: f32, q: f32, kind: FilterKind) -> BandControl {
         },
         channel: ChannelMode::Stereo,
         dynamics: DynamicControl::default(),
-        pitch: Default::default(),
+        ..BandControl::default()
     }
 }
 
@@ -82,6 +82,7 @@ mod bell;
 mod dynamics;
 mod filter_shapes;
 mod host;
+mod modulation;
 mod oversampling;
 mod processing;
 mod regions;

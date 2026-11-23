@@ -93,6 +93,10 @@ fn modifier_picker_add() {
                         if label == "THRESHOLD" {
                             assert!(clipped.clip_rect.contains_rect(bounds));
                         }
+                        if matches!(label, "Lock reference" | "Sync" | "Phase & timing") {
+                            assert_eq!(text.galley.rows.len(), 1, "{label} wrapped");
+                            assert!(clipped.clip_rect.contains_rect(bounds), "{label} was clipped");
+                        }
                         Some(bounds.center())
                     }
                     _ => None,
@@ -103,10 +107,12 @@ fn modifier_picker_add() {
         let row_label = match modifier {
             Modifier::Dynamic => "Dynamic",
             Modifier::Pitch => "f0lock",
+            Modifier::Mapping => "Mapping",
+            Modifier::Lfo => "LFO",
             Modifier::Harmonic | Modifier::Resonance => unreachable!("this test adds Band modifiers"),
         };
         let row = find_text(&mut editor, 1.0, row_label);
-        assert!(row.y < opener.y && opener.y - row.y < 170.0);
+        assert!(row.y < opener.y && opener.y - row.y < 220.0);
         assert!(row.x < opener.x && opener.x - row.x < 210.0);
         click(&ctx, &mut editor, 1.1, row);
         if double_click {
@@ -131,6 +137,18 @@ fn modifier_picker_add() {
         }
         assert!(editor.modifier_picker.is_none());
         assert!(editor.reveal_modifier.is_none());
+        if modifier == Modifier::Mapping {
+            let band = params.band(0);
+            assert_eq!(band.mapping.reference_hz.value(), band.frequency.value());
+            find_text(&mut editor, 1.95, "Strength");
+            find_text(&mut editor, 1.96, "Lock reference");
+            continue;
+        }
+        if modifier == Modifier::Lfo {
+            find_text(&mut editor, 1.95, "Phase & timing");
+            find_text(&mut editor, 1.96, "Sync");
+            continue;
+        }
         if modifier == Modifier::Pitch {
             find_text(&mut editor, 1.95, "Multiplier");
             let algorithm = find_text(&mut editor, 2.0, "F0LOCK Ψ");

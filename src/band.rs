@@ -68,6 +68,8 @@ pub struct BandControl {
     pub channel: ChannelMode,
     pub dynamics: DynamicControl,
     pub pitch: crate::pitch::PitchControl,
+    pub(crate) mapping: crate::modulation::Mapping,
+    pub(crate) lfo: crate::modulation::Lfo,
 }
 
 impl Default for BandControl {
@@ -82,6 +84,8 @@ impl Default for BandControl {
             channel: ChannelMode::Stereo,
             dynamics: DynamicControl::default(),
             pitch: crate::pitch::PitchControl::default(),
+            mapping: Default::default(),
+            lfo: Default::default(),
         }
     }
 }

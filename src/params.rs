@@ -217,6 +217,12 @@ pub struct BandParams {
 
     #[nested(group = "F0 Follow")]
     pub pitch: Box<PitchParams>,
+
+    #[nested(group = "Mapping")]
+    pub(crate) mapping: Box<crate::modulation::MappingParams>,
+
+    #[nested(group = "LFO")]
+    pub(crate) lfo: Box<crate::modulation::LfoParams>,
 }
 
 /// Fallback starting shapes for the first eight slots, low to high. Every
@@ -310,13 +316,16 @@ impl BandParams {
                 .non_automatable(),
             dynamics: DynamicParams::new(&band),
             pitch: Box::new(PitchParams::new(&band)),
+            mapping: Box::new(crate::modulation::MappingParams::new(&band)),
+            lfo: Box::new(crate::modulation::LfoParams::new(&band)),
         }
     }
 
     pub fn control(&self) -> BandControl {
         let kind = self.kind.value();
+        let enabled = self.enabled.value();
         BandControl {
-            enabled: self.enabled.value(),
+            enabled,
             frequency: self.frequency.value(),
             gain: if kind.has_gain() {
                 self.gain.value()
@@ -329,6 +338,8 @@ impl BandParams {
             channel: self.channel.value(),
             dynamics: self.dynamics.control(),
             pitch: self.pitch.control(),
+            mapping: if enabled && self.mapping.enabled.value() { self.mapping.control() } else { Default::default() },
+            lfo: if enabled && self.lfo.enabled.value() { self.lfo.control() } else { Default::default() },
         }
     }
 }
@@ -399,6 +410,8 @@ mod tests {
             ("Filter", 3 * BAND_COUNT, 4 * BAND_COUNT),
             ("Dynamic", 16 * BAND_COUNT, 5 * BAND_COUNT),
             ("F0 Follow", 7 * BAND_COUNT, 6 * BAND_COUNT),
+            ("Mapping", 5 * BAND_COUNT, 3 * BAND_COUNT),
+            ("LFO", 6 * BAND_COUNT, 8 * BAND_COUNT),
             (
                 "Region",
                 5 * crate::region::REGION_COUNT,
@@ -418,8 +431,8 @@ mod tests {
             assert_eq!(counts[&(group.to_owned(), true)], automated, "{group}");
             assert_eq!(counts[&(group.to_owned(), false)], manual, "{group}");
         }
-        assert_eq!(counts.len(), 14);
-        assert_eq!(ids.len(), 1530);
+        assert_eq!(counts.len(), 18);
+        assert_eq!(ids.len(), 1530 + 22 * BAND_COUNT);
 
         let band = &params.bands[0];
         let pitch = &band.pitch.detection;

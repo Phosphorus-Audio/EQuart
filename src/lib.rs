@@ -4,6 +4,7 @@ mod band;
 mod display_preferences;
 mod dsp;
 mod dynamics;
+mod modulation;
 mod editor;
 mod engine;
 mod filter;
@@ -173,6 +174,8 @@ impl Plugin for Equart {
                 .entry(format!("pitch_multiplier_{index}"))
                 .or_insert(ParamValue::F32(multiplier));
         }
+
+        modulation::migrate_state(state);
     }
 
     fn editor(&mut self, _: AsyncExecutor<Self>) -> Option<Self::Editor> {
@@ -246,7 +249,9 @@ impl Equart {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let _denormal_guard = realtime::DenormalGuard::new();
-        self.engine.retune(context.transport().sample_rate);
+        let transport = context.transport();
+        self.engine.retune(transport.sample_rate);
+        self.engine.set_transport(transport);
         let open = self.editor_state.is_open();
         self.engine.delta_request = if open {
             self.telemetry.delta_region()

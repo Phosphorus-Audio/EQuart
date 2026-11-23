@@ -58,7 +58,7 @@ fn bench_engine_throughput() {
         slope: CutSlope::default(),
         channel: ChannelMode::Stereo,
         dynamics: DynamicControl::default(),
-        pitch: Default::default(),
+        ..BandControl::default()
     };
 
     let cut = |i: usize| BandControl {
@@ -70,7 +70,7 @@ fn bench_engine_throughput() {
         slope: CutSlope::Db96,
         channel: ChannelMode::Stereo,
         dynamics: DynamicControl::default(),
-        pitch: Default::default(),
+        ..BandControl::default()
     };
 
     let idle = |_: usize| BandControl {

@@ -65,6 +65,7 @@ fn response_db(response: Complex32) -> f32 {
 
 pub(super) struct ResponseInput<'a> {
     pub(super) controls: &'a [BandControl; BAND_COUNT],
+    pub(super) base: Option<BandControl>,
     pub(super) offsets: &'a [f32; BAND_COUNT],
     pub(super) regions: &'a [RegionControl],
     pub(super) telemetry: &'a crate::Telemetry,
@@ -110,6 +111,7 @@ pub(super) fn draw_response(
     let palette = theme::current(p.ctx());
     let ResponseInput {
         controls,
+        base,
         offsets,
         regions,
         telemetry,
@@ -277,6 +279,56 @@ pub(super) fn draw_response(
     let painter = p.with_clip_rect(outer);
     let baseline = plot.y(0.0);
 
+    if let (Some(index), Some(base)) = (selected, base)
+        && base.enabled && (base.mapping.enabled || base.lfo.enabled)
+    {
+        let ink = palette.band[index];
+        let draw_curve = |band: BandControl, opacity: f32| {
+            let (sections, count) = band.sections(rate);
+            let points: Vec<_> = xs.iter().map(|&x| {
+                let hz = plot.hz_extended(x);
+                let db = response_db(band_response(&sections, count, rate, hz));
+                Pos2::new(x, plot.y_free(db))
+            }).collect();
+            painter.extend(egui::Shape::dashed_line(
+                &points, Stroke::new(1.0, ink.gamma_multiply(opacity)), 4.0, 3.0,
+            ));
+        };
+        draw_curve(base, 0.55);
+
+        let lfo = base.lfo;
+        if linear_center.is_none() && lfo.enabled && !lfo.bypass && lfo.depth > 0.0
+            && lfo.target.supported(base)
+        {
+            use crate::modulation::Target;
+            let center = telemetry.modulation(index).map_or_else(|| lfo.target.value(base), |live| live.lfo_base);
+            let endpoints = [if lfo.unipolar { 0.0 } else { -lfo.depth }, lfo.depth]
+                .map(|depth| lfo.target.offset(center, depth, rate));
+
+            match lfo.target {
+                Target::Frequency => {
+                    painter.hline(
+                        plot.x(endpoints[0])..=plot.x(endpoints[1]),
+                        plot.y(controls[index].gain) - 12.0,
+                        Stroke::new(2.0, ink.gamma_multiply(0.45)),
+                    );
+                }
+                Target::Gain | Target::Q => {
+                    for endpoint in endpoints {
+                        let mut band = controls[index];
+                        if lfo.target == Target::Gain {
+                            band.gain = endpoint;
+                        } else {
+                            band.q = endpoint;
+                        }
+
+                        draw_curve(band, 0.24);
+                    }
+                }
+            }
+        }
+    }
+
     // skip flat bands so we don't draw useless lines on 0 dB
     const FLAT_DB: f32 = 0.5;
 
@@ -312,6 +364,12 @@ pub(super) fn draw_response(
     }
 
     for band in 0..BAND_COUNT {
+        if linear_center.is_some() && selected == Some(band)
+            && base.is_some_and(|base| base.mapping.enabled || base.lfo.enabled)
+        {
+            continue;
+        }
+
         if !controls[band].enabled || db[band].iter().all(|value| value.abs() < FLAT_DB) {
             continue;
         }
