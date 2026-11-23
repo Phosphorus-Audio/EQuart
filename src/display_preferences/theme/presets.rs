@@ -415,13 +415,19 @@ fn in_warm() -> Theme {
     theme.knob.colors.value = theme.text.value;
     theme.knob.colors.ticks = hex(0x6d6154);
     theme.knob.colors.gain_arc = blue;
-    theme.meter.well = hex(0x201d1a);
-    theme.meter.track = hex(0x100f0e);
-    theme.meter.edge = hex(0x8a7b6b);
-    theme.meter.low = light_blue;
-    theme.meter.medium = hex(0x91d5f1);
-    theme.meter.high = hex(0xb1e6fa);
+    theme.meter.well = hex(0xeee0d1);
+    theme.meter.track = hex(0xe2dbd4);
+    theme.meter.edge = hex(0x8a776b);
+    theme.meter.low = hex(0x4d91b1);
+    theme.meter.medium = hex(0x71b2c6);
+    theme.meter.high = hex(0x89dadb);
     theme.meter.compact_level = light_blue;
+    theme.piano = Piano {
+        well: hex(0xd7cabb),
+        white_top: hex(0xfff1e0),
+        white_bottom: hex(0xcabeab),
+        black: hex(0x6d6156),
+    };
     theme.scrollbar.track = hex(0xcfbeab);
     theme.scrollbar.thumb = hex(0x8c7e70);
     theme.scrollbar.hover = hex(0x776a5e);
