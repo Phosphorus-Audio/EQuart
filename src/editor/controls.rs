@@ -20,7 +20,7 @@ const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 420.0;
 const MENU_CARD_H: f32 = 372.0;
 const LAYOUT_CARD_W: f32 = 220.0;
-const LAYOUT_CARD_H: f32 = 262.0;
+const LAYOUT_CARD_H: f32 = 292.0;
 const MENU_CARD_MARGIN: f32 = 12.0;
 const MENU_CARD_GAP: f32 = 14.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -298,6 +298,18 @@ impl EquartEditor {
         ) {
             self.save_display_preferences(ui.ctx(), |prefs| {
                 prefs.layout.footer_border = !layout.footer_border;
+            });
+        }
+
+        if menu::switch(
+            &mut content,
+            group.with("auto-expand-eq-axis"),
+            "Auto-expand EQ axis",
+            layout.auto_expand_eq_axis,
+            accent,
+        ) {
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.auto_expand_eq_axis = !layout.auto_expand_eq_axis;
             });
         }
 

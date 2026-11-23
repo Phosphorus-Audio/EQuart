@@ -1,5 +1,58 @@
 use super::*;
 
+#[test]
+fn drag_expands_eq_axis() {
+    let plot = axis_plot();
+
+    for (enabled, down) in [(false, true), (true, false), (true, true)] {
+        let (ctx, mut editor) = editor();
+        one_bell(&mut editor);
+        attach_host(&mut editor);
+
+        let mut prefs = editor.display_preferences.read();
+        prefs.layout.auto_expand_eq_axis = enabled;
+        editor.display_preferences = Arc::new(DisplayStore::with_values(prefs));
+
+        let start = node(&editor, 0);
+        let near_edge = Pos2::new(
+            start.x,
+            if down {
+                plot.rect.bottom() - 140.0
+            } else {
+                plot.rect.top() + 20.0
+            },
+        );
+        press_and_drag(&ctx, &mut editor, 0.0, start, near_edge);
+        assert_eq!(editor.axis_range(), 12.0);
+
+        let edge = Pos2::new(
+            start.x,
+            if down {
+                plot.rect.bottom() - 120.0
+            } else {
+                plot.rect.top() + 2.0
+            },
+        );
+        frame(&ctx, &mut editor, 0.1, vec![egui::Event::PointerMoved(edge)]);
+        assert_eq!(editor.axis_range(), if enabled { 18.0 } else { 12.0 });
+
+        let gain = editor.control(0).gain;
+        frame(&ctx, &mut editor, 0.2, vec![]);
+        frame(&ctx, &mut editor, 0.4, vec![]);
+        assert_eq!(editor.control(0).gain, gain);
+        assert_eq!(editor.axis_range(), if enabled { 18.0 } else { 12.0 });
+
+        frame(
+            &ctx,
+            &mut editor,
+            0.5,
+            vec![egui::Event::PointerMoved(near_edge)],
+        );
+        assert_eq!(editor.axis_range(), 12.0);
+        assert!(editor.drag.is_some());
+    }
+}
+
 /// dragging one picked band moves the rest too (checks armed followers since no host here)
 #[test]
 fn drag_box_moves_followers() {

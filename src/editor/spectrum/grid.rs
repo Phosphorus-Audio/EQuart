@@ -1,6 +1,5 @@
 use super::*;
 
-
 fn frequency_ticks(max_hz: f32) -> Vec<(f32, bool)> {
     let mut ticks = Vec::new();
     let mut decade = 10.0_f32;
@@ -24,6 +23,30 @@ fn frequency_ticks(max_hz: f32) -> Vec<(f32, bool)> {
 fn axis_ticks(range: f32) -> [f32; 9] {
     let step = range / 4.0;
     std::array::from_fn(|i| (i as f32 - 4.0) * step)
+}
+
+fn eq_ticks(range: f32) -> impl Iterator<Item = (f32, f32)> {
+    let upper = AXIS_RANGES
+        .partition_point(|&step| (step as f32) < range)
+        .min(AXIS_RANGES.len() - 1);
+    let lower = AXIS_RANGES[upper.saturating_sub(1)] as f32;
+    let upper = AXIS_RANGES[upper] as f32;
+    let blend = if upper > lower {
+        ((range - lower) / (upper - lower)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    [(lower, 1.0 - blend), (upper, blend)]
+        .into_iter()
+        .filter(|&(_, opacity)| opacity > 0.0)
+        .flat_map(move |(step, opacity)| {
+            axis_ticks(step)
+                .into_iter()
+                .filter(move |db| *db != 0.0 && db.abs() <= range)
+                .map(move |db| (db, opacity))
+        })
+        .chain([(0.0, 1.0)])
 }
 
 fn axis_label(db: f32) -> String {
@@ -55,8 +78,8 @@ pub(super) fn draw_grid_lines(p: &egui::Painter, plot: &Plot, outer: Rect) {
         );
     }
 
-    for db in axis_ticks(plot.range) {
-        let y = plot.y(db);
+    for (db, opacity) in eq_ticks(plot.range) {
+        let y = plot.y_free(db);
         if (y - plot.rect.bottom()).abs() < 0.5 {
             continue;
         }
@@ -67,7 +90,7 @@ pub(super) fn draw_grid_lines(p: &egui::Painter, plot: &Plot, outer: Rect) {
                 if db == 0.0 {
                     colors.zero
                 } else {
-                    colors.major
+                    colors.major.gamma_multiply(opacity)
                 },
             ),
         );
@@ -78,6 +101,7 @@ pub(super) fn draw_axis_labels(
     p: &egui::Painter,
     plot: &Plot,
     outer: Rect,
+    axis_range: f32,
     eq_highlight: f32,
     spectrum_highlight: f32,
 ) {
@@ -105,7 +129,7 @@ pub(super) fn draw_axis_labels(
     p.text(
         Pos2::new(plot.rect.left(), outer.top() + 18.0),
         egui::Align2::LEFT_CENTER,
-        format!("EQ dB ±{:.0}", plot.range),
+        format!("EQ dB ±{axis_range:.0}"),
         FontId::proportional(10.0),
         text.muted,
     );
@@ -137,14 +161,18 @@ pub(super) fn draw_axis_labels(
         );
     }
 
-    let eq_ink = text.muted.lerp_to_gamma(text.primary, (eq_highlight / AXIS_HOVER_ALPHA).clamp(0.0, 1.0));
-    for db in axis_ticks(plot.range) {
+    let eq_ink = text.muted.lerp_to_gamma(
+        text.primary,
+        (eq_highlight / AXIS_HOVER_ALPHA).clamp(0.0, 1.0),
+    );
+
+    for (db, opacity) in eq_ticks(plot.range) {
         p.text(
-            Pos2::new(plot.rect.left() - 9.0, plot.y(db)),
+            Pos2::new(plot.rect.left() - 9.0, plot.y_free(db)),
             egui::Align2::RIGHT_CENTER,
             axis_label(db),
             FontId::monospace(9.5),
-            eq_ink,
+            eq_ink.gamma_multiply(opacity),
         );
     }
 

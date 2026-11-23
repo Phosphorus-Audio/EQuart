@@ -6,7 +6,63 @@ pub(crate) struct BandDrag {
     pub(crate) origin: (f32, f32),
     pub(crate) origin_y: f32,
     pub(crate) origin_q: f32,
+    pub(super) origin_range: f32,
     pub(crate) followers: Vec<(usize, (f32, f32))>,
+    pub(super) vertical: VerticalDrag,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct VerticalDrag {
+    pub(super) y: f32,
+    pub(super) db: f32,
+    pub(super) start_range: f32,
+}
+
+impl VerticalDrag {
+    pub(super) fn update(
+        &mut self,
+        plot: &Plot,
+        y: f32,
+        range: f32,
+        limits: std::ops::RangeInclusive<f32>,
+        fine: bool,
+    ) -> f32 {
+        const TOP_MARGIN: f32 = 6.0;
+        const BOTTOM_MARGIN: f32 = 128.0;
+        const RETURN_MARGIN: f32 = 12.0;
+
+        let height = plot.rect.height();
+        let dy = self.y - y;
+        let speed = if fine { 0.1 } else { 1.0 };
+
+        // use pointer travel so zooming the plot keeps the current value
+        let before = self.db;
+        let db = (before + dy * range * 2.0 / height * speed).clamp(*limits.start(), *limits.end());
+        self.y = y;
+        self.db = db;
+
+        let edge = |range: f32, margin: f32| range * (1.0 - 2.0 * (margin / height).min(0.4));
+        let returning = (dy > 0.0 && before < 0.0) || (dy < 0.0 && before > 0.0);
+
+        if range > self.start_range
+            && returning
+            && db >= -edge(self.start_range, BOTTOM_MARGIN + RETURN_MARGIN)
+            && db <= edge(self.start_range, TOP_MARGIN + RETURN_MARGIN)
+        {
+            self.start_range
+        } else if (dy > 0.0 && db >= edge(range, TOP_MARGIN))
+            || (dy < 0.0 && db <= -edge(range, BOTTOM_MARGIN))
+        {
+            let wanted = db.abs().min(AXIS_RANGES[AXIS_RANGES.len() - 1] as f32);
+            AXIS_RANGES
+                .iter()
+                .map(|&step| step as f32)
+                .find(|&step| step > range && step >= wanted)
+                .unwrap_or(range)
+        } else {
+            range
+        }
+    }
 }
 
 pub(super) fn follow(
@@ -35,8 +91,11 @@ pub(crate) fn cut_handle_q(control: &BandControl) -> f32 {
 /// The response of our cut
 /// cascade at the cutoff is `20·log10(Q)` dB
 pub(crate) fn cut_handle_y(plot: &Plot, q: f32) -> f32 {
-    let db = 20.0 * q.max(0.01).log10() + CUT_HANDLE_DB;
-    plot.y_free(db).clamp(plot.rect.top(), plot.rect.bottom())
+    plot.y(cut_handle_db(q))
+}
+
+pub(super) fn cut_handle_db(q: f32) -> f32 {
+    20.0 * q.max(0.01).log10() + CUT_HANDLE_DB
 }
 
 pub(super) fn cut_q(param: &FloatParam, from: f32, db_delta: f32, fine: bool) -> f32 {

@@ -71,6 +71,7 @@ pub(crate) struct LayoutPreferences {
     pub(crate) phase_curve: bool,
     pub(crate) phase_unwrapped: bool,
     pub(crate) footer_border: bool,
+    pub(crate) auto_expand_eq_axis: bool,
 }
 
 impl Default for LayoutPreferences {
@@ -83,6 +84,7 @@ impl Default for LayoutPreferences {
             phase_curve: false,
             phase_unwrapped: false,
             footer_border: false,
+            auto_expand_eq_axis: false,
         }
     }
 }
@@ -475,6 +477,7 @@ mod tests {
                 phase_curve: true,
                 phase_unwrapped: true,
                 footer_border: true,
+                auto_expand_eq_axis: true,
             },
             theme,
         };
@@ -487,6 +490,7 @@ mod tests {
             serde_json::from_str(r#"{"layout":{"meter_visible":false}}"#).unwrap();
         assert_eq!(partial.theme, theme::Theme::default());
         assert!(!partial.layout.meter_visible);
+        assert!(!partial.layout.auto_expand_eq_axis);
 
         let original = first.read().theme;
         let mut fill_edit = original;
@@ -576,6 +580,7 @@ mod tests {
             "phase_curve",
             "phase_unwrapped",
             "footer_border",
+            "auto_expand_eq_axis",
         ] {
             assert!(
                 !state.contains_key(id),

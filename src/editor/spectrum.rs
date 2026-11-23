@@ -25,7 +25,7 @@ mod trace;
 
 use backdrop::{ease_glow, edge_fade, soft_wash};
 pub(crate) use band_input::{BandDrag, cut_handle_q, cut_handle_y};
-use band_input::{cut_q, follow, key_hz};
+use band_input::{VerticalDrag, cut_handle_db, cut_q, follow, key_hz};
 use super::wheel::{take_steps, wheel_steps};
 use fill::gradient_fill;
 use grid::{draw_axis_labels, draw_grid_lines};
@@ -85,10 +85,16 @@ impl EquartEditor {
 
         let layout = self.display_preferences.read().layout;
         let piano_keys_visible = layout.piano_keys_visible;
+        let axis_range = self.axis_range();
+        let visual_range = ui.ctx().animate_value_with_time(
+            ui.make_persistent_id("eq-axis-range"),
+            axis_range,
+            0.16,
+        );
         let plot = Plot::with_ranges(
             outer,
             rate,
-            self.axis_range(),
+            visual_range,
             self.spectrum_range(),
             piano_keys_visible,
         );
@@ -108,6 +114,7 @@ impl EquartEditor {
                 &p,
                 &plot,
                 outer,
+                axis_range,
                 eq_highlight,
                 spectrum_highlight,
             );
@@ -290,13 +297,25 @@ impl EquartEditor {
                             .map(|(other, control)| (other, (control.frequency, control.gain)))
                             .collect();
                         let grab = marker.map_or(Vec2::ZERO, |point| point - position);
+                        let control = &controls[index];
+                        let vertical = VerticalDrag {
+                            y: position.y + grab.y,
+                            start_range: axis_range,
+                            db: if control.kind.is_cut() {
+                                cut_handle_db(control.q)
+                            } else {
+                                control.gain
+                            },
+                        };
                         self.drag = Some(BandDrag {
                             band: index,
                             grab,
-                            origin: (controls[index].frequency, controls[index].gain),
-                            origin_y: position.y + grab.y,
-                            origin_q: controls[index].q,
+                            origin: (control.frequency, control.gain),
+                            origin_y: vertical.y,
+                            origin_q: control.q,
+                            origin_range: plot.range,
                             followers,
+                            vertical,
                         });
                     }
                 }
@@ -330,18 +349,48 @@ impl EquartEditor {
                     self.set(&setter, &band.frequency, hz);
                     hz
                 };
-                let db = plot.db(position.y);
-                let lead_has_gain = controls[drag.band].kind.has_gain();
+                let control = &controls[drag.band];
+                let lead_has_gain = control.kind.has_gain();
+                let adjusts_cut_q = control.kind.is_cut() && control.slope != CutSlope::Db6;
+                let fine_q = adjusts_cut_q && ui.input(|i| i.modifiers.shift);
+
+                let mut vertical = drag.vertical;
+                let auto_db = if layout.auto_expand_eq_axis && (lead_has_gain || adjusts_cut_q) {
+                    let limits = if lead_has_gain {
+                        let range = band.gain.range();
+                        range.unnormalize(0.0)..=range.unnormalize(1.0)
+                    } else {
+                        cut_handle_db(Q_MIN)..=cut_handle_db(Q_MAX)
+                    };
+                    let next_range = vertical.update(&plot, position.y, axis_range, limits, fine_q);
+
+                    if next_range != axis_range {
+                        self.params
+                            .axis_range_db
+                            .store(next_range as u32, Ordering::Relaxed);
+                        ui.ctx().request_repaint();
+                    }
+
+                    Some(vertical.db)
+                } else {
+                    None
+                };
+                let db = if lead_has_gain {
+                    auto_db.unwrap_or_else(|| plot.db(position.y))
+                } else {
+                    let range = drag.origin_range;
+                    (plot.db_free(position.y) * (range / plot.range)).clamp(-range, range)
+                };
 
                 if lead_has_gain {
                     self.set(&setter, &band.gain, db);
-                } else if controls[drag.band].kind.is_cut()
-                    && controls[drag.band].slope != CutSlope::Db6
-                {
+                } else if adjusts_cut_q {
                     // cuts use vertical drag for Q (except 6dB/oct)
-                    let fine = ui.input(|i| i.modifiers.shift);
-                    let db_delta = plot.db_free(position.y) - plot.db_free(drag.origin_y);
-                    let q = cut_q(&band.q, drag.origin_q, db_delta, fine);
+                    let db_delta = auto_db.map_or_else(
+                        || plot.db_free(position.y) - plot.db_free(drag.origin_y),
+                        |db| db - cut_handle_db(drag.origin_q),
+                    );
+                    let q = cut_q(&band.q, drag.origin_q, db_delta, fine_q && auto_db.is_none());
                     self.set(&setter, &band.q, q);
                 }
 
@@ -355,6 +404,10 @@ impl EquartEditor {
                     if self.control(index).kind.has_gain() {
                         self.set(&setter, &self.params.bands[index].gain, moved_db);
                     }
+                }
+
+                if let Some(drag) = &mut self.drag {
+                    drag.vertical = vertical;
                 }
             }
         }
@@ -511,6 +564,7 @@ impl EquartEditor {
             &p,
             &plot,
             outer,
+            axis_range,
             eq_highlight,
             spectrum_highlight,
         );
