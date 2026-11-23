@@ -1,6 +1,68 @@
 use super::*;
 
 #[test]
+fn heatmap_layer_order() {
+    use crate::display_preferences::HeatmapMode;
+
+    let (ctx, mut editor) = editor();
+    one_bell(&mut editor);
+    let params = Arc::get_mut(&mut editor.params).unwrap();
+    params.regions[0].enabled = BoolParam::new("Enabled", true);
+
+    let mut prefs = editor.display_preferences.read();
+    prefs.spectrum.heatmap.mode = HeatmapMode::Full;
+
+    let levels = [-25.0; 2_049];
+    let spectrum = crate::analyzer::SpectrumFrame {
+        bin_hz: 48_000.0 / 4096.0,
+        output_levels: &levels,
+        output_hold_levels: &levels,
+        ..Default::default()
+    };
+    let canvas = Rect::from_min_size(Pos2::ZERO, CANVAS);
+    let plot = axis_plot();
+
+    for above_grid in [false, true] {
+        prefs.spectrum.heatmap.above_grid = above_grid;
+        editor.display_preferences = Arc::new(DisplayStore::with_values(prefs));
+
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(canvas),
+                ..Default::default()
+            },
+            |ui| editor.spectrum(ui, canvas, 48_000.0, &spectrum),
+        );
+        output.textures_delta.clear();
+
+        let heatmap = output.shapes.iter().position(|shape| {
+            matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.calc_bounds() == plot.rect)
+        });
+        let grid = output.shapes.iter().position(|shape| {
+            matches!(&shape.shape, egui::Shape::LineSegment { points: [left, right], .. }
+                if left.y == plot.y(0.0) && right.y == left.y && right.x - left.x > plot.rect.width())
+        });
+        let heatmap = heatmap.expect("the heatmap covers the plot");
+        let grid = grid.expect("the grid shows the 0 dB line");
+        assert_eq!(heatmap > grid, above_grid);
+
+        let above = &output.shapes[heatmap + 1..];
+
+        for width in [1.6, 1.9] {
+            assert!(above.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Path(path) if path.stroke.width == width)
+            }));
+        }
+
+        for label in ["Region 1", "1", "EQ dB ±12"] {
+            assert!(above.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label)
+            }));
+        }
+    }
+}
+
+#[test]
 fn plot_menu_bands_and_regions() {
     let (ctx, mut editor) = editor();
     attach_host(&mut editor);

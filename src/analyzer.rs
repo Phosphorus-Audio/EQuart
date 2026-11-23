@@ -173,6 +173,7 @@ impl AnalyzerSettings {
 
 #[derive(Default)]
 pub(crate) struct SpectrumFrame<'a> {
+    pub revision: u64,
     pub bin_hz: f32,
     pub levels: &'a [f32],
     pub output_levels: &'a [f32],
@@ -186,6 +187,7 @@ impl<'a> SpectrumFrame<'a> {
     pub(crate) fn from_analyzers([input, output]: [&'a Analyzer; 2]) -> Self {
         let (bin_hz, levels) = input.spectrum();
         Self {
+            revision: output.revision,
             bin_hz,
             levels,
             output_levels: output.spectrum().1,
@@ -249,6 +251,7 @@ pub struct Analyzer {
     hop_size: usize,
     hop_remainder: usize,
     fps: u32,
+    revision: u64,
     rings: [Vec<f32>; 2],
     position: usize,
     dc_input: [f32; 2],
@@ -289,6 +292,7 @@ impl Analyzer {
             hop_size: 0,
             hop_remainder: 0,
             fps: FRAME_RATES[DEFAULT_FRAME_RATE as usize],
+            revision: 0,
             rings: std::array::from_fn(|_| vec![0.0; max_size]),
             position: 0,
             dc_input: [0.0; 2],
@@ -389,6 +393,7 @@ impl Analyzer {
     }
 
     pub fn reset(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
         self.rings.iter_mut().for_each(|ring| ring.fill(0.0));
         self.position = 0;
         self.hop = 0;
@@ -400,6 +405,7 @@ impl Analyzer {
     }
 
     fn configure_transform(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
         self.size = resolution_samples(self.rate, self.resolution);
         self.configure_hop();
         self.display.fill(INITIAL_DB);
@@ -478,6 +484,7 @@ impl Analyzer {
     }
 
     fn analyze(&mut self, elapsed: f32) {
+        self.revision = self.revision.wrapping_add(1);
         #[cfg(feature = "analyzer-profile")]
         let fft_timer = profile::Timer::new(profile::FFT);
         let transform = &self.transforms[self.size.ilog2() as usize - MIN_ORDER];

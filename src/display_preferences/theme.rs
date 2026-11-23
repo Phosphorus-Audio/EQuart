@@ -139,6 +139,20 @@ palette!(Curves {
     peak_hold: "Peak hold" = rgb(238, 243, 245),
 });
 
+palette!(HeatmapPalette {
+    minimum: "Minimum" = gray(28),
+    low: "Low energy" = rgb(43, 74, 77),
+    medium: "Medium energy" = rgb(68, 137, 141),
+    high: "High energy" = rgb(104, 190, 190),
+    peak: "Peak energy" = rgb(183, 219, 172),
+});
+
+impl HeatmapPalette {
+    pub(crate) fn stops(self) -> [Color32; 5] {
+        [self.minimum, self.low, self.medium, self.high, self.peak]
+    }
+}
+
 palette!(DropdownColors {
     background: "Background" = gray(42),
     hover: "Hover" = gray(50),
@@ -250,6 +264,8 @@ pub(crate) struct Theme {
     pub(crate) piano: Piano,
     pub(crate) spectrum_fill: SpectrumPaint,
     pub(crate) spectrum_trace: SpectrumPaint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) heatmap: Option<HeatmapPalette>,
     #[serde(with = "color_array")]
     pub(crate) band: [Color32; BAND_COUNT],
     #[serde(with = "color_array")]
@@ -257,7 +273,36 @@ pub(crate) struct Theme {
 }
 
 impl Theme {
+    pub(crate) fn heatmap_palette(&self) -> HeatmapPalette {
+        self.heatmap.unwrap_or_else(|| {
+            let minimum = self.background.top.lerp_to_gamma(self.background.bottom, 0.5);
+            let trace = self.spectrum_trace.color(0.55);
+            let chroma = if minimum.intensity() > 0.55 {
+                trace
+            } else {
+                self.spectrum_fill.color(0.48)
+            };
+
+            HeatmapPalette {
+                minimum,
+                low: minimum.lerp_to_gamma(chroma, 0.28),
+                medium: minimum.lerp_to_gamma(chroma, 0.64),
+                high: chroma,
+                peak: chroma.lerp_to_gamma(trace, 0.58),
+            }
+        })
+    }
+
     pub(crate) fn merge_edits(&mut self, original: &Self, edited: &Self) {
+        let heatmap = if original.heatmap != edited.heatmap {
+            edited.heatmap.map(|palette| {
+                let mut merged = self.heatmap_palette();
+                merged.merge_edits(&original.heatmap_palette(), &palette);
+                merged
+            })
+        } else {
+            self.heatmap
+        };
         self.background
             .merge_edits(&original.background, &edited.background);
         self.grid.merge_edits(&original.grid, &edited.grid);
@@ -292,6 +337,7 @@ impl Theme {
             .merge_edits(&original.spectrum_fill, &edited.spectrum_fill);
         self.spectrum_trace
             .merge_edits(&original.spectrum_trace, &edited.spectrum_trace);
+        self.heatmap = heatmap;
         merge_colors(&mut self.band, original.band, edited.band);
         merge_colors(&mut self.region, original.region, edited.region);
     }
@@ -337,6 +383,7 @@ impl Default for Theme {
                 stops: spectrum_fill.stops.map(brighten),
                 ..spectrum_fill
             },
+            heatmap: None,
             band: std::array::from_fn(band_color),
             region: [rgb(113, 161, 225); REGION_COUNT],
         }

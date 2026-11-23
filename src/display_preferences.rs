@@ -36,6 +36,42 @@ pub(crate) struct SpectrumPreferences {
     pub(crate) tilt: u32,
     pub(crate) peak_hold: u32,
     pub(crate) frame_rate: u32,
+    pub(crate) heatmap: HeatmapPreferences,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HeatmapMode {
+    #[default]
+    Off,
+    Full,
+    Top,
+    Bottom,
+}
+
+impl HeatmapMode {
+    pub(crate) const ALL: [Self; 4] = [Self::Off, Self::Full, Self::Top, Self::Bottom];
+    pub(crate) const LABELS: [&str; 4] = ["Off", "Full", "Top", "Bottom"];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct HeatmapPreferences {
+    pub(crate) mode: HeatmapMode,
+    pub(crate) intensity: u8,
+    pub(crate) opacity: u8,
+    pub(crate) above_grid: bool,
+}
+
+impl Default for HeatmapPreferences {
+    fn default() -> Self {
+        Self {
+            mode: HeatmapMode::Off,
+            intensity: 55,
+            opacity: 55,
+            above_grid: true,
+        }
+    }
 }
 
 impl Default for SpectrumPreferences {
@@ -47,6 +83,7 @@ impl Default for SpectrumPreferences {
             tilt: DEFAULT_TILT,
             peak_hold: DEFAULT_HOLD,
             frame_rate: DEFAULT_FRAME_RATE,
+            heatmap: HeatmapPreferences::default(),
         }
     }
 }
@@ -466,6 +503,17 @@ mod tests {
         let mut theme = theme::Theme::default();
         theme.spectrum_fill.mode = theme::ColorMode::Solid;
         theme.spectrum_fill.solid = egui::Color32::LIGHT_BLUE;
+        let mut heatmap = theme.heatmap_palette();
+        let stops = [
+            egui::Color32::DARK_BLUE,
+            egui::Color32::BLUE,
+            egui::Color32::LIGHT_BLUE,
+            egui::Color32::LIGHT_GREEN,
+            egui::Color32::LIGHT_YELLOW,
+        ];
+        let mut colors = stops.into_iter();
+        heatmap.edit(|_, color| *color = colors.next().unwrap());
+        theme.heatmap = Some(heatmap);
         theme.band[31] = egui::Color32::GOLD;
         theme.region[5] = egui::Color32::LIGHT_RED;
         let expected = DisplayPreferences {
@@ -476,6 +524,12 @@ mod tests {
                 tilt: 0,
                 peak_hold: 0,
                 frame_rate: 0,
+                heatmap: HeatmapPreferences {
+                    mode: HeatmapMode::Bottom,
+                    intensity: 74,
+                    opacity: 68,
+                    above_grid: false,
+                },
             },
             layout: LayoutPreferences {
                 meter_visible: false,
@@ -497,6 +551,9 @@ mod tests {
         let partial: DisplayPreferences =
             serde_json::from_str(r#"{"layout":{"meter_visible":false}}"#).unwrap();
         assert_eq!(partial.theme, theme::Theme::default());
+        assert_eq!(partial.spectrum.heatmap, HeatmapPreferences::default());
+        assert!(partial.spectrum.heatmap.above_grid);
+        assert_eq!(partial.theme.heatmap, None);
         assert!(!partial.layout.meter_visible);
         assert_eq!(partial.spectrum.frame_rate, DEFAULT_FRAME_RATE);
         assert!(!partial.layout.auto_expand_eq_axis);
@@ -583,6 +640,7 @@ mod tests {
             "analyzer_tilt",
             "analyzer_hold",
             "analyzer_frame_rate",
+            "heatmap",
             "meter_visible",
             "meter_fade",
             "piano_keys_visible",

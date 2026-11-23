@@ -211,6 +211,17 @@ fn edit_theme(ui: &mut egui::Ui, theme: &mut Theme) {
     egui::CollapsingHeader::new("Spectrum outline").show(ui, |ui| {
         spectrum_paint(ui, &mut theme.spectrum_trace);
     });
+    egui::CollapsingHeader::new("Heatmap palette").show(ui, |ui| {
+        let original = theme.heatmap_palette();
+        let mut palette = original;
+        palette.edit(|label, color| edit_color(ui, label, color));
+
+        if ui.button("Reset heatmap colors").clicked() {
+            theme.heatmap = None;
+        } else if palette != original {
+            theme.heatmap = Some(palette);
+        }
+    });
 
     for (title, palette) in [
         ("Band palette", theme.band.as_mut_slice()),

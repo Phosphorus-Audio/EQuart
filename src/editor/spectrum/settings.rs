@@ -171,7 +171,7 @@ impl EquartEditor {
 
     /// analyzer toggles and dropdowns, shared by axis menu and settings card
     pub(in crate::editor) fn analysis_rows(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         dropdowns: &mut menu::Dropdown,
         group: egui::Id,
@@ -192,7 +192,37 @@ impl EquartEditor {
         }
 
         menu::divider(ui);
-        menu::section(ui, "SPECTRUM");
+
+        let tab_id = group.with("analyzer-tab");
+        let heatmap_tab = ui.data(|data| data.get_temp::<bool>(tab_id).unwrap_or(false));
+        let (selected, reveal) = menu::segmented_tabs(
+            ui,
+            tab_id,
+            ["Spectrum", "Heatmap"],
+            usize::from(heatmap_tab),
+            accent,
+        );
+        let heatmap_tab = selected == 1;
+        ui.data_mut(|data| data.insert_temp(tab_id, heatmap_tab));
+        ui.add_space(10.0);
+
+        let viewport = ui.available_rect_before_wrap();
+        let direction = if heatmap_tab { 1.0 } else { -1.0 };
+        let offset = direction * 9.0 * (1.0 - reveal);
+        let mut content = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("analyzer-page", selected))
+                .max_rect(viewport.translate(Vec2::new(offset, 0.0))),
+        );
+        content.set_clip_rect(viewport.intersect(ui.clip_rect()));
+        content.multiply_opacity(0.35 + 0.65 * reveal);
+        let ui = &mut content;
+
+        if heatmap_tab {
+            self.heatmap_rows(ui, dropdowns, group);
+            return;
+        }
+
         let resolution = self.resolution() as usize;
         dropdowns.combo(
             ui,
@@ -262,6 +292,76 @@ impl EquartEditor {
         );
     }
 
+    fn heatmap_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        dropdowns: &mut menu::Dropdown,
+        group: egui::Id,
+    ) {
+        use crate::display_preferences::{HeatmapMode, HeatmapPreferences};
+
+        let accent = self.accent();
+        let defaults = HeatmapPreferences::default();
+        let prefs = self.display_preferences.read().spectrum.heatmap;
+        let index = prefs.mode as usize;
+
+        dropdowns.combo(
+            ui,
+            menu::COMBO_HEATMAP,
+            "Heatmap display",
+            HeatmapMode::LABELS[index],
+            &HeatmapMode::LABELS,
+            index,
+            accent,
+        );
+        ui.add_space(12.0);
+
+        let mut intensity = prefs.intensity;
+        let mut opacity = prefs.opacity;
+
+        let intensity_changed = menu::slider(
+            ui,
+            group.with("heatmap-intensity"),
+            "Intensity",
+            &mut intensity,
+            defaults.intensity,
+            accent,
+        );
+        ui.add_space(12.0);
+        let opacity_changed = menu::slider(
+            ui,
+            group.with("heatmap-opacity"),
+            "Opacity",
+            &mut opacity,
+            defaults.opacity,
+            accent,
+        );
+        ui.add_space(8.0);
+        let layer_changed = menu::switch(
+            ui,
+            group.with("heatmap-above-grid"),
+            "Heatmap above grid",
+            prefs.above_grid,
+            accent,
+        );
+
+        if intensity_changed || opacity_changed || layer_changed {
+            self.save_display_preferences(ui.ctx(), |current| {
+                if intensity_changed {
+                    current.spectrum.heatmap.intensity = intensity;
+                }
+
+                if opacity_changed {
+                    current.spectrum.heatmap.opacity = opacity;
+                }
+
+                if layer_changed {
+                    current.spectrum.heatmap.above_grid = !prefs.above_grid;
+                }
+            });
+        }
+    }
+
     pub(in crate::editor) fn phase_rows(
         &mut self,
         ui: &mut egui::Ui,
@@ -309,6 +409,9 @@ impl EquartEditor {
             menu::COMBO_TILT => prefs.spectrum.tilt = index as u32,
             menu::COMBO_HOLD => prefs.spectrum.peak_hold = index as u32,
             menu::COMBO_FRAME_RATE => prefs.spectrum.frame_rate = index as u32,
+            menu::COMBO_HEATMAP => {
+                prefs.spectrum.heatmap.mode = crate::display_preferences::HeatmapMode::ALL[index];
+            }
             menu::COMBO_PHASE => prefs.layout.phase_unwrapped = index == 1,
             _ => {}
         });

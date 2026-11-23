@@ -17,12 +17,12 @@ const MENU_KNOB_BOX: f32 = 74.0;
 const MENU_KNOB_LABEL_GAP: f32 = knob::LABEL_GAP + 12.0;
 /// extra top clip room for raised knob labels
 const MENU_KNOB_HEADROOM: f32 = 8.0;
-const MENU_CARD_W: f32 = 420.0;
-const MENU_CARD_H: f32 = 422.0;
+const MENU_CARD_W: f32 = 444.0;
+const MENU_CARD_H: f32 = 454.0;
 const LAYOUT_CARD_W: f32 = 220.0;
 const LAYOUT_CARD_H: f32 = 292.0;
-const MENU_CARD_MARGIN: f32 = 12.0;
-const MENU_CARD_GAP: f32 = 14.0;
+const MENU_CARD_MARGIN: f32 = 14.0;
+const MENU_CARD_GAP: f32 = 18.0;
 const MENU_SCALE_W: f32 = 142.0;
 const FOOTER_BUTTON_W: f32 = 24.0;
 const FOOTER_BUTTON_H: f32 = 24.0;

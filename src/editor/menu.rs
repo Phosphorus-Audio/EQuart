@@ -3,8 +3,10 @@
 use super::*;
 
 mod dropdown;
+mod widgets;
 
 pub(crate) use dropdown::Dropdown;
+pub(crate) use widgets::{segmented_tabs, slider};
 
 const ROW: f32 = 26.0;
 const LABEL_SIZE: f32 = 12.5;
@@ -167,6 +169,7 @@ pub(crate) const COMBO_PHASE: u32 = 7;
 pub(crate) const COMBO_PROCESSING: u32 = 8;
 pub(crate) const COMBO_LINEAR_QUALITY: u32 = 9;
 pub(crate) const COMBO_FRAME_RATE: u32 = 10;
+pub(crate) const COMBO_HEATMAP: u32 = 11;
 
 const COMBO_CAPTION_H: f32 = 14.0;
 pub(crate) const COMBO_BUTTON_H: f32 = 24.0;

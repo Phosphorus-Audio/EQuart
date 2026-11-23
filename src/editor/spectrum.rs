@@ -14,6 +14,7 @@ mod backdrop;
 mod band_input;
 mod fill;
 mod grid;
+pub(super) mod heatmap;
 mod keys;
 mod meter;
 mod panel_motion;
@@ -83,7 +84,8 @@ impl EquartEditor {
         let outer = Layout::plot_outer(canvas, self.meter_visible());
         let p = ui.painter_at(outer);
 
-        let layout = self.display_preferences.read().layout;
+        let preferences = self.display_preferences.read();
+        let layout = preferences.layout;
         let piano_keys_visible = layout.piano_keys_visible;
         let axis_range = self.axis_range();
         let visual_range = ui.ctx().animate_value_with_time(
@@ -103,11 +105,32 @@ impl EquartEditor {
             .input(|i| i.pointer.hover_pos())
             .filter(|_| !self.dial.is_shown());
         let (eq_highlight, spectrum_highlight) = self.axis_controls(ui, &plot, outer);
-        draw_grid_lines(&p, &plot, outer);
+        let bypass = self.params.global.bypass.value();
+        let heatmap = preferences.spectrum.heatmap;
+
+        if heatmap.above_grid {
+            draw_grid_lines(&p, &plot, outer);
+        }
+
+        if !bypass {
+            self.heatmap.draw(
+                &p,
+                &plot,
+                spectrum,
+                Hold::from_index(preferences.spectrum.index(AnalyzerOption::Hold)),
+                heatmap,
+                &self.theme,
+            );
+        }
+
+        if !heatmap.above_grid {
+            draw_grid_lines(&p, &plot, outer);
+        }
+
         let brand_rect = draw_brand(ui, &p, &plot, !self.footer_menu_is_up());
         let piano_key_fade = layout.piano_key_fade;
 
-        if self.params.global.bypass.value() {
+        if bypass {
             // fade edges before watermark
             edge_fade(&p, outer, canvas, plot.rect);
             draw_axis_labels(
