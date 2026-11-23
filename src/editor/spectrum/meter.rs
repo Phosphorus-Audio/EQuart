@@ -60,6 +60,7 @@ impl EquartEditor {
         let visible = self.meter_visible();
         let id = ui.make_persistent_id("level-meter-gain");
         let mut pressing = false;
+        let mut reset = false;
 
         if let Some(gui) = &self.gui {
             let gain = &self.params.global.output;
@@ -75,6 +76,15 @@ impl EquartEditor {
                     setter.begin_set_parameter(gain);
                     ui.data_mut(|data| data.insert_temp(id, gain.unmodulated_normalized_value()));
                 }
+
+                reset = response.hovered()
+                    && ui.input(|input| {
+                        input
+                            .pointer
+                            .button_double_clicked(egui::PointerButton::Primary)
+                            || (input.modifiers.command
+                                && input.pointer.button_clicked(egui::PointerButton::Primary))
+                    });
 
                 if pressing
                     && let Some(delta) = response.total_drag_delta()
@@ -101,6 +111,13 @@ impl EquartEditor {
             }
 
             if !pressing && ui.data_mut(|data| data.remove_temp::<f32>(id)).is_some() {
+                setter.end_set_parameter(gain);
+            }
+
+            if reset {
+                let unity = gain.preview_plain(gain.preview_normalized(0.0));
+                setter.begin_set_parameter(gain);
+                setter.set_parameter(gain, unity);
                 setter.end_set_parameter(gain);
             }
         }
