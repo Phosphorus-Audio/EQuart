@@ -85,11 +85,11 @@ impl EquartEditor {
         outer: Rect,
     ) -> (f32, f32) {
         let left = Rect::from_min_max(
-            Pos2::new(outer.left(), outer.top() + Layout::HEADER),
+            Pos2::new(outer.left(), outer.top()),
             Pos2::new(plot.rect.left(), plot.rect.bottom()),
         );
         let right = Rect::from_min_max(
-            Pos2::new(plot.rect.right(), outer.top() + Layout::HEADER),
+            Pos2::new(plot.rect.right(), outer.top()),
             Pos2::new(outer.right(), plot.rect.bottom()),
         );
         let eq = self.axis_picker(ui, left, "eq-axis-scale", AxisScale::Eq, 0);

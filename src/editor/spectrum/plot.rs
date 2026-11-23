@@ -1,7 +1,7 @@
 use super::*;
 
-/// top padding for the vertical scale so labels don't touch the header
-pub(super) const SCALE_TOP_INSET: f32 = 22.0;
+/// top padding for the vertical scale
+pub(super) const SCALE_TOP_INSET: f32 = 36.0;
 
 /// EQ and spectrum share the x axis, but use separate y scales
 pub(crate) struct Plot {
@@ -35,7 +35,7 @@ impl Plot {
     ) -> Self {
         let keyboard_space = if piano_keys_visible { KEYS_BAND } else { 0.0 };
         let rect = Rect::from_min_max(
-            outer.min + Vec2::new(48.0, Layout::HEADER + SCALE_TOP_INSET),
+            outer.min + Vec2::new(48.0, SCALE_TOP_INSET),
             // leave room for axis labels and keyboard
             outer.max - Vec2::new(30.0, keyboard_space + 34.0),
         );
@@ -47,7 +47,7 @@ impl Plot {
             },
             range,
             spectrum_range,
-            spectrum_top: outer.min.y + Layout::HEADER + SCALE_TOP_INSET,
+            spectrum_top: outer.min.y + SCALE_TOP_INSET,
             spectrum_bottom: rect.bottom(),
             rect,
         }

@@ -259,7 +259,7 @@ pub(super) fn draw(p: &egui::Painter, plot: &Plot, mode: Mode, samples: &[(f32, 
 
 pub(super) fn draw_label(p: &egui::Painter, plot: &Plot, outer: Rect, mode: Mode) {
     p.text(
-        Pos2::new(plot.rect.center().x, outer.top() + Layout::HEADER + 8.0),
+        Pos2::new(plot.rect.center().x, outer.top() + 18.0),
         egui::Align2::CENTER_CENTER,
         mode.label(),
         FontId::proportional(10.0),

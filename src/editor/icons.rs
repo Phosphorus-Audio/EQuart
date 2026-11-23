@@ -21,10 +21,11 @@ pub(crate) enum Glyph {
     DeletePreset,
     CaretLeft,
     CaretRight,
+    GitHub,
 }
 
 impl Glyph {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Bypass,
         Self::Scale,
         Self::Options,
@@ -40,6 +41,7 @@ impl Glyph {
         Self::DeletePreset,
         Self::CaretLeft,
         Self::CaretRight,
+        Self::GitHub,
     ];
 
     fn name(self) -> &'static str {
@@ -59,6 +61,7 @@ impl Glyph {
             Self::DeletePreset => "equart-icon-delete-preset",
             Self::CaretLeft => "equart-icon-caret-left",
             Self::CaretRight => "equart-icon-caret-right",
+            Self::GitHub => "equart-icon-github",
         }
     }
 
@@ -81,6 +84,7 @@ impl Glyph {
             Self::DeletePreset => include_bytes!("../../assets/icons/trash-simple-bold.alpha"),
             Self::CaretLeft => include_bytes!("../../assets/icons/caret-left.alpha"),
             Self::CaretRight => include_bytes!("../../assets/icons/caret-right.alpha"),
+            Self::GitHub => include_bytes!("../../assets/icons/github.alpha"),
         }
     }
 }

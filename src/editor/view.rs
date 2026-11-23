@@ -102,52 +102,7 @@ impl EquartEditor {
             self.demo = demo;
         }
 
-        // keep the meter under the header and footer
         self.level_meter(ui, &p, canvas, &values);
-
-        // top header bar
-        let header = Rect::from_min_max(at(0.0, 0.0), at(canvas.width(), Layout::HEADER));
-        gradient_rect(
-            &p,
-            header,
-            theme::with_alpha(background.header_top, HEADER_ALPHA),
-            theme::with_alpha(background.header_bottom, HEADER_ALPHA),
-        );
-        p.line_segment(
-            [at(0.0, 1.0), at(canvas.width(), 1.0)],
-            Stroke::new(1.0, Color32::from_gray(92)),
-        );
-        p.line_segment(
-            [
-                at(0.0, Layout::HEADER - 1.0),
-                at(canvas.width(), Layout::HEADER - 1.0),
-            ],
-            Stroke::new(1.0, Color32::from_gray(12)),
-        );
-
-        let logo_size = 26.0;
-        draw_logo(
-            &p,
-            at(11.0, (Layout::HEADER - logo_size) / 2.0),
-            logo_size,
-            palette.text.primary,
-        );
-
-        let title = FontId::new(22.0, egui::FontFamily::Name(GLOBAL_FONT.into()));
-        p.text(
-            at(45.0, 23.0),
-            egui::Align2::LEFT_CENTER,
-            crate::NAME,
-            title.clone(),
-            Color32::from_black_alpha(136),
-        );
-        p.text(
-            at(44.0, 21.5),
-            egui::Align2::LEFT_CENTER,
-            crate::NAME,
-            title,
-            palette.text.primary.gamma_multiply(0.85),
-        );
 
         let footer = Rect::from_min_max(
             at(0.0, canvas.height() - Layout::FOOTER),
@@ -193,8 +148,8 @@ impl EquartEditor {
         }
 
         self.footer(ui, footer, &values);
-        // draw dial last so it sits over header/footer
         self.axis_dial(ui, canvas);
+        self.about_dialog(ui.ctx(), canvas);
         self.show_notice(ui.ctx(), canvas);
     }
 

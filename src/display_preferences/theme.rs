@@ -41,8 +41,6 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
 palette!(Background {
     top: "Canvas top" = gray(24),
     bottom: "Canvas bottom" = gray(32),
-    header_top: "Header top" = gray(56),
-    header_bottom: "Header bottom" = gray(36),
     footer_top: "Footer top" = gray(46),
     footer_bottom: "Footer bottom" = gray(27),
     footer_border: "Footer border" = gray(76),

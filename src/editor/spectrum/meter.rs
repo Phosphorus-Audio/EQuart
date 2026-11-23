@@ -3,10 +3,7 @@ use crate::display_preferences::theme::Meter;
 
 pub(in crate::editor) fn meter_column(canvas: Rect) -> Rect {
     Rect::from_min_max(
-        Pos2::new(
-            canvas.right() - Layout::METER_W,
-            canvas.top() + Layout::HEADER,
-        ),
+        Pos2::new(canvas.right() - Layout::METER_W, canvas.top()),
         Pos2::new(canvas.right(), canvas.bottom() - Layout::FOOTER),
     )
 }

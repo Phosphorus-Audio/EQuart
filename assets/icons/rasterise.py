@@ -274,13 +274,16 @@ def main():
         Image.fromarray(alpha, "L").save(f"target/{name}_icon.png")
         print(name, "coverage", round(float(mask.mean()), 3), "max", int(alpha.max()))
 
-    # The boxicons carets are drawn in a 24-unit box, so they get scaled up to
-    # the 256-unit frame first. Left and right come straight from the files.
-    for name in ("caret-left", "caret-right"):
-        caret = ElementTree.fromstring(
-            Path(f"assets/icons/bx-{name}.svg").read_text(encoding="utf-8")
+    # 24-unit icons get scaled up to the 256-unit frame first.
+    for name, filename in (
+        ("caret-left", "bx-caret-left.svg"),
+        ("caret-right", "bx-caret-right.svg"),
+        ("github", "github.svg"),
+    ):
+        node = ElementTree.fromstring(
+            Path(f"assets/icons/{filename}").read_text(encoding="utf-8")
         ).find("{http://www.w3.org/2000/svg}path")
-        fitted = fit(subpaths(caret.attrib["d"]), box=24.0, size=float(size))
+        fitted = fit(subpaths(node.attrib["d"]), box=24.0, size=float(size))
         raw = rasterise(fitted, size=size, supersample=SS)
         mask = raw.reshape(out_size, factor, out_size, factor).mean(axis=(1, 3))
         alpha = np.round(mask * 255.0).astype(np.uint8)

@@ -42,6 +42,7 @@ impl EquartEditor {
             || self.layout.is_up()
             || self.theme_open
             || self.preset.is_shown()
+            || self.about.is_shown()
     }
 
     /// bottom bar with icons

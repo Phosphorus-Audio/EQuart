@@ -159,13 +159,7 @@ pub(super) fn edge_fade(p: &egui::Painter, outer: Rect, plate: Rect, axis: Rect)
         painter.add(egui::Shape::mesh(mesh));
     }
 
-    // Top and bottom: the ramp runs across y. The bands span less than a grey
-    // step of the plate gradient, so one colour is enough for the whole strip.
-    // The header is glass now: start the top fade below it, or the mask would
-    // wash out exactly the grid and analyser we want showing through. In the
-    // fade tests `outer` already starts below the header, so this leaves
-    // their geometry untouched.
-    let fade_top = outer.top().max(plate.top() + Layout::HEADER);
+    let fade_top = outer.top();
     for (edge_y, inner_y) in [
         (fade_top, fade_top + FADE_TOP),
         (outer.bottom(), outer.bottom() - FADE_BOTTOM),

@@ -149,20 +149,35 @@ const LOGO: &[&[(f32, f32)]] = &[
 
 /// draw logo in a size x size square
 pub(super) fn draw_logo(p: &egui::Painter, top_left: Pos2, size: f32, color: Color32) {
+    draw_logo_rotated(p, top_left, size, 0.0, color);
+}
+
+pub(super) fn draw_logo_rotated(
+    p: &egui::Painter,
+    top_left: Pos2,
+    size: f32,
+    angle: f32,
+    color: Color32,
+) {
     const OFFSET: (f32, f32) = (35.0, 24.0);
     const EXTENT: f32 = 1184.0;
+
     let scale = size / EXTENT;
+    let center = top_left + egui::Vec2::splat(size * 0.5);
+    let rot = egui::emath::Rot2::from_angle(angle);
 
     for polygon in LOGO {
         let points: Vec<Pos2> = polygon
             .iter()
             .map(|(x, y)| {
-                Pos2::new(
+                let pos = Pos2::new(
                     top_left.x + (x - OFFSET.0) * scale,
                     top_left.y + (y - OFFSET.1) * scale,
-                )
+                );
+                center + rot * (pos - center)
             })
             .collect();
+
         p.add(egui::Shape::Path(egui::epaint::PathShape {
             points,
             closed: true,

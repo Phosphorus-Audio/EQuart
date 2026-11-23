@@ -3,11 +3,9 @@ use super::*;
 pub(crate) struct Layout;
 
 impl Layout {
-    pub(crate) const HEADER: f32 = 44.0;
     pub(crate) const FOOTER: f32 = 28.0;
     /// right-side output meter width
     pub(crate) const METER_W: f32 = 24.0;
-    /// spectrum area (starts at top behind translucent header)
     pub(crate) const SPECTRUM: [f32; 4] =
         [0.0, 0.0, CANVAS_W - Self::METER_W, CANVAS_H - Self::FOOTER];
 

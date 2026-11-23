@@ -98,6 +98,7 @@ impl EquartEditor {
             .filter(|_| !self.dial.is_shown());
         let (eq_highlight, spectrum_highlight) = self.axis_controls(ui, &plot, outer);
         draw_grid_lines(&p, &plot, outer);
+        let brand_rect = draw_brand(ui, &p, &plot, !self.footer_menu_is_up());
         let piano_key_fade = layout.piano_key_fade;
 
         if self.params.global.bypass.value() {
@@ -122,6 +123,7 @@ impl EquartEditor {
                 FontId::new(80.0, egui::FontFamily::Name(GLOBAL_FONT.into())),
                 Color32::from_white_alpha(36),
             );
+            self.brand_click(ui, brand_rect);
             return;
         }
 
@@ -561,6 +563,7 @@ impl EquartEditor {
         }
 
         self.readout(&p, &plot, &display_controls);
+        self.brand_click(ui, brand_rect);
     }
 
     fn readout(&self, p: &egui::Painter, plot: &Plot, controls: &[BandControl; BAND_COUNT]) {
@@ -581,7 +584,7 @@ impl EquartEditor {
         }
 
         p.text(
-            plot.rect.min + Vec2::new(6.0, 10.0),
+            plot.rect.min + Vec2::new(10.0, 42.0),
             egui::Align2::LEFT_TOP,
             text,
             FontId::monospace(11.0),
@@ -592,4 +595,65 @@ impl EquartEditor {
             },
         );
     }
+    fn brand_click(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        if self.footer_menu_is_up() || self.drag.is_some() || self.marquee.is_some() {
+            return;
+        }
+
+        let response = ui
+            .interact(rect, ui.make_persistent_id("equart-brand"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        if response.clicked() {
+            let now = ui.input(|input| input.time);
+            self.settings.release(now);
+            self.scale.release(now);
+            self.layout.release(now);
+            self.preset.release(now);
+
+            if self.theme_open {
+                self.theme_open = false;
+                self.flush_theme(Some(ui.ctx()));
+            }
+
+            self.about.open(now);
+        }
+    }
+}
+
+fn draw_brand(ui: &egui::Ui, p: &egui::Painter, plot: &Plot, interactive: bool) -> Rect {
+    let logo_size = 24.0;
+    let top_left = plot.rect.min + Vec2::new(10.0, 10.0);
+    let font = FontId::new(19.0, egui::FontFamily::Name(GLOBAL_FONT.into()));
+    let text_size = p
+        .layout_no_wrap(crate::NAME.to_owned(), font.clone(), Color32::WHITE)
+        .size();
+    let rect = Rect::from_min_size(
+        top_left,
+        Vec2::new(logo_size + 7.0 + text_size.x, logo_size.max(text_size.y)),
+    );
+
+    let hovered = interactive
+        && ui
+            .ctx()
+            .pointer_hover_pos()
+            .is_some_and(|pos| rect.contains(pos));
+    let hover = ui.ctx().animate_bool_with_time(
+        ui.make_persistent_id("equart-brand-hover"),
+        hovered,
+        0.16,
+    );
+    let alpha = 0.34 + 0.28 * hover;
+    let ink = theme::current(p.ctx()).text.primary.gamma_multiply(alpha);
+
+    draw_logo(p, top_left, logo_size, ink);
+    p.text(
+        Pos2::new(top_left.x + logo_size + 7.0, top_left.y + logo_size * 0.5),
+        egui::Align2::LEFT_CENTER,
+        crate::NAME,
+        font,
+        ink,
+    );
+
+    rect
 }

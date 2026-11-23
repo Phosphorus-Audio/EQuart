@@ -19,6 +19,7 @@ use std::{
     time::Duration,
 };
 
+mod about;
 mod bands;
 mod layout;
 mod logo;
@@ -49,8 +50,6 @@ pub(crate) const CANVAS_H: f32 = 700.0;
 pub(crate) const CANVAS: Vec2 = Vec2::new(CANVAS_W, CANVAS_H);
 
 const BAR_ALPHA: u8 = 160;
-/// header is more transparent than footer
-const HEADER_ALPHA: u8 = 112;
 
 /// 60fps cap when idle
 const IDLE_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
@@ -94,6 +93,7 @@ pub struct EquartEditor {
     reveal_modifier: Option<(usize, modifiers::Modifier)>,
     /// `.equart` presets: stepper in the footer, browser card
     preset: presets::Browser,
+    about: about::About,
     /// dB range fan menu and which axis opened it
     dial: dial::Dial,
     dial_axis: spectrum::AxisScale,
@@ -150,6 +150,7 @@ impl EquartEditor {
             modifier_picker: None,
             reveal_modifier: None,
             preset: presets::Browser::new(presets, current_preset),
+            about: about::About::default(),
             dial: dial::Dial::SHUT,
             dial_axis: spectrum::AxisScale::Eq,
             #[cfg(debug_assertions)]
@@ -233,6 +234,7 @@ impl NiceEguiApp for EquartEditor {
         self.theme_open = false;
         self.theme_preset_dialog = None;
         self.preset.close();
+        self.about.shut();
         self.flush_theme(None);
     }
 
@@ -257,6 +259,7 @@ impl NiceEguiApp for EquartEditor {
             || self.scale.is_shown()
             || self.dial.is_shown()
             || self.preset.is_shown()
+            || self.about.is_animating(ui.input(|input| input.time))
             || self.drag.is_some()
             || self.marquee.is_some()
             || self.held_delta.is_some()

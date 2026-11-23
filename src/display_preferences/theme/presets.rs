@@ -56,8 +56,6 @@ fn im_disperser_light() -> Theme {
         background: Background {
             top: cream,
             bottom: hex(0xdceee2),
-            header_top: hex(0xf8fff9),
-            header_bottom: mint,
             footer_top: mint,
             footer_bottom: hex(0xcde5d6),
             footer_border: edge,
@@ -195,8 +193,6 @@ fn im_disperser_dark() -> Theme {
     theme.background = Background {
         top: black,
         bottom: surface,
-        header_top: raised,
-        header_bottom: black,
         footer_top: surface,
         footer_bottom: black,
         footer_border: edge,
@@ -280,8 +276,6 @@ fn dark_pink() -> Theme {
         background: Background {
             top: hex(0x0e0d0f),
             bottom: hex(0x161416),
-            header_top: gray(30),
-            header_bottom: gray(17),
             footer_top: gray(30),
             footer_bottom: gray(15),
             footer_border: hex(0x513b48),
@@ -367,8 +361,6 @@ fn f0lock() -> Theme {
         background: Background {
             top: gray(24),
             bottom: gray(32),
-            header_top: gray(66),
-            header_bottom: gray(43),
             footer_top: gray(48),
             footer_bottom: gray(37),
             footer_border: gray(67),
@@ -425,8 +417,6 @@ fn in_warm() -> Theme {
         background: Background {
             top: hex(0xece1d3),
             bottom: hex(0xd8c9b8),
-            header_top: hex(0xf8efe3),
-            header_bottom: sand,
             footer_top: sand,
             footer_bottom: hex(0xcdbba6),
             footer_border: hex(0xa19381),

@@ -43,7 +43,7 @@ pub(super) fn spectrum_ticks(floor: f32) -> [f32; 4] {
 
 pub(super) fn draw_grid_lines(p: &egui::Painter, plot: &Plot, outer: Rect) {
     let colors = theme::current(p.ctx()).grid;
-    let top = outer.top() + Layout::HEADER;
+    let top = outer.top();
     for (hz, labelled) in frequency_ticks(plot.max_hz) {
         let x = plot.x(hz);
         if (x - plot.rect.left()).abs() < 0.5 {
@@ -86,14 +86,14 @@ pub(super) fn draw_axis_labels(
     for (rect, alpha) in [
         (
             Rect::from_min_max(
-                Pos2::new(outer.left(), outer.top() + Layout::HEADER),
+                Pos2::new(outer.left(), outer.top()),
                 Pos2::new(plot.rect.left(), plot.rect.bottom()),
             ),
             eq_highlight,
         ),
         (
             Rect::from_min_max(
-                Pos2::new(plot.rect.right(), outer.top() + Layout::HEADER),
+                Pos2::new(plot.rect.right(), outer.top()),
                 Pos2::new(outer.right(), plot.rect.bottom()),
             ),
             spectrum_highlight,
@@ -103,7 +103,7 @@ pub(super) fn draw_axis_labels(
     }
 
     p.text(
-        Pos2::new(plot.rect.left(), outer.top() + Layout::HEADER + 8.0),
+        Pos2::new(plot.rect.left(), outer.top() + 18.0),
         egui::Align2::LEFT_CENTER,
         format!("EQ dB ±{:.0}", plot.range),
         FontId::proportional(10.0),
@@ -111,7 +111,7 @@ pub(super) fn draw_axis_labels(
     );
 
     p.text(
-        Pos2::new(plot.rect.right(), outer.top() + Layout::HEADER + 8.0),
+        Pos2::new(plot.rect.right(), outer.top() + 18.0),
         egui::Align2::RIGHT_CENTER,
         format!("{:.0} dBFS", plot.spectrum_range),
         FontId::proportional(10.0),
