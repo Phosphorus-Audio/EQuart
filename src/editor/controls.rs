@@ -435,6 +435,7 @@ impl EquartEditor {
             let double =
                 self.params.global.precision.value() == crate::precision::Precision::Double;
 
+            r.add_space(3.0);
             if menu::switch(
                 &mut r,
                 group.with("dsp-precision"),
@@ -455,6 +456,7 @@ impl EquartEditor {
                 );
             }
 
+            r.add_space(3.0);
             if menu::row(&mut r, "Flat all", None, false, accent) {
                 self.flatten_all();
             }
