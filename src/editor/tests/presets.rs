@@ -76,6 +76,15 @@ fn editor_with_store(store: Arc<presets::Store>) -> (egui::Context, EquartEditor
     (ctx, app)
 }
 
+fn set_output(editor: &mut EquartEditor, value: f32) {
+    let Some(setter) = editor.gui.as_ref().map(|gui| gui.param_setter()) else {
+        panic!("test host is not attached");
+    };
+    let params = Arc::clone(&editor.params);
+
+    editor.set(&setter, &params.global.output, value);
+}
+
 #[test]
 fn default_preset_seeds_once() {
     let store = temp_store("default");
@@ -166,6 +175,8 @@ fn preset_switch_replaces_state() {
     assert!((app.params.regions[0].low.value() - 500.0).abs() < 1.0);
 }
 
+
+
 #[test]
 fn preset_save_selects_entry() {
     let store = temp_store("save");
@@ -236,7 +247,7 @@ fn preset_step_empty_folder() {
     click(&ctx, &mut app, 2.1, find(&found, "User").center());
 
     let mid = CANVAS_H - Layout::FOOTER * 0.5;
-    let right = CANVAS_W - 14.0 - 8.0 - 49.0 - 10.0;
+    let right = CANVAS_W - 14.0 - 8.0 - 49.0 - 10.0 - crate::editor::presets::COMPARE_W - 20.0;
     let next = Pos2::new(right - 8.0, mid);
     click(&ctx, &mut app, 2.3, next);
 

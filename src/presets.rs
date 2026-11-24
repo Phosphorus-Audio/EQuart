@@ -38,15 +38,10 @@ pub(crate) struct Preset {
 
 impl Preset {
     pub(crate) fn capture(state: PluginState, name: &str) -> Self {
-        let mut state = state;
-        state
-            .fields
-            .retain(|key, _| SOUND_FIELDS.contains(&key.as_str()));
-
         Self {
             format: FORMAT,
             name: name.to_owned(),
-            state,
+            state: sound_state(state),
             legacy: BTreeMap::new(),
         }
     }
@@ -187,6 +182,14 @@ pub(crate) fn state_of(params: &EquartParams) -> PluginState {
         params: values,
         fields: params.serialize_fields(),
     }
+}
+
+pub(crate) fn sound_state(mut state: PluginState) -> PluginState {
+    state
+        .fields
+        .retain(|key, _| SOUND_FIELDS.contains(&key.as_str()));
+
+    state
 }
 
 pub(crate) fn restore(params: &EquartParams, state: &PluginState) {

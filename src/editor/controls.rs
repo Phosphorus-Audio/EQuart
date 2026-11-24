@@ -211,7 +211,6 @@ impl EquartEditor {
 
         self.layout = life;
 
-        // preset stepper, split off from the icon row by a hairline
         let divider = rect.left() + right_button - 49.0;
         self.preset_bar(ui, rect, now, divider - 10.0, divider);
     }

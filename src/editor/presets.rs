@@ -6,6 +6,10 @@ use modifiers::picker_button;
 const BAR_W: f32 = 142.0;
 const STEP_HIT: f32 = 16.0;
 const STEP_GLYPH: f32 = 11.0;
+pub(super) const COMPARE_W: f32 = 46.0;
+const COMPARE_GAP: f32 = 10.0;
+const COMPARE_BUTTON_W: f32 = 18.0;
+const COMPARE_SLASH_GAP: f32 = COMPARE_W - 2.0 * COMPARE_BUTTON_W;
 
 const CARD_W: f32 = 468.0;
 const CARD_H: f32 = 300.0;
@@ -101,6 +105,44 @@ impl Browser {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ComparisonSlot {
+    #[default]
+    A,
+    B,
+}
+
+impl ComparisonSlot {
+    const ALL: [Self; 2] = [Self::A, Self::B];
+
+    fn index(self) -> usize {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Comparison {
+    active: ComparisonSlot,
+    states: [Option<PluginState>; 2],
+}
+
+impl Comparison {
+    fn reset(&mut self) {
+        self.active = ComparisonSlot::A;
+        self.states = [None, None];
+    }
+}
+
 pub(super) struct SaveDraft {
     name: String,
     folder: String,
@@ -128,9 +170,11 @@ impl EquartEditor {
         divider_x: f32,
     ) {
         let mid = footer.center().y;
+        let comparison_divider = right - COMPARE_W - COMPARE_GAP;
+        let preset_right = comparison_divider - COMPARE_GAP;
         let bar = Rect::from_min_max(
-            Pos2::new(right - BAR_W, mid - 10.0),
-            Pos2::new(right, mid + 10.0),
+            Pos2::new(preset_right - BAR_W, mid - 10.0),
+            Pos2::new(preset_right, mid + 10.0),
         );
 
         let palette = theme::current(ui.ctx());
@@ -280,6 +324,78 @@ impl EquartEditor {
         }
 
         self.preset.life = life;
+        self.comparison_bar(ui, footer, comparison_divider, right);
+    }
+
+    fn comparison_bar(&mut self, ui: &mut egui::Ui, footer: Rect, divider_x: f32, right: f32) {
+        let mid = footer.center().y;
+        let palette = theme::current(ui.ctx());
+
+        ui.painter().vline(
+            divider_x,
+            (mid - 7.0)..=(mid + 7.0),
+            Stroke::new(1.0, palette.panel.border),
+        );
+        ui.painter().text(
+            Pos2::new(right - COMPARE_W * 0.5, mid),
+            egui::Align2::CENTER_CENTER,
+            "/",
+            FontId::proportional(11.0),
+            palette.text.muted,
+        );
+
+        let mut picked = None;
+
+        for (index, slot) in ComparisonSlot::ALL.into_iter().enumerate() {
+            let rect = Rect::from_min_size(
+                Pos2::new(
+                    right - COMPARE_W + index as f32 * (COMPARE_BUTTON_W + COMPARE_SLASH_GAP),
+                    mid - 10.0,
+                ),
+                Vec2::new(COMPARE_BUTTON_W, 20.0),
+            );
+            let selected = self.comparison.active == slot;
+            let tip = if slot == ComparisonSlot::A {
+                "Switch to A"
+            } else {
+                "Switch to B"
+            };
+            let response = ui
+                .interact(
+                    rect,
+                    ui.make_persistent_id(("comparison", index)),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(tip);
+            let hover = hover_amount(&response);
+            let ink = if selected {
+                palette.text.primary
+            } else {
+                palette.text.muted.gamma_multiply(0.55 + 0.25 * hover)
+            };
+            let font = if selected {
+                FontId::new(11.0, egui::FontFamily::Name(GLOBAL_FONT.into()))
+            } else {
+                FontId::proportional(11.0)
+            };
+
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                slot.label(),
+                font,
+                ink,
+            );
+
+            if response.clicked() {
+                picked = Some(slot);
+            }
+        }
+
+        if let Some(slot) = picked {
+            self.switch_comparison(slot);
+        }
     }
 
     fn browser_page(
@@ -575,12 +691,7 @@ impl EquartEditor {
 
         if commit {
             let name = draft.name.trim().to_owned();
-            let state = match &self.gui {
-                Some(gui) => gui.get_state(),
-                None => crate::presets::state_of(&self.params),
-            };
-
-            let preset = Preset::capture(state, &name);
+            let preset = Preset::capture(self.sound_state(), &name);
 
             match self.preset.store.save(&draft.folder, &name, &preset) {
                 Ok(path) => {
@@ -744,8 +855,20 @@ impl EquartEditor {
     }
 
     fn apply_preset(&mut self, preset: Preset) {
-        let state = preset.into_state(&self.params);
+        self.restore_plugin_state(preset.into_state(&self.params));
+        self.comparison.reset();
+    }
 
+    fn sound_state(&self) -> PluginState {
+        let state = match &self.gui {
+            Some(gui) => gui.get_state(),
+            None => crate::presets::state_of(&self.params),
+        };
+
+        crate::presets::sound_state(state)
+    }
+
+    fn restore_plugin_state(&mut self, state: PluginState) {
         match &self.gui {
             Some(gui) => gui.set_state(state),
             None => crate::presets::restore(&self.params, &state),
@@ -756,6 +879,28 @@ impl EquartEditor {
         self.held_audition = None;
         self.reveal_modifier = None;
         self.dial.shut();
+    }
+
+    fn switch_comparison(&mut self, slot: ComparisonSlot) {
+        if self.comparison.active == slot {
+            return;
+        }
+
+        let state = self.sound_state();
+        let target = slot.index();
+
+        if self.comparison.states[target].is_none() {
+            self.comparison.states[target] = Some(state.clone());
+        }
+
+        self.comparison.states[self.comparison.active.index()] = Some(state);
+
+        let state = self.comparison.states[target]
+            .clone()
+            .expect("comparison slot initialized before restore");
+
+        self.restore_plugin_state(state);
+        self.comparison.active = slot;
     }
 }
 

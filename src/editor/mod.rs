@@ -97,6 +97,7 @@ pub struct EquartEditor {
     reveal_modifier: Option<(usize, modifiers::Modifier)>,
     /// `.equart` presets: stepper in the footer, browser card
     preset: presets::Browser,
+    comparison: presets::Comparison,
     about: about::About,
     /// dB range fan menu and which axis opened it
     dial: dial::Dial,
@@ -158,6 +159,7 @@ impl EquartEditor {
             modifier_picker: None,
             reveal_modifier: None,
             preset: presets::Browser::new(presets, current_preset),
+            comparison: presets::Comparison::default(),
             about: about::About::default(),
             dial: dial::Dial::SHUT,
             dial_axis: spectrum::AxisScale::Eq,
