@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 pub(crate) struct MeterReadings {
     pub(crate) input_peak: f32,
     pub(crate) output_peak: f32,
+    pub(crate) output_max: f32,
     pub(crate) sample_rate: f32,
     pub(crate) latency_samples: u32,
 }
@@ -23,6 +24,7 @@ pub(crate) struct Telemetry {
     pub(crate) fir: fir::FirTelemetry,
     input_peak: AtomicU32,
     output_peak: AtomicU32,
+    output_max: AtomicU32,
     sample_rate: AtomicU32,
     latency_samples: AtomicU32,
     /// live dynamic gain offset per band for UI
@@ -48,6 +50,7 @@ impl Default for Telemetry {
             fir: Default::default(),
             input_peak: AtomicU32::new(0),
             output_peak: AtomicU32::new(0),
+            output_max: AtomicU32::new(0),
             sample_rate: AtomicU32::new(0),
             latency_samples: AtomicU32::new(0),
             dynamic: std::array::from_fn(|_| AtomicU32::new(0)),
@@ -68,6 +71,19 @@ impl Default for Telemetry {
 }
 
 impl Telemetry {
+    pub(crate) fn record_output_max(&self, peak: f32) {
+        // positive float bits have the same order as their values
+        let bits = peak.to_bits();
+
+        if peak.is_finite() && peak > 0.0 && bits > self.output_max.load(Ordering::Relaxed) {
+            self.output_max.fetch_max(bits, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn clear_output_max(&self) {
+        self.output_max.store(0, Ordering::Relaxed);
+    }
+
     pub(crate) fn set_region_dynamics_monitor(&self, target: Option<(usize, bool)>) {
         let value = target.map_or(0, |(index, record)| {
             (index as u32 + 1) | (u32::from(record) << 16)
@@ -176,6 +192,7 @@ impl Telemetry {
         MeterReadings {
             input_peak: f32::from_bits(self.input_peak.load(Ordering::Relaxed)),
             output_peak: f32::from_bits(self.output_peak.load(Ordering::Relaxed)),
+            output_max: f32::from_bits(self.output_max.load(Ordering::Relaxed)),
             sample_rate: self.sample_rate(),
             latency_samples: self.latency_samples.load(Ordering::Relaxed),
         }

@@ -1,5 +1,6 @@
 mod filter_controls;
 mod history;
+mod meter;
 mod modifier_interactions;
 mod objects;
 mod presets;

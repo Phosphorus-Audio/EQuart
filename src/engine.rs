@@ -348,8 +348,8 @@ impl Engine {
         right: &mut [T],
         sidechain: Option<Sidechain<'_, T>>,
         controls: &Controls,
-    ) {
-        self.process_channels(left, right, sidechain, controls, true);
+    ) -> f32 {
+        self.process_channels(left, right, sidechain, controls, true)
     }
 
     fn process_channels<T: HostSample>(
@@ -359,13 +359,14 @@ impl Engine {
         sidechain: Option<Sidechain<'_, T>>,
         controls: &Controls,
         stereo: bool,
-    ) {
+    ) -> f32 {
         #[cfg(all(debug_assertions, not(test)))]
         if self.test_signal {
             test_signal(left, right);
         }
 
         let frames = left.len().min(right.len());
+        let mut peak = 0.0_f32;
         let target_pan = if controls.bypass {
             0.0
         } else {
@@ -554,8 +555,10 @@ impl Engine {
                 self.fault = Some("equart: non-finite DSP output");
             }
 
+            let output_peak = output_peak.double() as f32;
+            peak = peak.max(output_peak);
             self.block_input = self.block_input.max(input_peak.double() as f32);
-            self.block_output = self.block_output.max(output_peak.double() as f32);
+            self.block_output = self.block_output.max(output_peak);
 
             self.frame += end - offset;
             self.modulation.clock.advance(end - offset);
@@ -569,6 +572,8 @@ impl Engine {
 
             offset = end;
         }
+
+        peak
     }
 
     fn apply_pan<T: HostSample>(&mut self, left: &mut [T], right: &mut [T], target: f64) {
@@ -597,19 +602,24 @@ impl Engine {
         buf: &mut [T],
         sidechain: Option<Sidechain<'_, T>>,
         controls: &Controls,
-    ) {
+    ) -> f32 {
         const TILE: usize = 512;
 
         let mut right = [T::zero(); TILE];
+        let mut peak = 0.0_f32;
+
         let sidechain = sidechain.filter(|[l, r]| l.len() >= buf.len() && r.len() >= buf.len());
+
         for (index, tile) in buf.chunks_mut(TILE).enumerate() {
             let right = &mut right[..tile.len()];
             right.copy_from_slice(tile);
             let start = index * TILE;
             let end = start + tile.len();
             let sidechain = sidechain.map(|[l, r]| [&l[start..end], &r[start..end]]);
-            self.process_channels(tile, right, sidechain, controls, false);
+            peak = peak.max(self.process_channels(tile, right, sidechain, controls, false));
         }
+
+        peak
     }
 
     #[cfg(test)]

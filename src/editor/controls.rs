@@ -20,7 +20,7 @@ const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 444.0;
 const MENU_CARD_H: f32 = 454.0;
 const LAYOUT_CARD_W: f32 = 220.0;
-const LAYOUT_CARD_H: f32 = 292.0;
+const LAYOUT_CARD_H: f32 = 319.0;
 const MENU_CARD_MARGIN: f32 = 14.0;
 const MENU_CARD_GAP: f32 = 18.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -321,6 +321,18 @@ impl EquartEditor {
         ) {
             self.save_display_preferences(ui.ctx(), |prefs| {
                 prefs.layout.meter_fade = !layout.meter_fade;
+            });
+        }
+
+        if menu::switch(
+            &mut content,
+            group.with("meter-peak-hold"),
+            "Meter peak hold",
+            layout.meter_peak_hold,
+            accent,
+        ) {
+            self.save_display_preferences(ui.ctx(), |prefs| {
+                prefs.layout.meter_peak_hold = !layout.meter_peak_hold;
             });
         }
 

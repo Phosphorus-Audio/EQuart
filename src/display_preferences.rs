@@ -110,6 +110,7 @@ impl SpectrumPreferences {
 pub(crate) struct LayoutPreferences {
     pub(crate) meter_visible: bool,
     pub(crate) meter_fade: bool,
+    pub(crate) meter_peak_hold: bool,
     pub(crate) piano_keys_visible: bool,
     pub(crate) piano_key_fade: bool,
     pub(crate) phase_curve: bool,
@@ -123,6 +124,7 @@ impl Default for LayoutPreferences {
         Self {
             meter_visible: true,
             meter_fade: true,
+            meter_peak_hold: true,
             piano_keys_visible: false,
             piano_key_fade: true,
             phase_curve: false,
@@ -534,6 +536,7 @@ mod tests {
             layout: LayoutPreferences {
                 meter_visible: false,
                 meter_fade: false,
+                meter_peak_hold: false,
                 piano_keys_visible: true,
                 piano_key_fade: false,
                 phase_curve: true,
@@ -555,6 +558,7 @@ mod tests {
         assert!(partial.spectrum.heatmap.above_grid);
         assert_eq!(partial.theme.heatmap, None);
         assert!(!partial.layout.meter_visible);
+        assert!(partial.layout.meter_peak_hold);
         assert_eq!(partial.spectrum.frame_rate, DEFAULT_FRAME_RATE);
         assert!(!partial.layout.auto_expand_eq_axis);
 
@@ -643,6 +647,7 @@ mod tests {
             "heatmap",
             "meter_visible",
             "meter_fade",
+            "meter_peak_hold",
             "piano_keys_visible",
             "piano_key_fade",
             "phase_curve",

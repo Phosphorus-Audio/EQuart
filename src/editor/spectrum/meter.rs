@@ -28,6 +28,8 @@ fn meter_color(colors: Meter, db: f32) -> Color32 {
 }
 
 const METER_SEGMENT_ROUNDING: u8 = 1;
+const READOUT_SMOOTHING_SECONDS: f32 = 0.32;
+const READOUT_SILENCE: f32 = 0.00001;
 
 pub(super) const METER_READOUT_SIZE: f32 = 8.0;
 
@@ -51,13 +53,24 @@ pub(super) fn meter_segments(track: Rect, pixels_per_point: f32) -> Vec<Rect> {
 
 impl EquartEditor {
     pub(in crate::editor) fn level_meter(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         p: &egui::Painter,
         canvas: Rect,
         values: &MeterReadings,
     ) {
-        let visible = self.meter_visible();
+        let layout = self.display_preferences.read().layout;
+        let column = meter_column(canvas);
+        let plot = Plot::with_ranges(
+            Layout::plot_outer(canvas, true),
+            values.sample_rate,
+            DEFAULT_AXIS_RANGE as f32,
+            self.spectrum_range(),
+            layout.piano_keys_visible,
+        );
+        let ladder = meter_rect(canvas, &plot);
+        let head = Rect::from_min_max(column.min, ladder.right_top());
+
         let id = ui.make_persistent_id("level-meter-gain");
         let mut pressing = false;
         let mut reset = false;
@@ -66,9 +79,10 @@ impl EquartEditor {
             let gain = &self.params.global.output;
             let setter = gui.param_setter();
 
-            if visible {
+            if layout.meter_visible {
+                let gain_area = if layout.meter_peak_hold { ladder } else { column };
                 let response = ui
-                    .interact(meter_column(canvas), id, Sense::drag())
+                    .interact(gain_area, id, Sense::drag())
                     .on_hover_and_drag_cursor(egui::CursorIcon::ResizeVertical);
                 pressing = response.dragged_by(egui::PointerButton::Primary);
 
@@ -122,16 +136,40 @@ impl EquartEditor {
             }
         }
 
-        if visible {
+        if layout.meter_visible {
+            let dt = ui.input(|input| input.stable_dt);
+            let blend = -(-dt / READOUT_SMOOTHING_SECONDS).exp_m1();
+            self.meter_smoothed_peak += (values.output_peak - self.meter_smoothed_peak) * blend;
+
             draw_level_meter(
                 p,
-                canvas,
-                values,
-                self.spectrum_range(),
-                self.meter_fade(),
-                self.piano_keys_visible(),
+                column,
+                ladder,
+                &plot,
+                values.output_peak,
+                layout.meter_fade,
                 pressing,
             );
+
+            let readout_peak = if layout.meter_peak_hold {
+                let response = ui
+                    .interact(head, id.with("peak-hold"), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Click to reset the maximum output peak");
+
+                if response.clicked() {
+                    self.telemetry.clear_output_max();
+                    0.0
+                } else {
+                    values.output_max
+                }
+            } else if self.meter_smoothed_peak >= READOUT_SILENCE {
+                self.meter_smoothed_peak
+            } else {
+                0.0
+            };
+
+            draw_meter_readout(p, head, peak_db(readout_peak), self.theme.meter);
         }
     }
 }
@@ -158,30 +196,20 @@ fn draw_gain_readout(p: &egui::Painter, canvas: Rect, pointer: Pos2, text: Strin
 
 fn draw_level_meter(
     p: &egui::Painter,
-    canvas: Rect,
-    values: &MeterReadings,
-    spectrum_range: f32,
+    column: Rect,
+    rect: Rect,
+    plot: &Plot,
+    peak: f32,
     fade_foot: bool,
-    piano_keys_visible: bool,
     pressing: bool,
 ) {
-    let plot = Plot::with_ranges(
-        Layout::plot_outer(canvas, true),
-        values.sample_rate,
-        DEFAULT_AXIS_RANGE as f32,
-        spectrum_range,
-        piano_keys_visible,
-    );
-
     let colors = theme::current(p.ctx()).meter;
-    let column = meter_column(canvas);
     p.rect_filled(column, 0.0, colors.well);
     p.line_segment(
         [column.left_top(), column.left_bottom()],
         Stroke::new(1.0, colors.edge),
     );
 
-    let rect = meter_rect(canvas, &plot);
     let painter = p.with_clip_rect(rect);
 
     let track = Rect::from_min_max(
@@ -190,12 +218,7 @@ fn draw_level_meter(
     );
     painter.rect_filled(track, 0.0, colors.track);
 
-    let peak = values.output_peak;
-    let peak_db = if peak > 0.0 {
-        20.0 * peak.log10()
-    } else {
-        f32::NEG_INFINITY
-    };
+    let peak_db = peak_db(peak);
 
     for segment in meter_segments(track, painter.pixels_per_point()) {
         let db = plot.spectrum_db((segment.top() + segment.bottom()) * 0.5);
@@ -234,8 +257,6 @@ fn draw_level_meter(
     if pressing {
         p.rect_filled(column, 0.0, Color32::from_black_alpha(48));
     }
-
-    draw_meter_readout(p, column, rect.top(), peak_db, colors);
 }
 
 fn fade_meter_foot(p: &egui::Painter, column: Rect, from: f32, well: Color32) {
@@ -266,8 +287,7 @@ pub(super) fn meter_fade_alpha(t: f32) -> u8 {
     (t.clamp(0.0, 1.0).powf(1.7) * 255.0).round() as u8
 }
 
-fn draw_meter_readout(p: &egui::Painter, column: Rect, ladder_top: f32, peak_db: f32, colors: Meter) {
-    let head = Rect::from_min_max(column.min, Pos2::new(column.right(), ladder_top));
+fn draw_meter_readout(p: &egui::Painter, head: Rect, peak_db: f32, colors: Meter) {
     if head.height() < 8.0 {
         return;
     }
@@ -290,10 +310,18 @@ fn draw_meter_readout(p: &egui::Painter, column: Rect, ladder_top: f32, peak_db:
 
 pub(super) fn meter_readout_text(peak_db: f32) -> String {
     if !peak_db.is_finite() {
-        "--".to_string()
+        "-INF".to_string()
     } else if peak_db > -9.95 {
         format!("{peak_db:.1}")
     } else {
         format!("{peak_db:.0}")
+    }
+}
+
+fn peak_db(peak: f32) -> f32 {
+    if peak > 0.0 {
+        20.0 * peak.log10()
+    } else {
+        f32::NEG_INFINITY
     }
 }

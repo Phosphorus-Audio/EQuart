@@ -17,15 +17,11 @@ impl EquartEditor {
             as f32
     }
 
-    /// fade out bottom of the level meter
-    pub(in crate::editor) fn meter_fade(&self) -> bool {
-        self.display_preferences.read().layout.meter_fade
-    }
-
     pub(in crate::editor) fn meter_visible(&self) -> bool {
         self.display_preferences.read().layout.meter_visible
     }
 
+    #[cfg(test)]
     pub(in crate::editor) fn piano_keys_visible(&self) -> bool {
         self.display_preferences.read().layout.piano_keys_visible
     }

@@ -323,15 +323,15 @@ impl Equart {
             None
         };
 
-        match channels.len() {
-            0 => {}
+        let output_peak = match channels.len() {
+            0 => 0.0,
             1 => self.engine.process_mono(channels[0], sidechain, &controls),
             _ => {
                 let (left, right) = channels.split_at_mut(1);
                 self.engine
-                    .process_block_with_sidechain(left[0], right[0], sidechain, &controls);
+                    .process_block_with_sidechain(left[0], right[0], sidechain, &controls)
             }
-        }
+        };
 
         if let Some(mut captured) = captured.take() {
             #[cfg(feature = "analyzer-profile")]
@@ -350,6 +350,8 @@ impl Equart {
         if let Some(fault) = self.engine.fault.take() {
             return ProcessStatus::Error(fault);
         }
+
+        self.telemetry.record_output_max(output_peak);
 
         if open {
             self.telemetry.publish(&self.engine);

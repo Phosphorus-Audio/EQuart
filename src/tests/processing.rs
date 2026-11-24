@@ -3,6 +3,22 @@ use crate::oversample::Oversampling;
 use crate::processing_mode::{LinearQuality, ProcessingMode};
 
 #[test]
+fn output_peak_tracks_short_blocks() {
+    let config = controls(flat_bands());
+    let mut engine = Engine::new(RATE);
+    let mut left = [-0.75_f32];
+    let mut right = [0.5_f32];
+
+    let peak = engine.process_block_with_sidechain(&mut left, &mut right, None, &config);
+    assert_eq!(peak, 0.75);
+
+    let mut mono = [0.0_f64; 513];
+    mono[0] = 0.875;
+    mono[512] = 0.25;
+    assert_eq!(engine.process_mono(&mut mono, None, &config), 0.875);
+}
+
+#[test]
 fn linear_phase_impulse_is_symmetric_and_dry_is_aligned() {
     let mut bands = flat_bands();
     bands[0] = band(1_000.0, 12.0, 2.0, FilterKind::Peak);

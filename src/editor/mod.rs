@@ -59,6 +59,7 @@ pub struct EquartEditor {
     params: Arc<EquartParams>,
     display_preferences: Arc<DisplayStore>,
     telemetry: Arc<Telemetry>,
+    meter_smoothed_peak: f32,
     analyzer_receiver: Arc<crate::analyzer::capture::Receiver>,
     spectrum_snapshot: crate::analyzer::capture::DisplaySpectrum,
     heatmap: spectrum::heatmap::Heatmap,
@@ -137,6 +138,7 @@ impl EquartEditor {
             params,
             display_preferences,
             telemetry,
+            meter_smoothed_peak: 0.0,
             analyzer_receiver,
             spectrum_snapshot: Default::default(),
             heatmap: Default::default(),
@@ -253,6 +255,7 @@ impl NiceEguiApp for EquartEditor {
     }
 
     fn editor_closed(&mut self) {
+        self.meter_smoothed_peak = 0.0;
         self.held_delta = None;
         self.held_audition = None;
         self.telemetry.set_delta_region(None);
