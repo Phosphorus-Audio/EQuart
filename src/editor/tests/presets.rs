@@ -165,6 +165,7 @@ fn preset_switch_replaces_state() {
     }
 
     assert!(app.params.regions[0].enabled.value());
+    set_output(&mut app, -3.0);
 
     let found = texts(&ctx, &mut app, 2.4);
     click(&ctx, &mut app, 2.5, find(&found, "Default").center());
@@ -173,6 +174,18 @@ fn preset_switch_replaces_state() {
     assert!(!app.params.is_placed(0), "dot is cleared");
     assert!(!app.params.regions[0].enabled.value());
     assert!((app.params.regions[0].low.value() - 500.0).abs() < 1.0);
+
+    app.step_history(crate::editor::history::Direction::Undo);
+    assert!(app.control(0).enabled);
+    assert!(app.params.is_placed(0));
+    assert!(app.params.regions[0].enabled.value());
+    assert!((app.params.regions[0].low.value() - 300.0).abs() < 1.0);
+    assert!((app.params.global.output.value() + 3.0).abs() < 0.001);
+    assert_eq!(app.preset.current.as_ref().unwrap().name, "Auto-LowCut");
+
+    app.step_history(crate::editor::history::Direction::Redo);
+    assert!(!app.params.regions[0].enabled.value());
+    assert_eq!(app.preset.current.as_ref().unwrap().name, "Default");
 }
 
 

@@ -1,4 +1,5 @@
 mod filter_controls;
+mod history;
 mod modifier_interactions;
 mod objects;
 mod presets;
@@ -195,7 +196,7 @@ impl GuiContextInner for TestHost {
 }
 
 fn attach_host(editor: &mut EquartEditor) {
-    editor.gui = Some(GuiContext::new(Arc::new(TestHost {
+    editor.attach_history(GuiContext::new(Arc::new(TestHost {
         params: Arc::clone(&editor.params),
     })));
 }

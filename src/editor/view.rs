@@ -62,6 +62,13 @@ impl EquartEditor {
             return;
         }
 
+        self.history_shortcut(ui.ctx());
+        let history_fields = self
+            .history_host
+            .as_ref()
+            .map(|_| history::SoundFields::read(&self.params));
+        self.history_recalled = false;
+
         self.reveal_pending_region();
         let values = self.telemetry.meters();
         self.theme = self.theme_for_frame(ui.ctx());
@@ -154,6 +161,26 @@ impl EquartEditor {
         self.about_dialog(ui.ctx(), canvas);
         self.show_conversion_dialog(ui.ctx());
         self.show_notice(ui.ctx(), canvas);
+
+        if let Some(before) = history_fields {
+            let edit_finished = ui.input(|input| !input.pointer.any_down() || !input.focused);
+            let action = self.history_action.take();
+            let mut history = self.history.lock().unwrap();
+
+            if !self.history_recalled {
+                history.capture_fields(before, history::SoundFields::read(&self.params));
+            }
+
+            if edit_finished {
+                history.finish_edit();
+                drop(history);
+
+                if let Some(direction) = action {
+                    self.step_history(direction);
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
     }
 
     pub(super) fn level_meters(

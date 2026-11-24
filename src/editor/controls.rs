@@ -26,8 +26,10 @@ const MENU_CARD_GAP: f32 = 18.0;
 const MENU_SCALE_W: f32 = 142.0;
 const FOOTER_BUTTON_W: f32 = 24.0;
 const FOOTER_BUTTON_H: f32 = 24.0;
+const HISTORY_BUTTONS: [f32; 2] = [25.0, 52.0];
+const HISTORY_DIVIDER_X: f32 = 70.0;
 /// x centers: bypass, scale, options
-const FOOTER_BUTTONS: [f32; 3] = [25.0, 52.0, 79.0];
+const FOOTER_BUTTONS: [f32; 3] = [88.0, 115.0, 142.0];
 const FOOTER_GLYPH: f32 = 16.0;
 
 impl EquartEditor {
@@ -144,6 +146,67 @@ impl EquartEditor {
                 .data_mut(|d| d.insert_temp(settings_group().with("open"), 0u32));
         }
         self.settings = card_life;
+
+        for (index, direction, shortcut, label) in [
+            (0, history::Direction::Undo, history::UNDO, "Undo"),
+            (1, history::Direction::Redo, history::REDO, "Redo"),
+        ] {
+            let available = self.history.lock().unwrap().available(direction);
+            let bounds = row(HISTORY_BUTTONS[index]);
+            let response = ui
+                .interact(
+                    bounds,
+                    ui.make_persistent_id(("footer-history", index)),
+                    if available {
+                        Sense::click()
+                    } else {
+                        Sense::hover()
+                    },
+                )
+                .on_hover_text(format!("{label} ({})", ui.ctx().format_shortcut(&shortcut)));
+            let response = if available {
+                response.on_hover_cursor(egui::CursorIcon::PointingHand)
+            } else {
+                response
+            };
+            let ink = if available {
+                self.theme.text.muted.lerp_to_gamma(
+                    self.theme.text.primary,
+                    if response.is_pointer_button_down_on() {
+                        1.0
+                    } else {
+                        hover_amount(&response)
+                    },
+                )
+            } else {
+                self.theme.text.muted.gamma_multiply(0.38)
+            };
+            let sign = if index == 0 { 1.0 } else { -1.0 };
+            let point = |x: f32, y: f32| bounds.center() + Vec2::new(sign * x, y);
+            let stroke = Stroke::new(1.5, ink);
+
+            ui.painter().add(egui::Shape::line(
+                vec![point(-1.5, -6.0), point(-6.0, -2.0), point(-1.5, 2.0)],
+                stroke,
+            ));
+            ui.painter().add(egui::epaint::CubicBezierShape::from_points_stroke(
+                [point(-6.0, -2.0), point(6.5, -4.0), point(7.5, 5.0), point(1.0, 5.0)],
+                false,
+                Color32::TRANSPARENT,
+                stroke,
+            ));
+
+            if available && response.clicked() {
+                self.history_action = Some(direction);
+            }
+        }
+
+        let mid = rect.center().y;
+        ui.painter().vline(
+            rect.left() + HISTORY_DIVIDER_X,
+            (mid - 7.0)..=(mid + 7.0),
+            Stroke::new(1.0, self.theme.panel.border),
+        );
 
         let right_button = rect.width() - 14.0 - FOOTER_GLYPH * 0.5;
         let theme = icon_button(

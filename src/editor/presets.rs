@@ -130,7 +130,7 @@ impl ComparisonSlot {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Comparison {
     active: ComparisonSlot,
     states: [Option<PluginState>; 2],
@@ -842,9 +842,15 @@ impl EquartEditor {
     fn load_preset(&mut self, entry: &Entry, now: f64) {
         match self.preset.store.load(&entry.path) {
             Ok(preset) => {
+                let before = self
+                    .history_host
+                    .as_ref()
+                    .map(|_| self.history_recall(self.sound_state()));
+
                 self.apply_preset(preset);
                 self.preset.folder = Some(entry.folder.clone());
                 self.preset.set_current(Some(entry.clone()));
+                self.record_recall(before);
                 self.notify(format!("Loaded {}", entry.name), now);
             }
             Err(error) => {
@@ -868,7 +874,7 @@ impl EquartEditor {
         crate::presets::sound_state(state)
     }
 
-    fn restore_plugin_state(&mut self, state: PluginState) {
+    pub(super) fn restore_plugin_state(&mut self, state: PluginState) {
         match &self.gui {
             Some(gui) => gui.set_state(state),
             None => crate::presets::restore(&self.params, &state),
@@ -889,6 +895,10 @@ impl EquartEditor {
         }
 
         let state = self.sound_state();
+        let before = self
+            .history_host
+            .as_ref()
+            .map(|_| self.history_recall(state.clone()));
         let target = slot.index();
 
         if self.comparison.states[target].is_none() {
@@ -903,6 +913,23 @@ impl EquartEditor {
 
         self.restore_plugin_state(state);
         self.comparison.active = slot;
+        self.record_recall(before);
+    }
+
+    fn history_recall(&self, state: PluginState) -> history::Recall {
+        history::Recall {
+            state,
+            preset: self.preset.current.clone(),
+            comparison: self.comparison.clone(),
+        }
+    }
+
+    fn record_recall(&mut self, before: Option<history::Recall>) {
+        if let Some(before) = before {
+            let after = self.history_recall(self.sound_state());
+            self.history.lock().unwrap().record_recall(before, after);
+            self.history_recalled = true;
+        }
     }
 }
 

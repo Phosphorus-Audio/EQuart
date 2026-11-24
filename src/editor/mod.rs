@@ -28,6 +28,7 @@ mod wheel;
 
 mod controls;
 mod dial;
+mod history;
 mod icons;
 mod knob;
 mod menu;
@@ -65,6 +66,10 @@ pub struct EquartEditor {
     fir_response: crate::telemetry::FirResponse,
     region_dynamics_response: crate::region::dynamics::MaskResponse,
     gui: Option<GuiContext>,
+    history_host: Option<GuiContext>,
+    history: Arc<std::sync::Mutex<history::History>>,
+    history_action: Option<history::Direction>,
+    history_recalled: bool,
     /// focused band for the panel
     pub(crate) selected: Option<usize>,
     selected_region: Option<usize>,
@@ -139,6 +144,10 @@ impl EquartEditor {
             fir_response: Default::default(),
             region_dynamics_response: Default::default(),
             gui: None,
+            history_host: None,
+            history: Default::default(),
+            history_action: None,
+            history_recalled: false,
             selected: None,
             selected_region: None,
             pending_region_selection: None,
@@ -239,7 +248,7 @@ impl NiceEguiApp for EquartEditor {
     ) -> Result<(), nice_plug_egui::baseview::HandlerError> {
         configure_style(&ctx);
         let _ = self.restore_ui_scale(&ctx);
-        self.gui = Some(gui);
+        self.attach_history(gui);
         Ok(())
     }
 
@@ -250,6 +259,8 @@ impl NiceEguiApp for EquartEditor {
         self.telemetry.set_region_dynamics_monitor(None);
         self.telemetry.set_audition(None);
         self.gui = None;
+        self.history_host = None;
+        self.history.lock().unwrap().finish_edit();
         self.drag = None;
         self.conversion_dialog = None;
         self.dial.shut();
