@@ -30,6 +30,8 @@ UninstallDisplayName=equart
 Source: "{#SourceDir}\equart.clap"; DestDir: "{commoncf64}\CLAP"; Flags: ignoreversion
 Source: "{#SourceDir}\equart.vst3\*"; DestDir: "{commoncf64}\VST3\equart.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{commoncf64}\VST3\equart.vst3"

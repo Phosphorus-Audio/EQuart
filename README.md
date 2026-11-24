@@ -4,6 +4,17 @@ Parametric EQ by Phosphorus Audio, built with [nice-plug](https://codeberg.org/R
 
 ![interface](docs/screenshot.png)
 
+## downloads
+
+[GitHub Releases](https://github.com/Phosphorus-Audio/EQuart/releases) provides CLAP
+and VST3 for Windows x64, macOS Universal, and Linux x64.
+
+- Windows includes an installer and a ZIP with both plugin formats.
+- macOS requires version 14 or later and supports Apple Silicon and Intel.
+  The bundles are ad-hoc signed. The PKG is unsigned and the distribution
+  has no Apple notarization.
+- Linux uses X11 and OpenGL. Install the CLAP and VST3 bundles under
+  `~/.clap/` and `~/.vst3/`, respectively.
 
 ## performance
 
