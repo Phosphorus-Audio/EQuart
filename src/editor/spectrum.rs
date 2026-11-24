@@ -492,6 +492,7 @@ impl EquartEditor {
                 self.set(&setter, &self.params.bands[index].q, q);
             }
             self.selected_region = None;
+            self.pending_region_selection = None;
             self.selected = Some(index);
         }
         if let Some((index, slope)) = slope_change {
@@ -500,6 +501,7 @@ impl EquartEditor {
                 self.set(&setter, &self.params.bands[index].slope, slope);
             }
             self.selected_region = None;
+            self.pending_region_selection = None;
             self.selected = Some(index);
         }
 
@@ -516,6 +518,7 @@ impl EquartEditor {
                 None
             } else if let Some(index) = nearest {
                 self.selected_region = None;
+                self.pending_region_selection = None;
                 self.selected = Some(index);
                 Some(PlotMenuTarget::Band(index))
             } else {

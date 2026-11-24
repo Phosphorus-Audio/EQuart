@@ -87,6 +87,49 @@ fn click_button(
     frame(ctx, editor, time + 0.03, vec![button(false)]);
 }
 
+fn text_center(
+    ctx: &egui::Context,
+    editor: &mut EquartEditor,
+    time: f64,
+    label: &str,
+) -> Option<Pos2> {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.draw(ui),
+    );
+    output.textures_delta.clear();
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == label => {
+                let rect = clipped.shape.visual_bounding_rect();
+                clipped.clip_rect.contains_rect(rect).then(|| rect.center())
+            }
+            _ => None,
+        })
+}
+
+fn click_text(ctx: &egui::Context, editor: &mut EquartEditor, time: f64, label: &str) {
+    let pos = text_center(ctx, editor, time, label)
+        .unwrap_or_else(|| panic!("missing visible label: {label}"));
+    click(ctx, editor, time + 0.01, pos);
+}
+
+fn has_visible_text(
+    ctx: &egui::Context,
+    editor: &mut EquartEditor,
+    time: f64,
+    label: &str,
+) -> bool {
+    text_center(ctx, editor, time, label).is_some()
+}
+
 /// count drawn band dots (8px dark grey circles)
 fn marker_count(ctx: &egui::Context, editor: &mut EquartEditor, time: f64) -> usize {
     fn walk(shape: &egui::Shape, count: &mut usize) {

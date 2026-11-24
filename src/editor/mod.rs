@@ -68,6 +68,11 @@ pub struct EquartEditor {
     /// focused band for the panel
     pub(crate) selected: Option<usize>,
     selected_region: Option<usize>,
+    pending_region_selection: Option<usize>,
+    band_conversion_baselines: [Option<BandControl>; BAND_COUNT],
+    region_conversion_baselines:
+        [Option<crate::region::RegionControl>; crate::region::REGION_COUNT],
+    conversion_dialog: Option<regions::ConversionDialog>,
     region_dynamics_compact: [bool; crate::region::REGION_COUNT],
     region_dynamics_paused: [bool; crate::region::REGION_COUNT],
     held_delta: Option<usize>,
@@ -136,6 +141,10 @@ impl EquartEditor {
             gui: None,
             selected: None,
             selected_region: None,
+            pending_region_selection: None,
+            band_conversion_baselines: Default::default(),
+            region_conversion_baselines: Default::default(),
+            conversion_dialog: None,
             region_dynamics_compact: Default::default(),
             region_dynamics_paused: Default::default(),
             held_delta: None,
@@ -242,6 +251,7 @@ impl NiceEguiApp for EquartEditor {
         self.telemetry.set_audition(None);
         self.gui = None;
         self.drag = None;
+        self.conversion_dialog = None;
         self.dial.shut();
         self.theme_open = false;
         self.theme_preset_dialog = None;
@@ -283,6 +293,7 @@ impl NiceEguiApp for EquartEditor {
             || self.dial.is_shown()
             || self.preset.is_shown()
             || self.about.is_animating(ui.input(|input| input.time))
+            || self.conversion_dialog.is_some()
             || self.drag.is_some()
             || self.marquee.is_some()
             || self.held_delta.is_some()

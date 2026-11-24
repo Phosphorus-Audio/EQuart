@@ -5,6 +5,17 @@ use spectrum::Plot;
 
 const REGION_PANEL_WIDTH: f32 = 344.0;
 
+#[derive(Clone, Copy)]
+pub(super) enum ConversionDialog {
+    BandToRegion { source: usize, destination: usize },
+    RegionToBand { source: usize, destination: usize },
+}
+
+fn same_float(a: f32, b: f32) -> bool {
+    let scale = a.abs().max(b.abs()).max(1.0);
+    (a - b).abs() <= scale * 1e-5
+}
+
 impl EquartEditor {
     pub(super) fn draw_regions(
         &mut self,
@@ -214,6 +225,7 @@ impl EquartEditor {
             ..Default::default()
         };
         self.write_region(&gui.param_setter(), index, control);
+        self.region_conversion_baselines[index] = Some(control);
         self.select_region(index);
     }
 
@@ -267,12 +279,118 @@ impl EquartEditor {
         rate * self.params.global.oversampling.value().factor() as f32
     }
 
+    fn band_needs_conversion_confirmation(&self, index: usize) -> bool {
+        let current = self.control(index);
+        let baseline = self.band_conversion_baselines[index].unwrap_or_default();
+        !Self::same_band_core(current, baseline)
+            || modifiers::Modifier::BAND
+                .iter()
+                .any(|modifier| modifier.attached(&self.params.band(index)))
+    }
+
+    fn region_needs_conversion_confirmation(&self, index: usize) -> bool {
+        let current = self.params.regions[index].control();
+        let baseline = self.region_conversion_baselines[index].unwrap_or_default();
+        !Self::same_region_core(current, baseline)
+            || modifiers::Modifier::REGION
+                .iter()
+                .any(|modifier| modifier.attached_to_region(&self.params.regions[index]))
+    }
+
+    fn same_band_core(a: BandControl, b: BandControl) -> bool {
+        a.enabled == b.enabled
+            && same_float(a.frequency, b.frequency)
+            && same_float(a.gain, b.gain)
+            && same_float(a.q, b.q)
+            && a.kind == b.kind
+            && a.slope == b.slope
+            && a.channel == b.channel
+    }
+
+    fn same_region_core(a: RegionControl, b: RegionControl) -> bool {
+        a.enabled == b.enabled
+            && a.bypass == b.bypass
+            && same_float(a.low, b.low)
+            && same_float(a.high, b.high)
+            && same_float(a.softness, b.softness)
+            && same_float(a.gain, b.gain)
+    }
+
+    pub(super) fn request_band_to_region(&mut self, index: usize, destination: usize) {
+        if self.band_needs_conversion_confirmation(index) {
+            self.conversion_dialog = Some(ConversionDialog::BandToRegion {
+                source: index,
+                destination,
+            });
+        } else {
+            self.convert_band_to_region(index, destination);
+        }
+    }
+
+    pub(super) fn request_region_to_band(&mut self, index: usize, destination: usize) {
+        if self.region_needs_conversion_confirmation(index) {
+            self.conversion_dialog = Some(ConversionDialog::RegionToBand {
+                source: index,
+                destination,
+            });
+        } else {
+            self.convert_region_to_band(index, destination);
+        }
+    }
+
+    pub(super) fn show_conversion_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.conversion_dialog else {
+            return;
+        };
+        let (heading, message) = match dialog {
+            ConversionDialog::BandToRegion { .. } => (
+                "Switch to Spectral Region?",
+                "This Band has edited parameters or modifiers. Core filter settings will be converted, but its modifiers will be discarded.",
+            ),
+            ConversionDialog::RegionToBand { .. } => (
+                "Switch to Band?",
+                "This Spectral Region has edited parameters or modifiers. Core settings will be converted, but its modifiers will be discarded.",
+            ),
+        };
+        let modal =
+            egui::Modal::new(egui::Id::unique("equart-conversion-dialog")).show(ctx, |ui| {
+                ui.heading(heading);
+                ui.label(message);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        ui.close();
+                    }
+                    ui.button("Continue").clicked()
+                })
+                .inner
+            });
+
+        if modal.inner {
+            self.conversion_dialog = None;
+            match dialog {
+                ConversionDialog::BandToRegion {
+                    source,
+                    destination,
+                } => self.convert_band_to_region(source, destination),
+                ConversionDialog::RegionToBand {
+                    source,
+                    destination,
+                } => self.convert_region_to_band(source, destination),
+            }
+        } else if modal.should_close() {
+            self.conversion_dialog = None;
+        }
+        ctx.request_repaint();
+    }
+
     pub(super) fn convert_band_to_region(&mut self, index: usize, destination: usize) {
         let Some(gui) = &self.gui else { return };
         let setter = gui.param_setter();
         let control = RegionControl::from_band(self.control(index), self.conversion_rate());
         self.reset_band(&setter, index);
+        self.band_conversion_baselines[index] = None;
         self.write_region(&setter, destination, control);
+        self.region_conversion_baselines[destination] = Some(control);
         self.select_region(destination);
     }
 
@@ -283,6 +401,7 @@ impl EquartEditor {
             .control()
             .to_band(self.conversion_rate());
         self.reset_region(&setter, index);
+        self.region_conversion_baselines[index] = None;
         self.reset_band(&setter, destination);
         let band = self.params.band(destination);
         self.set(&setter, &band.kind, control.kind);
@@ -292,18 +411,34 @@ impl EquartEditor {
         self.set(&setter, &band.slope, control.slope);
         self.params.mark_placed(destination);
         self.set(&setter, &band.enabled, control.enabled);
+        self.band_conversion_baselines[destination] = Some(control);
         self.clear_selection();
         self.pick_only(destination);
     }
 
     fn select_region(&mut self, index: usize) {
         self.clear_selection();
-        self.selected_region = Some(index);
+        if self.params.regions[index].enabled.value() {
+            self.selected_region = Some(index);
+        } else {
+            self.pending_region_selection = Some(index);
+        }
+    }
+
+    pub(super) fn reveal_pending_region(&mut self) {
+        let Some(index) = self.pending_region_selection else {
+            return;
+        };
+        if self.params.regions[index].enabled.value() {
+            self.pending_region_selection = None;
+            self.selected_region = Some(index);
+        }
     }
 
     fn delete_region(&mut self, index: usize) {
         let Some(gui) = &self.gui else { return };
         self.reset_region(&gui.param_setter(), index);
+        self.region_conversion_baselines[index] = None;
         self.clear_selection();
     }
 
@@ -461,7 +596,7 @@ impl EquartEditor {
         if switch.clicked()
             && let Some(destination) = destination
         {
-            self.convert_region_to_band(index, destination);
+            self.request_region_to_band(index, destination);
             return;
         }
         self.show_modifier_picker(&add, target);

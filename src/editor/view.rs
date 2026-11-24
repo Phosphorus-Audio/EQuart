@@ -62,6 +62,7 @@ impl EquartEditor {
             return;
         }
 
+        self.reveal_pending_region();
         let values = self.telemetry.meters();
         self.theme = self.theme_for_frame(ui.ctx());
         let accent = self.accent();
@@ -151,6 +152,7 @@ impl EquartEditor {
         self.footer(ui, footer, &values);
         self.axis_dial(ui, canvas);
         self.about_dialog(ui.ctx(), canvas);
+        self.show_conversion_dialog(ui.ctx());
         self.show_notice(ui.ctx(), canvas);
     }
 

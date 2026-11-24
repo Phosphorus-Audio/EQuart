@@ -193,6 +193,13 @@ impl EquartEditor {
                     self.set(&setter, &band.slope, CutSlope::Db12);
                     self.set(&setter, &band.enabled, true);
 
+                    let mut baseline = controls[index];
+                    baseline.kind = kind;
+                    baseline.frequency = hz;
+                    baseline.gain = if kind.has_gain() { db } else { 0.0 };
+                    baseline.slope = CutSlope::Db12;
+                    baseline.enabled = true;
+                    self.band_conversion_baselines[index] = Some(baseline);
                     self.params.mark_placed(index);
                 }
                 self.pick_only(index);
@@ -211,6 +218,7 @@ impl EquartEditor {
 
         let centre = band.center();
         self.selected_region = None;
+        self.pending_region_selection = None;
         self.picked.fill(false);
         self.selected = markers
             .iter()

@@ -5,6 +5,7 @@ impl EquartEditor {
     /// Make one band the whole selection, panel and all.
     pub(crate) fn pick_only(&mut self, index: usize) {
         self.selected_region = None;
+        self.pending_region_selection = None;
         self.picked = [false; crate::band::BAND_COUNT];
         self.picked[index] = true;
         self.selected = Some(index);
@@ -14,6 +15,8 @@ impl EquartEditor {
         self.picked = [false; crate::band::BAND_COUNT];
         self.selected = None;
         self.selected_region = None;
+        self.pending_region_selection = None;
+        self.conversion_dialog = None;
         self.drag = None;
         self.slope_wheel = 0.0;
         self.modifier_picker = None;
@@ -42,6 +45,7 @@ impl EquartEditor {
     pub(super) fn delete_band(&mut self, index: usize) {
         let Some(gui) = &self.gui else { return };
         self.reset_band(&gui.param_setter(), index);
+        self.band_conversion_baselines[index] = None;
         self.clear_selection();
     }
 
@@ -58,6 +62,8 @@ impl EquartEditor {
                 self.reset_region(&setter, index);
             }
         }
+        self.band_conversion_baselines.fill(None);
+        self.region_conversion_baselines.fill(None);
         self.clear_selection();
     }
 

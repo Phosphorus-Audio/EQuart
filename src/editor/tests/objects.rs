@@ -275,8 +275,21 @@ fn panel_converts_band_region() {
 
     let convert = panel_button(Layout::PANEL_W - 18.0, 77.5);
     click(&ctx, &mut editor, 0.0, convert);
+    assert!(editor.conversion_dialog.is_some());
+    assert!(editor.band_exists(0));
+    click_text(&ctx, &mut editor, 0.1, "Continue");
     assert_eq!(editor.selected_region, Some(0));
     assert!(!editor.band_exists(0));
+    frame(&ctx, &mut editor, 0.2, vec![]);
+    assert_eq!(editor.selected_region, Some(0));
+
+    assert!(has_visible_text(
+        &ctx,
+        &mut editor,
+        0.3,
+        "Spectral Region 1"
+    ));
+
     let region = params.regions[0].control();
     assert!(region.enabled && region.bypass);
     assert_eq!(region.gain, 4.25);
@@ -309,4 +322,132 @@ fn panel_converts_band_region() {
     );
     assert_eq!(editor.selected, Some(0));
     assert_eq!(editor.control(0), band);
+}
+
+#[test]
+fn edited_band_conversion_can_be_cancelled() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    let params = editor.params.clone();
+    editor.set_band_enabled(0, true);
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    editor.set(
+        &setter,
+        &params.band(0).frequency,
+        axis_plot().hz(CANVAS.x * 0.5),
+    );
+    editor.band_conversion_baselines[0] = Some(editor.control(0));
+    editor.set(&setter, &params.band(0).gain, 4.0);
+    editor.pick_only(0);
+    let original = editor.control(0);
+
+    let convert = panel_button(Layout::PANEL_W - 18.0, 77.5);
+    click(&ctx, &mut editor, 0.0, convert);
+    assert!(matches!(
+        editor.conversion_dialog,
+        Some(regions::ConversionDialog::BandToRegion { source: 0, .. })
+    ));
+    assert!(editor.band_exists(0));
+    assert!(!params.regions[0].enabled.value());
+    assert!(has_visible_text(
+        &ctx,
+        &mut editor,
+        0.05,
+        "Switch to Spectral Region?"
+    ));
+
+    click_text(&ctx, &mut editor, 0.1, "Cancel");
+    assert!(editor.conversion_dialog.is_none());
+    assert_eq!(editor.selected, Some(0));
+    assert_eq!(editor.control(0), original);
+    assert!(!params.regions[0].enabled.value());
+
+    click(&ctx, &mut editor, 0.3, convert);
+    click_text(&ctx, &mut editor, 0.35, "Continue");
+    assert_eq!(editor.selected_region, Some(0));
+    assert!(!editor.band_exists(0));
+}
+
+#[test]
+fn band_modifier_conversion_requires_confirmation() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    let params = editor.params.clone();
+    editor.set_band_enabled(0, true);
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    editor.set(
+        &setter,
+        &params.band(0).frequency,
+        axis_plot().hz(CANVAS.x * 0.5),
+    );
+    editor.band_conversion_baselines[0] = Some(editor.control(0));
+    editor.set(&setter, &params.band(0).pitch.enabled, true);
+    editor.pick_only(0);
+
+    let canvas = Rect::from_min_size(Pos2::ZERO, CANVAS);
+    let panel = Layout::panel(canvas, canvas.center().x);
+    let width = (Layout::PANEL_W + modifiers::Modifier::Pitch.width()).min(canvas.width() - 24.0);
+    let left = panel.left().min(canvas.right() - 12.0 - width);
+    let convert = Pos2::new(left + Layout::PANEL_W - 18.0, panel.top() + 77.5);
+    click(&ctx, &mut editor, 0.0, convert);
+    assert!(editor.conversion_dialog.is_some());
+    click_text(&ctx, &mut editor, 0.1, "Continue");
+    assert_eq!(editor.selected_region, Some(0));
+    assert!(!params.band(0).pitch.enabled.value());
+}
+
+#[test]
+fn edited_region_conversion_can_be_cancelled() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    let params = editor.params.clone();
+    editor.place_region(1_000.0);
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    editor.set(&setter, &params.regions[0].gain, -2.5);
+    let original = params.regions[0].control();
+    let panel = editor
+        .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 48_000.0)
+        .unwrap();
+    let convert = Pos2::new(panel.right() - 18.0, panel.top() + 77.5);
+
+    click(&ctx, &mut editor, 0.0, convert);
+    assert!(matches!(
+        editor.conversion_dialog,
+        Some(regions::ConversionDialog::RegionToBand { source: 0, .. })
+    ));
+    assert!(params.regions[0].enabled.value());
+    assert!(!editor.band_exists(0));
+    assert!(has_visible_text(&ctx, &mut editor, 0.05, "Switch to Band?"));
+
+    click_text(&ctx, &mut editor, 0.1, "Cancel");
+    assert!(editor.conversion_dialog.is_none());
+    assert_eq!(editor.selected_region, Some(0));
+    assert!(params.regions[0].control() == original);
+    assert!(!editor.band_exists(0));
+
+    click(&ctx, &mut editor, 0.3, convert);
+    click_text(&ctx, &mut editor, 0.35, "Continue");
+    assert_eq!(editor.selected, Some(0));
+    assert!(!params.regions[0].enabled.value());
+    assert!(editor.band_exists(0));
+}
+
+#[test]
+fn region_modifier_conversion_requires_confirmation() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    let params = editor.params.clone();
+    editor.place_region(1_000.0);
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    editor.set(&setter, &params.regions[0].harmonic.enabled, true);
+    let panel = editor
+        .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 48_000.0)
+        .unwrap();
+    let convert = Pos2::new(panel.left() + 326.0, panel.top() + 77.5);
+
+    click(&ctx, &mut editor, 0.0, convert);
+    assert!(editor.conversion_dialog.is_some());
+    click_text(&ctx, &mut editor, 0.1, "Continue");
+    assert_eq!(editor.selected, Some(0));
+    assert!(!params.regions[0].harmonic.enabled.value());
 }

@@ -874,6 +874,8 @@ impl EquartEditor {
             None => crate::presets::restore(&self.params, &state),
         }
 
+        self.band_conversion_baselines.fill(None);
+        self.region_conversion_baselines.fill(None);
         self.clear_selection();
         self.held_delta = None;
         self.held_audition = None;

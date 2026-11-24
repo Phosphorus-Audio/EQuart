@@ -409,7 +409,7 @@ impl EquartEditor {
         if switch.clicked()
             && let Some(destination) = destination
         {
-            self.convert_band_to_region(index, destination);
+            self.request_band_to_region(index, destination);
             return;
         }
         self.show_modifier_picker(&add, target);
