@@ -354,7 +354,8 @@ impl EquartEditor {
 
     pub(super) fn region_panel_rect(&self, canvas: Rect, rate: f32) -> Option<Rect> {
         let index = self.selected_region?;
-        let control = self.params.regions[index].control();
+        let region = &self.params.regions[index];
+        let control = region.control();
         if !control.enabled {
             return None;
         }
@@ -362,10 +363,16 @@ impl EquartEditor {
         let [low, high] = control.bounds();
 
         let plot = Plot::new(Layout::plot_outer(canvas, self.meter_visible()), rate);
-        let height = if control.dynamics.enabled {
-            modifiers::SPECTRAL_DYNAMICS_HEIGHT
-        } else {
-            Layout::PANEL_H
+
+        let has_response = region
+            .responses
+            .iter()
+            .any(|response| response.enabled.value());
+        let height = match (control.dynamics.enabled, has_response) {
+            (true, false) => modifiers::SPECTRAL_DYNAMICS_HEIGHT,
+            (false, true) => modifiers::RESPONSE_HEIGHT,
+            (true, true) => modifiers::SPECTRAL_DYNAMICS_HEIGHT.max(modifiers::RESPONSE_HEIGHT),
+            (false, false) => Layout::PANEL_H,
         };
         Some(Layout::panel_with_size(
             canvas,
@@ -481,10 +488,17 @@ impl EquartEditor {
                 ),
             );
             origin = module.right_top();
+
             if self.reveal_modifier == Some((index, modifier)) {
+                let clip = ui.clip_rect();
+
                 ui.scroll_to_rect(module, Some(egui::Align::Max));
-                self.reveal_modifier = None;
+
+                if module.right() <= clip.right() + 0.5 {
+                    self.reveal_modifier = None;
+                }
             }
+
             modifier.show(self, ui, module, index);
         }
         ui.painter().text(

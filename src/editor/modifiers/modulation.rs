@@ -1,3 +1,4 @@
+use super::relation::route_title;
 use super::*;
 use crate::modulation::{Division, Lfo, Mapping, Target, Timing, Wave};
 use crate::processing_mode::ProcessingMode;
@@ -110,7 +111,7 @@ impl EquartEditor {
             |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(COLUMN_GAP, 4.0);
                 column(ui, GRAPH_WIDTH, |ui| {
-                    mapping_title(ui, control.source, control.target);
+                    route_title(ui, control.source.label(), control.target.label());
                     let graph = if control.bypass
                         || !control.target.supported(band)
                         || !control.source.supported(band)
@@ -287,22 +288,6 @@ fn control_button<'a>(ui: &egui::Ui, label: &'a str) -> egui::Button<'a> {
         .wrap_mode(egui::TextWrapMode::Extend)
 }
 
-fn mapping_title(ui: &mut egui::Ui, source: Target, target: Target) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        ui.strong(source.label());
-
-        let (icon, _) = ui.allocate_exact_size(Vec2::new(12.0, 13.0), Sense::hover());
-        ui.painter().arrow(
-            icon.center() - Vec2::new(5.0, 0.0),
-            Vec2::new(10.0, 0.0),
-            Stroke::new(1.2, ui.visuals().weak_text_color()),
-        );
-
-        ui.strong(target.label());
-    });
-}
-
 fn mapping_graph(
     ui: &mut egui::Ui,
     mapping: Mapping,
@@ -310,7 +295,7 @@ fn mapping_graph(
     rate: f32,
     accent: Color32,
 ) {
-    use super::relation::{Axis, Diagram, relation};
+    use super::relation::{Axis, DEFAULT_HEIGHT, Diagram, relation};
     let axes = [mapping.source, mapping.target].map(|target| Axis {
         scale: target.scale(),
         bounds: target.limits(rate),
@@ -323,6 +308,7 @@ fn mapping_graph(
             points: &[[source, effective]],
             inactive: 0,
             accent,
+            height: DEFAULT_HEIGHT,
         },
         |input| mapping.output(input, base, rate),
         |input, output, _| {

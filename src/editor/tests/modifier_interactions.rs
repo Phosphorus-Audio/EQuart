@@ -1,5 +1,43 @@
 use super::*;
 
+fn text_center(
+    ctx: &egui::Context,
+    editor: &mut EquartEditor,
+    time: f64,
+    label: &str,
+) -> Option<Pos2> {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.draw(ui),
+    );
+    output.textures_delta.clear();
+
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == label => {
+                let bounds = clipped.shape.visual_bounding_rect();
+
+                clipped
+                    .clip_rect
+                    .contains_rect(bounds)
+                    .then(|| bounds.center())
+            }
+            _ => None,
+        })
+}
+
+fn find_text(ctx: &egui::Context, editor: &mut EquartEditor, time: f64, label: &str) -> Pos2 {
+    text_center(ctx, editor, time, label)
+        .unwrap_or_else(|| panic!("the requested control is not visible: {label}"))
+}
+
 #[test]
 fn spectral_dynamics_panel() {
     let (ctx, mut editor) = editor();
@@ -240,50 +278,33 @@ fn response_picker_add() {
     let (ctx, mut editor) = editor();
     attach_host(&mut editor);
     editor.place_region(1_200.0);
+
     let canvas = Rect::from_min_size(Pos2::ZERO, CANVAS);
     let panel = editor.region_panel_rect(canvas, 48_000.0).unwrap();
+
     click(
         &ctx,
         &mut editor,
         0.0,
-        Pos2::new(panel.right() - 18.0, panel.top() + 108.5),
+        Pos2::new(panel.right() - 18.0, panel.top() + panel.height() * 0.875),
     );
 
-    let find = |editor: &mut EquartEditor, time, label| {
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(canvas),
-                time: Some(time),
-                focused: true,
-                ..Default::default()
-            },
-            |ui| editor.draw(ui),
-        );
-        output.textures_delta.clear();
-        output
-            .shapes
-            .iter()
-            .find_map(|clipped| match &clipped.shape {
-                egui::Shape::Text(text) if text.galley.text() == label => {
-                    let bounds = clipped.shape.visual_bounding_rect();
-                    clipped
-                        .clip_rect
-                        .contains_rect(bounds)
-                        .then(|| bounds.center())
-                }
-                _ => None,
-            })
-            .expect("the requested control is visible")
-    };
+    let row = find_text(&ctx, &mut editor, 0.8, "Response (0/2)");
 
-    let row = find(&mut editor, 0.8, "Response");
+    assert!(text_center(&ctx, &mut editor, 0.81, "Response").is_none());
+    assert!(text_center(&ctx, &mut editor, 0.82, "Response 2").is_none());
+
     click(&ctx, &mut editor, 1.0, row);
-    let add = find(&mut editor, 1.1, "Add");
+    let add = find_text(&ctx, &mut editor, 1.1, "Add");
     click(&ctx, &mut editor, 1.2, add);
+
     for tick in 0..15 {
         frame(&ctx, &mut editor, 1.3 + f64::from(tick) * 0.04, Vec::new());
     }
-    find(&mut editor, 2.0, "Lock reference");
+
+    find_text(&ctx, &mut editor, 2.0, "Response 1");
+    find_text(&ctx, &mut editor, 2.01, "Region Gain");
+    find_text(&ctx, &mut editor, 2.02, "Edge Softness");
 
     let params = editor.params.clone();
     let region = &params.regions[0];
@@ -295,25 +316,122 @@ fn response_picker_add() {
     );
     assert!((region.responses[0].control().reference - region.gain.value()).abs() < 1e-6);
     assert!(!region.responses[1].enabled.value());
+}
 
-    let setter = editor.gui.as_ref().unwrap().param_setter();
-    editor.set(&setter, &region.responses[0].strength, 0.25);
-    editor.set(&setter, &region.responses[1].enabled, true);
-    editor.reveal_modifier = Some((0, crate::editor::modifiers::Modifier::Response(1)));
-    for tick in 0..15 {
-        frame(&ctx, &mut editor, 2.2 + f64::from(tick) * 0.04, Vec::new());
+#[test]
+fn response_picker_uses_next_slot() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    editor.place_region(1_200.0);
+
+    let params = editor.params.clone();
+    let region = &params.regions[0];
+
+    {
+        let setter = editor.gui.as_ref().unwrap().param_setter();
+        editor.set(&setter, &region.responses[0].enabled, true);
+        editor.set(&setter, &region.responses[0].strength, 0.25);
     }
 
-    let handle = find(&mut editor, 3.0, "Response 2");
+    let canvas = Rect::from_min_size(Pos2::ZERO, CANVAS);
+    let panel = editor.region_panel_rect(canvas, 48_000.0).unwrap();
+
+    click(
+        &ctx,
+        &mut editor,
+        0.0,
+        Pos2::new(panel.left() + 326.0, panel.top() + panel.height() * 0.875),
+    );
+
+    let row = find_text(&ctx, &mut editor, 0.8, "Response (1/2)");
+    click(&ctx, &mut editor, 1.0, row);
+    let add = find_text(&ctx, &mut editor, 1.1, "Add");
+    click(&ctx, &mut editor, 1.2, add);
+
+    for tick in 0..15 {
+        frame(&ctx, &mut editor, 1.3 + f64::from(tick) * 0.04, Vec::new());
+    }
+
+    let handle = find_text(&ctx, &mut editor, 2.0, "Response 2");
+    find_text(&ctx, &mut editor, 2.81, "Region Gain");
+    find_text(&ctx, &mut editor, 2.82, "Edge Softness");
+    assert!(region.responses[1].enabled.value());
+    assert_eq!(region.responses[0].strength.value(), 0.25);
+
+    {
+        let setter = editor.gui.as_ref().unwrap().param_setter();
+        editor.set(&setter, &region.responses[1].strength, 0.5);
+    }
+
+    click(&ctx, &mut editor, 3.0, handle);
     click(&ctx, &mut editor, 3.1, handle);
-    click(&ctx, &mut editor, 3.2, handle);
     assert!(region.reverse_responses.value());
     assert_eq!(region.responses[0].strength.value(), 0.25);
+
+    editor.reveal_modifier = Some((0, modifiers::Modifier::Response(1)));
+
+    for tick in 0..10 {
+        frame(&ctx, &mut editor, 3.2 + f64::from(tick) * 0.04, Vec::new());
+    }
+
+    let handle = find_text(&ctx, &mut editor, 3.7, "Response 2");
+    click(&ctx, &mut editor, 3.8, handle + Vec2::new(0.0, 43.0));
+    let disable = find_text(&ctx, &mut editor, 4.3, "Disable modifier");
+    click(&ctx, &mut editor, 4.4, disable);
+    assert!(!region.responses[1].enabled.value());
+    assert_eq!(region.responses[1].strength.value(), 0.5);
 
     let setter = editor.gui.as_ref().unwrap().param_setter();
     editor.reset_region(&setter, 0);
     assert!(!region.responses[0].enabled.value());
     assert!(!region.reverse_responses.value());
+}
+
+#[test]
+fn response_picker_hides_when_full() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+    editor.place_region(1_200.0);
+
+    let params = editor.params.clone();
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+
+    for response in &params.regions[0].responses {
+        editor.set(&setter, &response.enabled, true);
+    }
+
+    let canvas = Rect::from_min_size(Pos2::ZERO, CANVAS);
+    let panel = editor.region_panel_rect(canvas, 48_000.0).unwrap();
+
+    click(
+        &ctx,
+        &mut editor,
+        0.0,
+        Pos2::new(panel.left() + 326.0, panel.top() + panel.height() * 0.875),
+    );
+
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(canvas),
+            time: Some(0.8),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.draw(ui),
+    );
+    output.textures_delta.clear();
+    assert!(
+        editor
+            .modifier_picker
+            .as_ref()
+            .is_some_and(modifiers::Picker::is_up)
+    );
+    assert!(output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "Harmonic")
+    }));
+    assert!(!output.shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text().starts_with("Response ("))
+    }));
 }
 
 #[test]

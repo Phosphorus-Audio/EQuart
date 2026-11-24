@@ -2,6 +2,7 @@ use super::*;
 use crate::dynamics::DetectorMode;
 use crate::params::BandParams;
 use crate::pitch::{DetectionMode, DetectionRange, PitchDetectionParams, TargetMode};
+use std::borrow::Cow;
 
 mod dynamics;
 mod harmonic;
@@ -9,6 +10,7 @@ mod modulation;
 mod relation;
 mod response;
 mod spectral_dynamics;
+pub(super) use response::HEIGHT as RESPONSE_HEIGHT;
 pub(super) use spectral_dynamics::HEIGHT as SPECTRAL_DYNAMICS_HEIGHT;
 
 const HEADER_WIDTH: f32 = 36.0;
@@ -60,7 +62,7 @@ impl Modifier {
             Self::Lfo => "LFO",
             Self::Harmonic => "Harmonic",
             Self::Resonance => "Resonance",
-            Self::Response(slot) => ["Response", "Response 2"][slot],
+            Self::Response(slot) => ["Response 1", "Response 2"][slot],
             Self::SpectralDynamics => "Dynamics",
         }
     }
@@ -182,12 +184,37 @@ impl EquartEditor {
         if !picker.life.is_shown() {
             return;
         }
+        let mut region_choices = [Modifier::Harmonic; Modifier::REGION.len()];
+        let mut choice_count = 0;
+        let mut response_count = 0;
         let (choices, accent) = match target {
             ModifierTarget::Band(index) => (Modifier::BAND.as_slice(), self.theme.band[index]),
             ModifierTarget::Region(index) => {
-                (Modifier::REGION.as_slice(), self.theme.region[index])
+                let region = &self.params.regions[index];
+                let slot = (0..crate::region::response::SLOTS)
+                    .find(|&slot| !region.responses[slot].enabled.value());
+                response_count = region
+                    .responses
+                    .iter()
+                    .filter(|response| response.enabled.value())
+                    .count();
+
+                for &modifier in &Modifier::REGION {
+                    let modifier = match modifier {
+                        Modifier::Response(0) => {
+                            let Some(slot) = slot else { continue };
+                            Modifier::Response(slot)
+                        }
+                        Modifier::Response(1) => continue,
+                        modifier => modifier,
+                    };
+                    region_choices[choice_count] = modifier;
+                    choice_count += 1;
+                }
+                (&region_choices[..choice_count], self.theme.region[index])
             }
         };
+
         let unavailable = |modifier: Modifier| match target {
             ModifierTarget::Band(index) => modifier.unavailable(self.params.band(index)),
             ModifierTarget::Region(index) => modifier
@@ -220,23 +247,27 @@ impl EquartEditor {
                 menu::body(ui);
                 menu::section(ui, "ADD MODIFIER");
                 for &modifier in choices {
+                    let label = picker_label(modifier, response_count);
                     let mut response = ui
                         .add_enabled_ui(available(modifier), |ui| {
                             menu::row_response(
                                 ui,
-                                modifier.label(),
+                                &label,
                                 None,
                                 picker.selected == Some(modifier),
                                 accent,
                             )
                         })
                         .inner;
+
                     if let Some(reason) = unavailable(modifier) {
                         response = response.on_disabled_hover_text(reason);
                     }
+
                     if response.clicked() {
                         picker.selected = Some(modifier);
                     }
+
                     // egui might count opener + fast double click as triple click
                     if response.double_clicked() || response.triple_clicked() {
                         picker.selected = Some(modifier);
@@ -755,7 +786,10 @@ fn modifier_header(
         .frame(menu::card(ui.ctx()))
         .width(144.0)
         .show(|ui| {
-            let clicked = menu::row(ui, "Remove modifier", None, false, accent);
+            let clicked = menu::row_response(ui, "Disable modifier", None, false, accent)
+                .on_hover_text("Disables this modifier and keeps its saved settings.")
+                .clicked();
+
             if clicked {
                 ui.close();
             }
@@ -763,6 +797,16 @@ fn modifier_header(
         })
         .is_some_and(|response| response.inner);
     (power.clicked(), remove)
+}
+
+fn picker_label(modifier: Modifier, response_count: usize) -> Cow<'static, str> {
+    match modifier {
+        Modifier::Response(_) => Cow::Owned(format!(
+            "Response ({response_count}/{})",
+            crate::region::response::SLOTS
+        )),
+        _ => Cow::Borrowed(modifier.label()),
+    }
 }
 
 fn column(ui: &mut egui::Ui, width: f32, draw: impl FnOnce(&mut egui::Ui)) {
