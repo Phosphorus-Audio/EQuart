@@ -6,6 +6,10 @@ use crate::pitch::{DetectionMode, DetectionRange, PitchDetectionParams, TargetMo
 mod dynamics;
 mod harmonic;
 mod modulation;
+mod relation;
+mod response;
+mod spectral_dynamics;
+pub(super) use spectral_dynamics::HEIGHT as SPECTRAL_DYNAMICS_HEIGHT;
 
 const HEADER_WIDTH: f32 = 36.0;
 const HEADER_BUTTON_OFFSET: f32 = 43.0;
@@ -24,16 +28,26 @@ pub(super) enum Modifier {
     Lfo,
     Harmonic,
     Resonance,
+    Response(usize),
+    SpectralDynamics,
 }
 
 impl Modifier {
     pub(super) const BAND: [Self; 4] = [Self::Dynamic, Self::Pitch, Self::Lfo, Self::Mapping];
-    pub(super) const REGION: [Self; 2] = [Self::Harmonic, Self::Resonance];
+    pub(super) const REGION: [Self; 5] = [
+        Self::Harmonic,
+        Self::Resonance,
+        Self::Response(0),
+        Self::Response(1),
+        Self::SpectralDynamics,
+    ];
 
     pub(super) fn attached_to_region(self, region: &crate::region::RegionParams) -> bool {
         match self {
             Self::Harmonic => region.harmonic.enabled.value(),
             Self::Resonance => region.resonance.enabled.value(),
+            Self::Response(slot) => region.responses[slot].enabled.value(),
+            Self::SpectralDynamics => region.dynamics.enabled.value(),
             _ => false,
         }
     }
@@ -46,6 +60,8 @@ impl Modifier {
             Self::Lfo => "LFO",
             Self::Harmonic => "Harmonic",
             Self::Resonance => "Resonance",
+            Self::Response(slot) => ["Response", "Response 2"][slot],
+            Self::SpectralDynamics => "Dynamics",
         }
     }
 
@@ -55,7 +71,7 @@ impl Modifier {
             Self::Pitch => band.pitch.enabled.value(),
             Self::Mapping => band.mapping.enabled.value(),
             Self::Lfo => band.lfo.enabled.value(),
-            Self::Harmonic | Self::Resonance => false,
+            Self::Harmonic | Self::Resonance | Self::Response(_) | Self::SpectralDynamics => false,
         }
     }
 
@@ -66,12 +82,15 @@ impl Modifier {
             Self::Mapping | Self::Lfo => modulation::WIDTH,
             Self::Harmonic => harmonic::width(crate::region::FundamentalSource::Tracked),
             Self::Resonance => RESONANCE_WIDTH,
+            Self::Response(_) => response::WIDTH,
+            Self::SpectralDynamics => spectral_dynamics::WIDTH,
         }
     }
 
-    pub(super) fn region_width(self, region: &crate::region::RegionParams) -> f32 {
+    pub(super) fn region_width(self, region: &crate::region::RegionParams, compact: bool) -> f32 {
         match self {
             Self::Harmonic => harmonic::width(region.harmonic.source.value()),
+            Self::SpectralDynamics if compact => spectral_dynamics::COMPACT,
             _ => self.width(),
         }
     }
@@ -92,7 +111,13 @@ impl Modifier {
             .any(|modifier| modifier.unavailable(band).is_none())
     }
 
-    pub(super) fn show(self, editor: &mut EquartEditor, ui: &mut egui::Ui, rect: Rect, band: usize) {
+    pub(super) fn show(
+        self,
+        editor: &mut EquartEditor,
+        ui: &mut egui::Ui,
+        rect: Rect,
+        band: usize,
+    ) {
         match self {
             Self::Dynamic => editor.dynamic_modifier(ui, rect, band),
             Self::Pitch => editor.pitch_modifier(ui, rect, band),
@@ -100,6 +125,8 @@ impl Modifier {
             Self::Lfo => editor.lfo_modifier(ui, rect, band),
             Self::Harmonic => editor.harmonic_modifier(ui, rect, band),
             Self::Resonance => editor.resonance_modifier(ui, rect, band),
+            Self::Response(slot) => editor.response_modifier(ui, rect, band, slot),
+            Self::SpectralDynamics => editor.spectral_dynamics_modifier(ui, rect, band),
         }
     }
 }
@@ -157,11 +184,14 @@ impl EquartEditor {
         }
         let (choices, accent) = match target {
             ModifierTarget::Band(index) => (Modifier::BAND.as_slice(), self.theme.band[index]),
-            ModifierTarget::Region(index) => (Modifier::REGION.as_slice(), self.theme.region[index]),
+            ModifierTarget::Region(index) => {
+                (Modifier::REGION.as_slice(), self.theme.region[index])
+            }
         };
         let unavailable = |modifier: Modifier| match target {
             ModifierTarget::Band(index) => modifier.unavailable(self.params.band(index)),
-            ModifierTarget::Region(index) => modifier.attached_to_region(&self.params.regions[index])
+            ModifierTarget::Region(index) => modifier
+                .attached_to_region(&self.params.regions[index])
                 .then_some("Already attached to this region."),
         };
         let available = |modifier: Modifier| self.gui.is_some() && unavailable(modifier).is_none();
@@ -264,6 +294,16 @@ impl EquartEditor {
                     let harmonic = &self.params.regions[index].harmonic;
                     (&harmonic.enabled, &harmonic.bypassed)
                 }
+                (ModifierTarget::Region(index), Modifier::Response(slot)) => {
+                    let response = &self.params.regions[index].responses[slot];
+                    self.initialize_response(&setter, index, slot);
+                    (&response.enabled, &response.bypass)
+                }
+                (ModifierTarget::Region(index), Modifier::SpectralDynamics) => {
+                    self.reset_region_dynamics(&setter, index);
+                    let dynamics = &self.params.regions[index].dynamics;
+                    (&dynamics.enabled, &dynamics.bypass)
+                }
                 _ => unreachable!("the picker only offers modifiers for its target"),
             };
             if bypassed.value() {
@@ -290,7 +330,14 @@ impl EquartEditor {
         let res = &region.resonance;
         let bypassed = res.bypassed.value();
         let header = Rect::from_min_size(rect.min, Vec2::new(HEADER_WIDTH, rect.height()));
-        let (toggle, remove) = modifier_header(ui, header, index, "RESONANCE", !bypassed, self.theme.region[index]);
+        let (toggle, remove) = modifier_header(
+            ui,
+            header,
+            index,
+            "RESONANCE",
+            !bypassed,
+            self.theme.region[index],
+        );
         if toggle {
             self.set(&setter, &res.bypassed, !bypassed);
         }
@@ -514,8 +561,7 @@ impl EquartEditor {
         choices: &[T],
         label: impl Fn(T) -> &'static str,
     ) {
-        let combo = egui::ComboBox::from_id_salt(param.name())
-            .width(ui.available_width() - 16.0);
+        let combo = egui::ComboBox::from_id_salt(param.name()).width(ui.available_width() - 16.0);
         self.modifier_choice(ui, combo, setter, param, choices, label);
     }
 
@@ -529,18 +575,16 @@ impl EquartEditor {
         label: impl Fn(T) -> &'static str,
     ) {
         let current = param.value();
-        let combo = combo
-            .selected_text(label(current))
-            .show_ui(ui, |ui| {
-                for &choice in choices {
-                    if ui
-                        .selectable_label(current == choice, label(choice))
-                        .clicked()
-                    {
-                        self.set(setter, param, choice);
-                    }
+        let combo = combo.selected_text(label(current)).show_ui(ui, |ui| {
+            for &choice in choices {
+                if ui
+                    .selectable_label(current == choice, label(choice))
+                    .clicked()
+                {
+                    self.set(setter, param, choice);
                 }
-            });
+            }
+        });
 
         if let Some(choice) =
             super::menu::wheel_choice(&combo.response, combo.inner.is_none(), current, choices)
@@ -626,7 +670,9 @@ pub(super) fn picker_button(
         egui::Align2::CENTER_CENTER,
         label,
         FontId::proportional(12.0),
-        ui.visuals().text_color().gamma_multiply(if enabled { 1.0 } else { 0.68 }),
+        ui.visuals()
+            .text_color()
+            .gamma_multiply(if enabled { 1.0 } else { 0.68 }),
     );
     response.clicked()
 }

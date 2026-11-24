@@ -3,6 +3,7 @@ use crate::params::{FREQUENCY_MAX_HZ, Q_MAX, Q_MIN};
 use nice_plug::prelude::{Enum, Transport};
 
 mod params;
+pub(crate) mod relation;
 pub(crate) use params::{LfoParams, MappingParams, migrate_state};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enum)]
@@ -18,6 +19,13 @@ impl Target {
 
     pub(crate) fn label(self) -> &'static str {
         Self::variants()[self.to_index()]
+    }
+
+    pub(crate) fn scale(self) -> relation::Scale {
+        match self {
+            Self::Gain => relation::Scale::Linear(6.0),
+            _ => relation::Scale::Ratio,
+        }
     }
 
     pub(crate) fn limits(self, rate: f32) -> (f32, f32) {
@@ -111,24 +119,11 @@ impl Mapping {
             return base;
         }
 
-        let distance = match self.source {
-            Target::Gain => (source - self.reference) / 6.0,
-            _ => (source / self.reference).log2(),
-        };
-        let units = match self.target {
-            Target::Frequency => 12.0,
-            Target::Gain => 6.0,
-            Target::Q => 1.0,
-        };
-        if distance.is_finite() {
-            self.target.offset(
-                base,
-                distance * self.strength.clamp(-1.0, 1.0) * units,
-                rate,
-            )
-        } else {
-            base
-        }
+        relation::Curve::Power.output(
+            (self.source.scale(), source, self.reference),
+            (self.target.scale(), base, self.target.limits(rate)),
+            self.strength,
+        )
     }
 }
 

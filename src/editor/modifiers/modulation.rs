@@ -303,14 +303,6 @@ fn mapping_title(ui: &mut egui::Ui, source: Target, target: Target) {
     });
 }
 
-fn graph(ui: &mut egui::Ui) -> (Rect, Response, crate::display_preferences::theme::Theme) {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 54.0), Sense::hover());
-    let palette = theme::current(ui.ctx());
-    ui.painter().rect_filled(rect, 4.0, palette.background.top);
-    (rect.shrink(4.0), response, palette)
-}
-
 fn mapping_graph(
     ui: &mut egui::Ui,
     mapping: Mapping,
@@ -318,67 +310,33 @@ fn mapping_graph(
     rate: f32,
     accent: Color32,
 ) {
-    let (rect, response, palette) = graph(ui);
-    let span = |target: Target| {
-        let (min, max) = target.limits(rate);
-        if target == Target::Gain {
-            (min, max)
-        } else {
-            (min.log2(), max.log2())
-        }
-    };
-    let (left, right) = span(mapping.source);
-    let (low, high) = span(mapping.target);
-    let x = |value: f32| {
-        let scalar = if mapping.source == Target::Gain {
-            value
-        } else {
-            value.log2()
-        };
-        rect.left() + rect.width() * ((scalar - left) / (right - left)).clamp(0.0, 1.0)
-    };
-    let y = |value: f32| {
-        let scalar = if mapping.target == Target::Gain {
-            value
-        } else {
-            value.log2()
-        };
-        rect.bottom() - rect.height() * ((scalar - low) / (high - low)).clamp(0.0, 1.0)
-    };
-    let input = |t| {
-        let scalar = egui::lerp(left..=right, t);
-        if mapping.source == Target::Gain {
-            scalar
-        } else {
-            scalar.exp2()
-        }
-    };
-    let p = ui.painter_at(rect.expand(2.0));
-    p.hline(rect.x_range(), y(base), Stroke::new(1.0, palette.grid.zero));
-    let points = (0..=64)
-        .map(|i| {
-            let t = i as f32 / 64.0;
-            Pos2::new(
-                egui::lerp(rect.x_range(), t),
-                y(mapping.output(input(t), base, rate)),
+    use super::relation::{Axis, Diagram, relation};
+    let axes = [mapping.source, mapping.target].map(|target| Axis {
+        scale: target.scale(),
+        bounds: target.limits(rate),
+    });
+    relation(
+        ui,
+        Diagram {
+            axes,
+            base,
+            points: &[[source, effective]],
+            inactive: 0,
+            accent,
+        },
+        |input| mapping.output(input, base, rate),
+        |input, output, _| {
+            format!(
+                "{} to {}",
+                mapping.source.display(input),
+                mapping.target.display(output)
             )
-        })
-        .collect();
-    p.add(egui::Shape::line(points, Stroke::new(1.6, accent)));
-    p.circle_filled(Pos2::new(x(source), y(effective)), 3.2, accent);
-
-    if let Some(pos) = response.hover_pos() {
-        let source = input(((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
-        response.on_hover_text(format!(
-            "{} to {}",
-            mapping.source.display(source),
-            mapping.target.display(mapping.output(source, base, rate)),
-        ));
-    }
+        },
+    );
 }
 
 fn lfo_graph(ui: &mut egui::Ui, lfo: Lfo, phase: f32, random: f32, offset: f32, accent: Color32) {
-    let (rect, _, palette) = graph(ui);
+    let (rect, _, palette) = super::relation::graph(ui);
     let y = |sample| {
         let t = if lfo.unipolar {
             lfo.polar(sample)

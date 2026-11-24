@@ -9,7 +9,12 @@ pub const DRAW: usize = 4;
 pub const FRAME: usize = 5;
 pub const READ: usize = 6;
 pub const HEATMAP: usize = 7;
-const STAGES: usize = 8;
+pub const REGION_DETECT: usize = 8;
+pub const REGION_MASK: usize = 9;
+pub const REGION_MONITOR: usize = 10;
+pub const REGION_HISTORY: usize = 11;
+pub const FIR_PARTITION: usize = 12;
+const STAGES: usize = 13;
 const BUCKET_NS: u64 = 10_000;
 const BUCKETS: usize = 2048;
 
@@ -74,7 +79,6 @@ pub fn fps() -> Option<u32> {
     let fps = FPS.load(Relaxed);
     (fps != 0).then_some(fps)
 }
-
 
 pub struct Timer(usize, Option<Instant>);
 

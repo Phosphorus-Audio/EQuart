@@ -1,6 +1,9 @@
+pub(crate) mod dynamics;
 mod harmonic;
 pub(crate) mod resonance;
+pub(crate) mod response;
 
+pub(crate) use harmonic::HarmonicSample;
 pub use harmonic::{FundamentalSource, HarmonicControl, HarmonicMode, MAX_HARMONIC};
 
 use crate::band::{Band, BandControl, SECTIONS};
@@ -28,6 +31,9 @@ pub struct RegionControl {
     pub gain: f32,
     pub harmonic: HarmonicControl,
     pub resonance: resonance::ResonanceControl,
+    pub(crate) dynamics: dynamics::Control,
+    pub(crate) responses: [response::Response; response::SLOTS],
+    pub(crate) reverse_responses: bool,
 }
 
 impl Default for RegionControl {
@@ -40,16 +46,28 @@ impl Default for RegionControl {
             softness: DEFAULT_SOFTNESS,
             gain: DEFAULT_GAIN,
             resonance: Default::default(),
+            dynamics: Default::default(),
+            responses: Default::default(),
+            reverse_responses: false,
             harmonic: HarmonicControl::default(),
         }
     }
 }
 
 impl RegionControl {
+    pub(crate) fn response_order(self) -> [usize; response::SLOTS] {
+        response::order(self.reverse_responses)
+    }
+
     pub(crate) fn harmonic_detection(self) -> Option<crate::pitch::PitchControl> {
         (self.enabled
             && !self.bypass
-            && self.gain != 0.0
+            && (self.gain != 0.0
+                || self.responses.iter().any(|effect| {
+                    effect.enabled
+                        && effect.scope == response::Scope::Whole
+                        && effect.target == response::Value::Gain
+                }))
             && self.harmonic.enabled
             && self.harmonic.source == FundamentalSource::Tracked)
             .then_some(self.harmonic.detection)
@@ -78,12 +96,15 @@ impl RegionControl {
             high,
             softness: slope_softness(band.slope),
             resonance: Default::default(),
+            dynamics: Default::default(),
             gain: if band.kind.has_gain() {
                 band.gain
             } else {
                 DEFAULT_GAIN
             },
             harmonic: HarmonicControl::default(),
+            responses: Default::default(),
+            reverse_responses: false,
         }
     }
 
@@ -156,6 +177,14 @@ impl RegionControl {
     pub fn filter_plan(self, rate: f32, pitch: Option<f32>) -> impl Iterator<Item = BandControl> {
         let (base, masks) = harmonic::filters(self, rate, pitch);
         base.into_iter().chain(masks)
+    }
+
+    pub(crate) fn harmonics(
+        self,
+        rate: f32,
+        pitch: Option<f32>,
+    ) -> [Option<HarmonicSample>; MAX_HARMONIC] {
+        harmonic::plan(self, rate, pitch).1
     }
 }
 
@@ -316,6 +345,12 @@ pub struct RegionParams {
     pub resonance: Box<resonance::ResonanceParams>,
     #[nested(group = "Harmonic")]
     pub harmonic: Box<harmonic::HarmonicParams>,
+    #[nested(group = "Dynamics")]
+    pub(crate) dynamics: Box<dynamics::DynamicsParams>,
+    #[nested(array, group = "Response")]
+    pub(crate) responses: [Box<response::ResponseParams>; response::SLOTS],
+    #[id = "region_reverse_responses"]
+    pub(crate) reverse_responses: BoolParam,
 }
 
 impl RegionParams {
@@ -361,12 +396,19 @@ impl RegionParams {
             .display_as(" dB", 2),
             resonance: Box::new(resonance::ResonanceParams::new(&prefix)),
             harmonic: Box::new(harmonic::HarmonicParams::new(&prefix)),
+            dynamics: Box::new(dynamics::DynamicsParams::new(&prefix)),
+            responses: std::array::from_fn(|index| {
+                Box::new(response::ResponseParams::new(&prefix, index))
+            }),
+            reverse_responses: BoolParam::new(format!("{region} / Reverse Response Order"), false)
+                .non_automatable(),
         }
     }
 
     pub fn control(&self) -> RegionControl {
+        let enabled = self.enabled.value();
         RegionControl {
-            enabled: self.enabled.value(),
+            enabled,
             bypass: self.bypass.value(),
             low: self.low.value(),
             high: self.high.value(),
@@ -374,6 +416,15 @@ impl RegionParams {
             gain: self.gain.value(),
             harmonic: self.harmonic.control(),
             resonance: self.resonance.control(),
+            dynamics: self.dynamics.control(),
+            responses: self.responses.each_ref().map(|slot| {
+                if enabled && slot.enabled.value() {
+                    slot.control()
+                } else {
+                    Default::default()
+                }
+            }),
+            reverse_responses: self.reverse_responses.value(),
         }
     }
 }

@@ -42,11 +42,12 @@ impl Layout {
     }
 
     pub(super) fn panel_with_width(canvas: Rect, focus_x: f32, width: f32) -> Rect {
-        let x = Self::panel_left(canvas, focus_x, width);
+        Self::panel_with_size(canvas, focus_x, Vec2::new(width, Self::PANEL_H))
+    }
+
+    pub(super) fn panel_with_size(canvas: Rect, focus_x: f32, size: Vec2) -> Rect {
+        let x = Self::panel_left(canvas, focus_x, size.x);
         let bottom = canvas.bottom() - Self::FOOTER - Self::PANEL_BOTTOM_GAP;
-        Rect::from_min_size(
-            Pos2::new(x, bottom - Self::PANEL_H),
-            Vec2::new(width, Self::PANEL_H),
-        )
+        Rect::from_min_size(Pos2::new(x, bottom - size.y), size)
     }
 }

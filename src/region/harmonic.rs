@@ -1,8 +1,11 @@
-use super::RegionControl;
+use super::{
+    RegionControl,
+    response::{Scope, Value},
+};
 use crate::band::BandControl;
 use crate::filter::CutSlope;
-use crate::pitch::{BASS_MIN_HZ, DetectionRange, MAX_HZ, PitchControl, PitchDetectionParams};
 use crate::params::FloatDisplay;
+use crate::pitch::{BASS_MIN_HZ, DetectionRange, MAX_HZ, PitchControl, PitchDetectionParams};
 use nice_plug::prelude::*;
 use realfft::num_complex::Complex32;
 use std::f32::consts::{PI, SQRT_2};
@@ -128,18 +131,77 @@ impl HarmonicControl {
 }
 
 pub(super) fn filters(
-    mut region: RegionControl,
+    region: RegionControl,
     rate: f32,
     pitch: Option<f32>,
 ) -> ([BandControl; 2], [BandControl; MAX_HARMONIC]) {
     let inactive = inactive();
-    let mut masks = [inactive; MAX_HARMONIC];
+    let (base, harmonics) = plan(region, rate, pitch);
+    let protect = region.harmonic.mode == HarmonicMode::Protect;
+    let warp = |hz: f32| (PI * hz / rate).tan();
+    let masks = harmonics.map(|sample| {
+        sample.map_or(inactive, |sample| {
+            let half_width = sample.fundamental * (sample.width / 200.0);
+            let frequency = sample.frequency;
+            let width =
+                warp((frequency + half_width).min(rate * 0.49)) - warp(frequency - half_width);
+            let sign = if protect {
+                -sample.base_gain.signum()
+            } else {
+                sample.base_gain.signum()
+            };
+
+            BandControl {
+                enabled: sample.depth != 0.0 && width > 0.0,
+                frequency,
+                gain: sign * sample.depth,
+                q: SQRT_2 * warp(frequency) / width.max(f32::MIN_POSITIVE),
+                ..inactive
+            }
+        })
+    });
+    (base, masks)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HarmonicSample {
+    pub number: usize,
+    pub frequency: f32,
+    pub fundamental: f32,
+    pub base_width: f32,
+    pub base_depth: f32,
+    base_gain: f32,
+    pub width: f32,
+    pub depth: f32,
+}
+
+impl HarmonicSample {
+    pub(crate) fn source(self, value: Value) -> Option<f32> {
+        match value {
+            Value::HarmonicIndex => Some(self.number as f32),
+            Value::HarmonicFrequency => Some(self.frequency),
+            Value::Fundamental => Some(self.fundamental),
+            Value::HarmonicWidth => Some(self.base_width),
+            Value::HarmonicDepth => Some(self.base_depth),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn plan(
+    mut region: RegionControl,
+    rate: f32,
+    pitch: Option<f32>,
+) -> ([BandControl; 2], [Option<HarmonicSample>; MAX_HARMONIC]) {
+    let inactive = inactive();
+    let mut masks = [None; MAX_HARMONIC];
     if !region.harmonic.enabled {
         return (region.bands(rate), masks);
     }
     let Some(pitch) = region
         .harmonic
         .fundamental(pitch)
+        .filter(|hz| hz.is_finite() && *hz > 0.0)
         .filter(|_| region.enabled && !region.bypass && region.gain != 0.0)
     else {
         return ([inactive; 2], masks);
@@ -151,11 +213,19 @@ pub(super) fn filters(
     let base = region.bands(rate);
     let sections = base.map(|band| band.enabled.then(|| band.sections(rate)));
     let [low, high] = region.bounds().map(|hz| hz.min(rate * 0.49));
-    let first = region.harmonic.first as usize;
-    let last = region.harmonic.last as usize;
+    let first = region.harmonic.first.clamp(1, MAX_HARMONIC as i32) as usize;
+    let last = region.harmonic.last.clamp(1, MAX_HARMONIC as i32) as usize;
+    let responses = region.response_order().map(|slot| {
+        let response = region.responses[slot];
+        (response.enabled
+            && !response.bypass
+            && response.strength != 0.0
+            && response.scope == Scope::Harmonic
+            && response.valid(region))
+        .then_some(response)
+    });
 
     if low < high {
-        let half_width = pitch * (region.harmonic.width_percent / 200.0);
         for number in first.min(last)..=first.max(last) {
             let frequency = pitch * number as f32;
             if !(low..=high).contains(&frequency) {
@@ -169,17 +239,32 @@ pub(super) fn filters(
                     })
                 },
             );
-            let gain = 20.0 * response.norm().log10();
-            let warp = |hz: f32| (PI * hz / rate).tan();
-            let width =
-                warp((frequency + half_width).min(rate * 0.49)) - warp(frequency - half_width);
-            masks[number - 1] = BandControl {
-                enabled: gain != 0.0,
+            let gain = 20.0 * response.norm().max(1e-12).log10();
+            let depth = gain.abs();
+            let width = region.harmonic.width_percent;
+            let mut sample = HarmonicSample {
+                number,
                 frequency,
-                gain: if protect { -gain } else { gain },
-                q: SQRT_2 * warp(frequency) / width,
-                ..inactive
+                fundamental: pitch,
+                base_width: width,
+                base_depth: depth,
+                base_gain: gain,
+                width,
+                depth,
             };
+
+            for effect in responses.into_iter().flatten() {
+                if let Some(input) = sample.source(effect.source) {
+                    let target = if effect.target == Value::HarmonicWidth {
+                        &mut sample.width
+                    } else {
+                        &mut sample.depth
+                    };
+                    *target = effect.output(input, *target, rate);
+                }
+            }
+
+            masks[number - 1] = Some(sample);
         }
     }
 

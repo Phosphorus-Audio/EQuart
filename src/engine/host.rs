@@ -30,9 +30,14 @@ impl HostSample for f32 {
         mix: OutputMix,
     ) {
         if engine.precision == Precision::Single {
-            engine
-                .single
-                .process(left, right, &controls.bands, mix, &mut engine.delta_mix);
+            engine.single.process(
+                left,
+                right,
+                &controls.bands,
+                mix,
+                &mut engine.delta_mix,
+                &mut engine.region_dynamics,
+            );
             return;
         }
 
@@ -79,8 +84,13 @@ impl HostSample for f64 {
         controls: &Controls,
         mix: OutputMix,
     ) {
-        engine
-            .double
-            .process(left, right, &controls.bands, mix, &mut engine.delta_mix);
+        engine.double.process(
+            left,
+            right,
+            &controls.bands,
+            mix,
+            &mut engine.delta_mix,
+            &mut engine.region_dynamics,
+        );
     }
 }

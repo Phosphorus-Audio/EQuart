@@ -24,11 +24,11 @@ mod response;
 mod settings;
 mod trace;
 
+use super::wheel::{take_steps, wheel_steps};
 use backdrop::{ease_glow, edge_fade, soft_wash};
 pub(crate) use band_input::{BandDrag, cut_handle_q, cut_handle_y};
 use band_input::{VerticalDrag, cut_handle_db, cut_q, follow, key_hz};
-use super::wheel::{take_steps, wheel_steps};
-use fill::gradient_fill;
+pub(super) use fill::gradient_fill;
 use grid::{draw_axis_labels, draw_grid_lines};
 use keys::{draw_keys, note_at, note_hz};
 pub(crate) use plot::Plot;
@@ -421,13 +421,19 @@ impl EquartEditor {
                         || plot.db_free(position.y) - plot.db_free(drag.origin_y),
                         |db| db - cut_handle_db(drag.origin_q),
                     );
-                    let q = cut_q(&band.q, drag.origin_q, db_delta, fine_q && auto_db.is_none());
+                    let q = cut_q(
+                        &band.q,
+                        drag.origin_q,
+                        db_delta,
+                        fine_q && auto_db.is_none(),
+                    );
                     self.set(&setter, &band.q, q);
                 }
 
                 // move other picked bands together
                 for &(index, at_start) in &drag.followers {
-                    let (moved_hz, moved_db) = follow(drag.origin, (hz, db), at_start, lead_has_gain);
+                    let (moved_hz, moved_db) =
+                        follow(drag.origin, (hz, db), at_start, lead_has_gain);
                     let follower = self.params.band(index);
                     if !follower.pitch.enabled.value() {
                         self.set(&setter, &follower.frequency, moved_hz);
@@ -564,6 +570,14 @@ impl EquartEditor {
                 && point_at(position).is_none()
                 && controls.iter().any(|control| !control.enabled)
         });
+        let effective_regions = std::array::from_fn::<_, REGION_COUNT, _>(|index| {
+            let region = self.telemetry.response_region(index, regions[index]);
+            crate::region::response::whole(
+                region,
+                self.telemetry.harmonic_hz(index),
+                if rate > 0.0 { rate } else { 48_000.0 },
+            )
+        });
         let preview = draw_response(
             &p,
             &plot,
@@ -573,7 +587,7 @@ impl EquartEditor {
                 controls: &display_controls,
                 base: self.selected.map(|index| controls[index]),
                 offsets: &self.telemetry.dynamics(),
-                regions: &regions,
+                regions: &effective_regions,
                 telemetry: &self.telemetry,
                 rate: design_rate,
                 selected: self.selected,
@@ -589,6 +603,36 @@ impl EquartEditor {
                 preview_hover,
             },
         );
+
+        self.telemetry
+            .region_dynamics_response
+            .read_into(&mut self.region_dynamics_response);
+        if self.region_dynamics_response.active()
+            && rate > 0.0
+            && self.params.global.mix.value() > 0.0
+        {
+            let curve = &self.region_dynamics_response;
+            let points = (0..=256)
+                .map(|i| {
+                    let x = egui::lerp(plot.rect.x_range(), i as f32 / 256.0);
+                    let db = curve.db(plot.hz_extended(x), rate);
+                    Pos2::new(x, plot.y_free(db))
+                })
+                .collect::<Vec<_>>();
+            if points
+                .iter()
+                .any(|point| (point.y - plot.y(0.0)).abs() > 0.7)
+            {
+                let painter = p.with_clip_rect(plot.rect);
+                let ink = self.theme.meter.low;
+                painter.extend(egui::Shape::dashed_line(
+                    &points,
+                    Stroke::new(1.6, ink),
+                    6.0,
+                    3.0,
+                ));
+            }
+        }
 
         // fade plot edges before drawing labels
         edge_fade(&p, outer, canvas, plot.rect);
@@ -625,7 +669,10 @@ impl EquartEditor {
         let pressed_marker = self.drag.as_ref().map(|drag| drag.band).or_else(|| {
             press_target
                 .filter(|_| {
-                    primary_down && response.is_pointer_button_down_on() && !over_panel && !popup_open
+                    primary_down
+                        && response.is_pointer_button_down_on()
+                        && !over_panel
+                        && !popup_open
                 })
                 .map(|(index, _)| index)
         });
@@ -770,11 +817,9 @@ fn draw_brand(ui: &egui::Ui, p: &egui::Painter, plot: &Plot, interactive: bool) 
             .ctx()
             .pointer_hover_pos()
             .is_some_and(|pos| rect.contains(pos));
-    let hover = ui.ctx().animate_bool_with_time(
-        ui.make_persistent_id("equart-brand-hover"),
-        hovered,
-        0.16,
-    );
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(ui.make_persistent_id("equart-brand-hover"), hovered, 0.16);
     let alpha = 0.34 + 0.28 * hover;
     let ink = theme::current(p.ctx()).text.primary.gamma_multiply(alpha);
 

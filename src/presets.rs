@@ -23,7 +23,7 @@ const FORMAT: u32 = 2;
 const INDEX: &str = "presets.json";
 
 /// persisted fields that belong to sound rather than window state
-const SOUND_FIELDS: [&str; 1] = ["bands_placed"];
+const SOUND_FIELDS: [&str; 2] = ["bands_placed", crate::region::dynamics::CURVE_FIELD];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Preset {
@@ -430,7 +430,10 @@ impl Store {
         static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
         let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
         let path = dir.join(format!("{name}.{EXTENSION}"));
-        let temp = dir.join(format!("{name}.{EXTENSION}.{}.{seq}.tmp", std::process::id()));
+        let temp = dir.join(format!(
+            "{name}.{EXTENSION}.{}.{seq}.tmp",
+            std::process::id()
+        ));
 
         fs::write(&temp, preset.to_json()?)?;
 
@@ -676,11 +679,23 @@ pub(crate) fn is_valid_name(name: &str) -> bool {
     )
 }
 
-fn factory_library() -> [(&'static str, Preset); 3] {
+fn factory_library() -> [(&'static str, Preset); 6] {
     let mut library = [
         ("Default", factory_default()),
         ("200-LowCut", factory_low_cut(200.0, false)),
         ("Auto-LowCut", factory_low_cut(80.0, true)),
+        (
+            "3-Band Compression",
+            factory_compression(&[10.0, 150.0, 2500.0, 30000.0]),
+        ),
+        (
+            "4-Band Compression",
+            factory_compression(&[10.0, 120.0, 650.0, 4000.0, 30000.0]),
+        ),
+        (
+            "6-Band Compression",
+            factory_compression(&[10.0, 90.0, 250.0, 850.0, 2800.0, 8000.0, 30000.0]),
+        ),
     ];
 
     for (name, preset) in &mut library {
@@ -688,6 +703,33 @@ fn factory_library() -> [(&'static str, Preset); 3] {
     }
 
     library
+}
+
+fn factory_compression(edges: &[f32]) -> Preset {
+    let params = EquartParams::default();
+
+    for (region, limits) in params.regions.iter().zip(edges.windows(2)) {
+        let [low, high] = [limits[0], limits[1]];
+        let (threshold, ratio, attack, release) = if high <= 150.0 {
+            (-24.0, 4.0, 20.0, 150.0)
+        } else if low >= 2500.0 {
+            (-16.0, 3.0, 2.0, 80.0)
+        } else {
+            (-18.0, 2.0, 10.0, 100.0)
+        };
+
+        set(&region.enabled, true);
+        set(&region.low, low);
+        set(&region.high, high);
+        set(&region.gain, 0.0);
+        set(&region.dynamics.enabled, true);
+        set(&region.dynamics.threshold, threshold);
+        set(&region.dynamics.ratio, ratio);
+        set(&region.dynamics.attack, attack);
+        set(&region.dynamics.release, release);
+    }
+
+    Preset::capture(state_of(&params), "")
 }
 
 fn factory_default() -> Preset {
@@ -811,6 +853,23 @@ mod tests {
         assert!(band.pitch.enabled);
         assert!((band.pitch.multiplier - 1.0).abs() < 0.001);
         assert!(applied.is_placed(0));
+
+        for ((_, preset), bands) in factory_library().into_iter().skip(3).zip([3, 4, 6]) {
+            apply(&applied, preset);
+            let active = applied
+                .regions
+                .iter()
+                .map(|region| region.control())
+                .filter(|region| region.enabled)
+                .collect::<Vec<_>>();
+            assert_eq!(active.len(), bands);
+            assert!(
+                active
+                    .iter()
+                    .all(|region| region.dynamics.enabled && region.gain == 0.0)
+            );
+            assert!(active.windows(2).all(|pair| pair[0].high == pair[1].low));
+        }
     }
 
     #[test]
@@ -837,6 +896,9 @@ mod tests {
             "mapping_reference_q_3",
             "lfo_wave_3",
             "lfo_depth_hz_3",
+            "response_strength_1_3",
+            "response_reference_2_3",
+            "region_reverse_responses_3",
         ] {
             assert!(preset.state.params.contains_key(id), "{id} is missing");
         }

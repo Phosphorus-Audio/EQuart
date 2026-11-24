@@ -1,7 +1,6 @@
 use super::*;
 
-
-pub(super) fn gradient_fill(
+pub(in crate::editor) fn gradient_fill(
     p: &egui::Painter,
     points: &[Pos2],
     reach: impl Fn(usize, f32) -> f32,

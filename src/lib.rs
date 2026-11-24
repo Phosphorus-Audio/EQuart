@@ -4,10 +4,10 @@ mod band;
 mod display_preferences;
 mod dsp;
 mod dynamics;
-mod modulation;
 mod editor;
 mod engine;
 mod filter;
+mod modulation;
 mod oversample;
 mod params;
 mod pitch;
@@ -48,6 +48,7 @@ pub struct Equart {
     editor_state: Arc<EguiEditorState>,
     current_preset: Arc<Mutex<Option<presets::Entry>>>,
     engine: Engine,
+    transfer_curves: [region::dynamics::Curve; region::REGION_COUNT],
     /// Latency last handed to the host, so it is only told when it changes.
     reported_latency: u32,
 }
@@ -71,18 +72,28 @@ impl Default for Equart {
             ),
             current_preset: Arc::new(Mutex::new(initial_preset)),
             engine: Engine::new(48_000.0),
+            transfer_curves: Default::default(),
             reported_latency: 0,
         }
     }
 }
 
 impl Equart {
-    fn controls(&self) -> Controls {
+    fn controls(&mut self) -> Controls {
         let mode = self.params.global.processing_mode.value();
 
         Controls {
             bands: std::array::from_fn(|i| self.params.control(i)),
-            regions: std::array::from_fn(|i| self.params.regions[i].control()),
+            regions: std::array::from_fn(|i| {
+                let mut region = self.params.regions[i].control();
+                if region.enabled && region.dynamics.enabled {
+                    if let Some(curve) = self.params.spectral_transfer_curves.read(i) {
+                        self.transfer_curves[i] = curve;
+                    }
+                    region.dynamics.curve = self.transfer_curves[i];
+                }
+                region
+            }),
             output_db: self.params.global.output.value(),
             pan: self.params.global.pan.value(),
             mix: self.params.global.mix.value() * 0.01,
@@ -146,7 +157,9 @@ impl Plugin for Equart {
             Some(ParamValue::I32(1 | 2)) => "natural_phase",
             _ => "zero_latency",
         };
-        state.params.entry("processing_mode".into())
+        state
+            .params
+            .entry("processing_mode".into())
             .or_insert_with(|| ParamValue::String(mode.into()));
 
         state
@@ -166,6 +179,8 @@ impl Plugin for Equart {
             }
         }
         region::HarmonicControl::migrate_state(state);
+        region::response::migrate_state(state);
+        region::dynamics::migrate_state(state);
 
         let multiplier = pitch::PitchControl::default().multiplier;
         for index in 1..=band::BAND_COUNT {
@@ -221,6 +236,10 @@ impl Plugin for Equart {
         self.reported_latency = self.engine.latency();
         context.set_latency_samples(self.reported_latency);
         self.analyzer_capture.reset();
+        self.telemetry
+            .region_dynamics
+            .iter()
+            .for_each(telemetry::region_dynamics::History::reset);
         self.telemetry.publish(&self.engine);
         true
     }
@@ -253,12 +272,26 @@ impl Equart {
         self.engine.retune(transport.sample_rate);
         self.engine.set_transport(transport);
         let open = self.editor_state.is_open();
+        self.engine.region_dynamics_observed = if open {
+            self.telemetry.region_dynamics_monitor()
+        } else {
+            None
+        };
+        self.engine.region_dynamics.monitor = self
+            .engine
+            .region_dynamics_observed
+            .filter(|(_, record)| *record)
+            .map(|(index, _)| index);
         self.engine.delta_request = if open {
             self.telemetry.delta_region()
         } else {
             None
         };
-        self.engine.audition_request = if open { self.telemetry.audition() } else { None };
+        self.engine.audition_request = if open {
+            self.telemetry.audition()
+        } else {
+            None
+        };
         let display = self.params.analyzer.load(Ordering::Relaxed);
         #[cfg(feature = "analyzer-profile")]
         let display = analyzer::profile::enabled(display);
@@ -340,7 +373,12 @@ fn capture_channels<T: HostSample>(
     let right = channels.get(1).unwrap_or(left);
     let (head, tail) = chunk.as_mut_slices();
 
-    for ((frame, left), right) in head.iter_mut().chain(tail).zip(left.iter()).zip(right.iter()) {
+    for ((frame, left), right) in head
+        .iter_mut()
+        .chain(tail)
+        .zip(left.iter())
+        .zip(right.iter())
+    {
         frame[lane] = [left.double() as f32, right.double() as f32];
     }
 }

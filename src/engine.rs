@@ -44,6 +44,10 @@ pub struct Engine {
     pitch: PitchRack,
     modulation: crate::modulation::Rack,
     pub(crate) resonance: crate::region::resonance::Detector,
+    region_responses: [crate::region::response::Slew; REGION_COUNT],
+    pub(crate) region_dynamics: crate::region::dynamics::Rack,
+    pub(crate) region_dynamics_observed: Option<(usize, bool)>,
+    effective_regions: [RegionControl; REGION_COUNT],
     resonance_live: bool,
     pub(crate) delta_request: Option<usize>,
     pub(crate) audition_request: Option<audition::Target>,
@@ -87,6 +91,10 @@ impl Engine {
             pitch: PitchRack::new(rate),
             modulation: Default::default(),
             resonance: crate::region::resonance::Detector::new(),
+            region_responses: Default::default(),
+            region_dynamics: crate::region::dynamics::Rack::new(),
+            region_dynamics_observed: None,
+            effective_regions: Default::default(),
             resonance_live: false,
             delta_request: None,
             audition_request: None,
@@ -124,6 +132,9 @@ impl Engine {
         self.pitch.reset();
         self.modulation = Default::default();
         self.resonance.reset();
+        self.region_responses = Default::default();
+        self.region_dynamics.reset();
+        self.effective_regions = Default::default();
         self.resonance_live = false;
         self.delta_request = None;
         self.audition_request = None;
@@ -179,7 +190,8 @@ impl Engine {
     }
 
     pub(crate) fn linear_response_revision(&self) -> u64 {
-        self.linear_phase.map_or(0, |_| self.linear.response_revision())
+        self.linear_phase
+            .map_or(0, |_| self.linear.response_revision())
     }
 
     pub(crate) fn linear_response(&self) -> Option<[Option<&[f64]>; 4]> {
@@ -187,10 +199,15 @@ impl Engine {
     }
 
     pub(crate) fn tail(&self) -> u32 {
-        self.linear_phase.map_or(0, |quality| linear::tail(quality.center_at(self.rate)))
+        self.linear_phase
+            .map_or(0, |quality| linear::tail(quality.center_at(self.rate)))
     }
 
-    pub(crate) fn set_processing(&mut self, linear_phase: Option<LinearQuality>, oversampling: Oversampling) {
+    pub(crate) fn set_processing(
+        &mut self,
+        linear_phase: Option<LinearQuality>,
+        oversampling: Oversampling,
+    ) {
         if self.linear_phase != linear_phase {
             self.linear_phase = linear_phase;
             self.frame = 0;
@@ -244,6 +261,13 @@ impl Engine {
         self.modulation.live(index)
     }
 
+    pub(crate) fn region_response(
+        &self,
+        index: usize,
+    ) -> [crate::region::response::Response; crate::region::response::SLOTS] {
+        self.region_responses[index].controls()
+    }
+
     /// live dB offset per band for UI
     pub fn dynamic_gains(&self) -> &[f32; BAND_COUNT] {
         &self.dynamic_gains
@@ -262,7 +286,11 @@ impl Engine {
             (
                 self.pitch.detected_band(i),
                 self.pitch.band_target(i).map(|tracked| {
-                    if self.modulation.live(i).is_some() { tracked } else { frequency }
+                    if self.modulation.live(i).is_some() {
+                        tracked
+                    } else {
+                        frequency
+                    }
                 }),
             )
         })
@@ -290,14 +318,8 @@ impl Engine {
                 |live| live.frequency,
             );
             let q = live.map_or(band.q, |live| live.q);
-            let active = dynamic.prepare(
-                control,
-                rate,
-                frequency,
-                q,
-                band.kind,
-                sidechain.is_some(),
-            );
+            let active =
+                dynamic.prepare(control, rate, frequency, q, band.kind, sidechain.is_some());
             if active {
                 for (frame, (&l, &r)) in left.iter().zip(right).enumerate() {
                     let reference = sidechain.map_or([0.0; 2], |[sl, sr]| [sl[frame], sr[frame]]);
@@ -344,17 +366,38 @@ impl Engine {
         }
 
         let frames = left.len().min(right.len());
-        let target_pan = if controls.bypass { 0.0 } else { f64::from(controls.pan) };
+        let target_pan = if controls.bypass {
+            0.0
+        } else {
+            f64::from(controls.pan)
+        };
         let sidechain = sidechain.filter(|[l, r]| l.len() >= frames && r.len() >= frames);
         let detects = controls
             .bands
             .iter()
             .any(|band| band.enabled && band.kind.has_gain() && band.dynamics.enabled);
 
-        let resonance_live = controls
-            .regions
-            .iter()
-            .any(|r| r.enabled && !r.bypass && r.resonance.enabled && r.resonance.depth > 0.0);
+        let resonance_live =
+            controls
+                .regions
+                .iter()
+                .zip(&self.effective_regions)
+                .any(|(base, effective)| {
+                    base.enabled
+                        && !base.bypass
+                        && base.resonance.enabled
+                        && (base.resonance.depth > 0.0
+                            || effective.resonance.depth > 0.0
+                            || base.responses.iter().any(|effect| {
+                                effect.enabled
+                                    && effect.scope == crate::region::response::Scope::Whole
+                                    && effect.target
+                                        == crate::region::response::Value::ResonanceDepth
+                                    && !effect.bypass
+                                    && effect.strength != 0.0
+                                    && effect.valid(*base)
+                            }))
+                });
 
         if self.resonance_live && !resonance_live {
             self.resonance.reset();
@@ -401,6 +444,11 @@ impl Engine {
             let right = &mut right[offset..end];
             if self.frame == 0 {
                 self.refresh(controls);
+                self.region_dynamics.configure(
+                    &self.effective_regions,
+                    self.rate,
+                    self.latency() as usize,
+                );
             }
             if self.linear_phase.is_some() && self.linear.at_boundary() {
                 self.snapshot_linear(controls);
@@ -410,8 +458,12 @@ impl Engine {
             let right_analysis = T::analysis(right, &mut analysis_r);
             self.pitch.process(left_analysis, right_analysis);
             if resonance_live {
-                self.resonance
-                    .push(left_analysis, right_analysis, self.rate, &controls.regions);
+                self.resonance.push(
+                    left_analysis,
+                    right_analysis,
+                    self.rate,
+                    &self.effective_regions,
+                );
             }
 
             if detects || self.detectors_live {
@@ -423,6 +475,9 @@ impl Engine {
                 });
                 self.detect(left_analysis, right_analysis, sidechain, controls);
             }
+
+            let external = sidechain.map(|[l, r]| [&l[offset..end], &r[offset..end]]);
+            self.region_dynamics.detect(left, right, external);
 
             let input_peak = dsp::peak(left, right);
 
@@ -454,8 +509,14 @@ impl Engine {
                     Precision::Single => self.single.output_gain(),
                     Precision::Double => self.double.output_gain(),
                 };
-                self.linear
-                    .process(left, right, output, gain, &mut self.delta_mix);
+                self.linear.process(
+                    left,
+                    right,
+                    output,
+                    gain,
+                    &mut self.delta_mix,
+                    &mut self.region_dynamics,
+                );
             } else {
                 T::render(self, left, right, controls, output);
             }
@@ -467,14 +528,15 @@ impl Engine {
                     let focus = match target {
                         audition::Target::Band(index) => {
                             let mut band = *controls.bands.get(index)?;
-                            band.frequency = self.pitch.band_target(index).unwrap_or(band.frequency);
+                            band.frequency =
+                                self.pitch.band_target(index).unwrap_or(band.frequency);
                             if let Some(live) = self.modulation.live(index) {
                                 live.apply(&mut band);
                             }
                             audition::Focus::band(band, band.frequency)
                         }
                         audition::Target::Region(index) => {
-                            audition::Focus::region(controls.regions.get(index)?.bounds())
+                            audition::Focus::region(self.effective_regions.get(index)?.bounds())
                         }
                     };
                     Some((target, focus))
@@ -568,6 +630,12 @@ impl Engine {
         self.set_processing(controls.linear_phase, controls.oversampling);
 
         if self.linear_phase.is_some() {
+            for (index, region) in controls.regions.iter().copied().enumerate() {
+                let smoothed = self.region_responses[index].update(region, self.alpha);
+                self.effective_regions[index] =
+                    crate::region::response::whole(smoothed, None, self.rate);
+            }
+
             self.snapshot_linear(controls);
         }
     }
@@ -598,8 +666,8 @@ impl Engine {
 
         let mut delta = None;
 
-        for (index, (&region, reductions)) in controls
-            .regions
+        for (index, (&region, reductions)) in self
+            .effective_regions
             .iter()
             .zip(self.resonance.reductions())
             .enumerate()
@@ -647,7 +715,8 @@ impl Engine {
             if let Some(hz) = self.pitch.refresh_band(i, &control, self.rate) {
                 control.frequency = hz;
             }
-            self.modulation.update(i, &mut control, self.rate, self.linear_phase.is_some());
+            self.modulation
+                .update(i, &mut control, self.rate, self.linear_phase.is_some());
             if control.kind.has_gain() {
                 control.gain += self.dynamic_gains[i];
             }
@@ -665,6 +734,9 @@ impl Engine {
             let harmonic_hz =
                 self.pitch
                     .refresh_harmonic(index, control.harmonic_detection(), self.rate);
+            let smoothed = self.region_responses[index].update(control, self.alpha);
+            let control = crate::region::response::whole(smoothed, harmonic_hz, self.rate);
+            self.effective_regions[index] = control;
 
             match self.precision {
                 Precision::Single => self.single.regions[index].update(

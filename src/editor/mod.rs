@@ -63,10 +63,13 @@ pub struct EquartEditor {
     heatmap: spectrum::heatmap::Heatmap,
     response_db: [Vec<f32>; BAND_COUNT],
     fir_response: crate::telemetry::FirResponse,
+    region_dynamics_response: crate::region::dynamics::MaskResponse,
     gui: Option<GuiContext>,
     /// focused band for the panel
     pub(crate) selected: Option<usize>,
     selected_region: Option<usize>,
+    region_dynamics_compact: [bool; crate::region::REGION_COUNT],
+    region_dynamics_paused: [bool; crate::region::REGION_COUNT],
     held_delta: Option<usize>,
     held_audition: Option<crate::engine::audition::Target>,
     /// multi-selected bands (for dragging together)
@@ -128,9 +131,12 @@ impl EquartEditor {
             heatmap: Default::default(),
             response_db: Default::default(),
             fir_response: Default::default(),
+            region_dynamics_response: Default::default(),
             gui: None,
             selected: None,
             selected_region: None,
+            region_dynamics_compact: Default::default(),
+            region_dynamics_paused: Default::default(),
             held_delta: None,
             held_audition: None,
             picked: [false; crate::band::BAND_COUNT],
@@ -207,6 +213,7 @@ impl EquartEditor {
 impl Drop for EquartEditor {
     fn drop(&mut self) {
         self.telemetry.set_delta_region(None);
+        self.telemetry.set_region_dynamics_monitor(None);
         self.telemetry.set_audition(None);
         self.drag = None;
     }
@@ -229,6 +236,7 @@ impl NiceEguiApp for EquartEditor {
         self.held_delta = None;
         self.held_audition = None;
         self.telemetry.set_delta_region(None);
+        self.telemetry.set_region_dynamics_monitor(None);
         self.telemetry.set_audition(None);
         self.gui = None;
         self.drag = None;
@@ -247,13 +255,25 @@ impl NiceEguiApp for EquartEditor {
         self.held_audition = None;
         self.draw(ui);
 
+        let region_dynamics = self
+            .selected_region
+            .filter(|&index| self.params.regions[index].dynamics.enabled.value())
+            .map(|index| {
+                (
+                    index,
+                    !self.region_dynamics_compact[index] && !self.region_dynamics_paused[index],
+                )
+            });
+        self.telemetry.set_region_dynamics_monitor(region_dynamics);
+
         let audition = self.held_audition.filter(|target| match target {
             crate::engine::audition::Target::Band(index) => self.selected == Some(*index),
             crate::engine::audition::Target::Region(index) => self.selected_region == Some(*index),
         });
         self.telemetry.set_audition(audition);
         self.telemetry.set_delta_region(
-            self.held_delta.filter(|&i| audition.is_none() && self.selected_region == Some(i)),
+            self.held_delta
+                .filter(|&i| audition.is_none() && self.selected_region == Some(i)),
         );
         let animated = self.settings.is_shown()
             || self.layout.is_shown()
@@ -267,7 +287,8 @@ impl NiceEguiApp for EquartEditor {
             || audition.is_some();
         #[cfg(feature = "analyzer-profile")]
         if let Some(fps) = crate::analyzer::profile::fps() {
-            ui.ctx().request_repaint_after(Duration::from_secs_f64(1.0 / f64::from(fps)));
+            ui.ctx()
+                .request_repaint_after(Duration::from_secs_f64(1.0 / f64::from(fps)));
             return;
         }
 

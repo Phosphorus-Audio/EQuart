@@ -30,6 +30,9 @@ pub struct EquartParams {
     #[nested(array, group = "Spectral Region")]
     pub regions: [crate::region::RegionParams; crate::region::REGION_COUNT],
 
+    #[persist = "spectral_transfer_curves"]
+    pub(crate) spectral_transfer_curves: crate::region::dynamics::CurveBank,
+
     /// bitmask of user-placed slots (persist-only, not automated)
     #[persist = "bands_placed"]
     pub bands_placed: AtomicU32,
@@ -58,6 +61,7 @@ impl Default for EquartParams {
         Self {
             bands: std::array::from_fn(BandParams::at),
             regions: std::array::from_fn(crate::region::RegionParams::new),
+            spectral_transfer_curves: Default::default(),
             bands_placed: AtomicU32::new(0),
             global: GlobalParams::default(),
             ui_scale_percent: AtomicU32::new(100),
@@ -117,11 +121,18 @@ impl Default for GlobalParams {
                 },
             )
             .display_as("%", 1),
-            pan: FloatParam::new("Pan", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 })
-                .with_value_to_string(formatters::v2s_f32_panning())
-                .with_string_to_value(std::sync::Arc::new(move |text| {
-                    parse_pan(text).filter(|value| value.is_finite())
-                })),
+            pan: FloatParam::new(
+                "Pan",
+                0.0,
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_panning())
+            .with_string_to_value(std::sync::Arc::new(move |text| {
+                parse_pan(text).filter(|value| value.is_finite())
+            })),
             bypass: BoolParam::new("Bypass", false).make_bypass(),
             oversampling: EnumParam::new("Oversampling", Oversampling::Off).non_automatable(),
             processing_mode: EnumParam::new("Processing Mode", Default::default())
@@ -338,8 +349,16 @@ impl BandParams {
             channel: self.channel.value(),
             dynamics: self.dynamics.control(),
             pitch: self.pitch.control(),
-            mapping: if enabled && self.mapping.enabled.value() { self.mapping.control() } else { Default::default() },
-            lfo: if enabled && self.lfo.enabled.value() { self.lfo.control() } else { Default::default() },
+            mapping: if enabled && self.mapping.enabled.value() {
+                self.mapping.control()
+            } else {
+                Default::default()
+            },
+            lfo: if enabled && self.lfo.enabled.value() {
+                self.lfo.control()
+            } else {
+                Default::default()
+            },
         }
     }
 }
@@ -382,6 +401,13 @@ mod tests {
                         .split('/')
                         .next()
                         .filter(|name| !name.is_empty())
+                        .map(|name| {
+                            if name.starts_with("Response ") {
+                                "Response"
+                            } else {
+                                name
+                            }
+                        })
                         .unwrap_or("Region")
                 } else {
                     assert_eq!(group, "Global");
@@ -409,13 +435,23 @@ mod tests {
             ("Global", 4, 4),
             ("Filter", 3 * BAND_COUNT, 4 * BAND_COUNT),
             ("Dynamic", 16 * BAND_COUNT, 5 * BAND_COUNT),
+            (
+                "Dynamics",
+                9 * crate::region::REGION_COUNT,
+                4 * crate::region::REGION_COUNT,
+            ),
             ("F0 Follow", 7 * BAND_COUNT, 6 * BAND_COUNT),
             ("Mapping", 5 * BAND_COUNT, 3 * BAND_COUNT),
             ("LFO", 6 * BAND_COUNT, 8 * BAND_COUNT),
             (
+                "Response",
+                3 * crate::region::REGION_COUNT * crate::region::response::SLOTS,
+                5 * crate::region::REGION_COUNT * crate::region::response::SLOTS,
+            ),
+            (
                 "Region",
                 5 * crate::region::REGION_COUNT,
-                crate::region::REGION_COUNT,
+                2 * crate::region::REGION_COUNT,
             ),
             (
                 "Resonance",
@@ -431,8 +467,12 @@ mod tests {
             assert_eq!(counts[&(group.to_owned(), true)], automated, "{group}");
             assert_eq!(counts[&(group.to_owned(), false)], manual, "{group}");
         }
-        assert_eq!(counts.len(), 18);
-        assert_eq!(ids.len(), 1530 + 22 * BAND_COUNT);
+        assert_eq!(counts.len(), 22);
+        assert_eq!(
+            ids.len(),
+            1530 + 22 * BAND_COUNT
+                + crate::region::REGION_COUNT * (14 + 8 * crate::region::response::SLOTS)
+        );
 
         let band = &params.bands[0];
         let pitch = &band.pitch.detection;

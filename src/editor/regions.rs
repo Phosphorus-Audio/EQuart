@@ -69,7 +69,9 @@ impl EquartEditor {
                     && let Some(pos) = edge_resp.interact_pointer_pos()
                     && let Some(gui) = &self.gui
                 {
-                    let raw_hz = plot.hz(pos.x).clamp(crate::analyzer::MIN_HZ, FREQUENCY_MAX_HZ);
+                    let raw_hz = plot
+                        .hz(pos.x)
+                        .clamp(crate::analyzer::MIN_HZ, FREQUENCY_MAX_HZ);
                     let next_hz = if is_left {
                         raw_hz.min((right_hz / 1.03).max(crate::analyzer::MIN_HZ))
                     } else {
@@ -311,7 +313,23 @@ impl EquartEditor {
         self.set(setter, &region.bypass, false);
         self.set(setter, &region.resonance.enabled, false);
         self.set(setter, &region.resonance.bypassed, false);
+        self.reset_region_dynamics(setter, index);
         self.write_harmonic(setter, index, HarmonicControl::default());
+        self.set(setter, &region.reverse_responses, false);
+        for slot in &region.responses {
+            self.set(setter, &slot.enabled, false);
+            self.set(setter, &slot.bypass, false);
+            self.set(setter, &slot.scope, slot.scope.default_plain_value());
+            self.set(setter, &slot.source, slot.source.default_plain_value());
+            self.set(setter, &slot.target, slot.target.default_plain_value());
+            self.set(setter, &slot.curve, slot.curve.default_plain_value());
+            self.set(setter, &slot.strength, slot.strength.default_plain_value());
+            self.set(
+                setter,
+                &slot.reference,
+                slot.reference.default_plain_value(),
+            );
+        }
         for param in [
             &region.low,
             &region.high,
@@ -344,19 +362,28 @@ impl EquartEditor {
         let [low, high] = control.bounds();
 
         let plot = Plot::new(Layout::plot_outer(canvas, self.meter_visible()), rate);
-        Some(Layout::panel_with_width(
+        let height = if control.dynamics.enabled {
+            modifiers::SPECTRAL_DYNAMICS_HEIGHT
+        } else {
+            Layout::PANEL_H
+        };
+        Some(Layout::panel_with_size(
             canvas,
             plot.x((low * high).sqrt()),
-            self.region_panel_width(index).min(canvas.width() - 24.0),
+            Vec2::new(
+                self.region_panel_width(index).min(canvas.width() - 24.0),
+                height,
+            ),
         ))
     }
 
     fn region_panel_width(&self, index: usize) -> f32 {
         let region = &self.params.regions[index];
         REGION_PANEL_WIDTH
-            + modifiers::Modifier::REGION.into_iter()
+            + modifiers::Modifier::REGION
+                .into_iter()
                 .filter(|m| m.attached_to_region(region))
-                .map(|modifier| modifier.region_width(region))
+                .map(|modifier| modifier.region_width(region, self.region_dynamics_compact[index]))
                 .sum::<f32>()
     }
 
@@ -408,7 +435,9 @@ impl EquartEditor {
             ui,
             base,
             target,
-            modifiers::Modifier::REGION.iter().any(|m| !m.attached_to_region(region)),
+            modifiers::Modifier::REGION
+                .iter()
+                .any(|m| !m.attached_to_region(region)),
             destination.is_some(),
         );
         if controls::delete_point_clicked(ui, &close) {
@@ -430,10 +459,26 @@ impl EquartEditor {
         }
         self.show_modifier_picker(&add, target);
         let mut origin = base.right_top();
-        for modifier in modifiers::Modifier::REGION.into_iter().filter(|m| m.attached_to_region(region)) {
+        use modifiers::Modifier;
+        let [first, second] = crate::region::response::order(region.reverse_responses.value());
+        let modifiers = [
+            Modifier::Harmonic,
+            Modifier::Resonance,
+            Modifier::Response(first),
+            Modifier::Response(second),
+            Modifier::SpectralDynamics,
+        ];
+
+        for modifier in modifiers
+            .into_iter()
+            .filter(|m| m.attached_to_region(region))
+        {
             let module = Rect::from_min_size(
                 origin,
-                Vec2::new(modifier.region_width(region), panel.height()),
+                Vec2::new(
+                    modifier.region_width(region, self.region_dynamics_compact[index]),
+                    panel.height(),
+                ),
             );
             origin = module.right_top();
             if self.reveal_modifier == Some((index, modifier)) {

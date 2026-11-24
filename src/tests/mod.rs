@@ -86,6 +86,8 @@ mod modulation;
 mod oversampling;
 mod processing;
 mod regions;
+mod response;
 mod signal_path;
+mod spectral_dynamics;
 mod spectrum;
 mod throughput;

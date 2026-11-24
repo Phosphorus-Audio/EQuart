@@ -3,12 +3,13 @@ use crate::engine::Engine;
 
 mod fir;
 mod modulation;
-pub(crate) use fir::FirResponse;
+pub(crate) mod region_dynamics;
 use crate::region::{
     REGION_COUNT,
     resonance::{REDUCTIONS, Reduction},
 };
-use std::sync::atomic::{AtomicU32, Ordering};
+pub(crate) use fir::FirResponse;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Meter readings and frequency scale used to draw an editor frame.
 pub(crate) struct MeterReadings {
@@ -31,6 +32,10 @@ pub(crate) struct Telemetry {
     tracked_frequency: [AtomicU32; BAND_COUNT],
     modulation: [modulation::Published; BAND_COUNT],
     harmonic_hz: [AtomicU32; REGION_COUNT],
+    region_response: [[AtomicU64; crate::region::response::SLOTS]; REGION_COUNT],
+    region_dynamics_target: AtomicU32,
+    pub(crate) region_dynamics: [region_dynamics::History; REGION_COUNT],
+    pub(crate) region_dynamics_response: region_dynamics::Response,
     /// Momentary editor request. Zero means normal output.
     delta_region: AtomicU32,
     audition: AtomicU32,
@@ -51,6 +56,10 @@ impl Default for Telemetry {
             tracked_frequency: std::array::from_fn(|_| AtomicU32::new(0)),
             modulation: Default::default(),
             harmonic_hz: Default::default(),
+            region_response: Default::default(),
+            region_dynamics_target: AtomicU32::new(0),
+            region_dynamics: Default::default(),
+            region_dynamics_response: Default::default(),
             delta_region: AtomicU32::new(0),
             audition: AtomicU32::new(0),
             resonance: Default::default(),
@@ -59,8 +68,23 @@ impl Default for Telemetry {
 }
 
 impl Telemetry {
+    pub(crate) fn set_region_dynamics_monitor(&self, target: Option<(usize, bool)>) {
+        let value = target.map_or(0, |(index, record)| {
+            (index as u32 + 1) | (u32::from(record) << 16)
+        });
+        self.region_dynamics_target.store(value, Ordering::Relaxed);
+    }
+
+    pub(crate) fn region_dynamics_monitor(&self) -> Option<(usize, bool)> {
+        let value = self.region_dynamics_target.load(Ordering::Relaxed);
+        ((value & 0xffff) as usize)
+            .checked_sub(1)
+            .map(|index| (index, value >> 16 != 0))
+    }
+
     pub(crate) fn set_delta_region(&self, region: Option<usize>) {
-        self.delta_region.store(region.map_or(0, |i| i as u32 + 1), Ordering::Relaxed);
+        self.delta_region
+            .store(region.map_or(0, |i| i as u32 + 1), Ordering::Relaxed);
     }
 
     pub(crate) fn delta_region(&self) -> Option<usize> {
@@ -89,6 +113,8 @@ impl Telemetry {
             .store(engine.latency(), Ordering::Relaxed);
 
         self.fir.publish(engine);
+        self.region_dynamics_response
+            .write(engine.region_dynamics.response());
 
         for (atomic, value) in self.dynamic.iter().zip(engine.dynamic_gains()) {
             atomic.store(value.to_bits(), Ordering::Relaxed);
@@ -123,6 +149,26 @@ impl Telemetry {
                 engine.harmonic_hz(index).unwrap_or(0.0).to_bits(),
                 Ordering::Relaxed,
             );
+        }
+        for (index, row) in self.region_response.iter().enumerate() {
+            for (slot, response) in row.iter().zip(engine.region_response(index)) {
+                let bits = if response.enabled {
+                    (u64::from(response.reference.to_bits()) << 32)
+                        | u64::from(response.strength.to_bits())
+                } else {
+                    0
+                };
+                slot.store(bits, Ordering::Relaxed);
+            }
+        }
+
+        if let Some((index, record)) = engine.region_dynamics_observed {
+            #[cfg(feature = "analyzer-profile")]
+            let _timer = record.then(|| {
+                crate::analyzer::profile::Timer::new(crate::analyzer::profile::REGION_HISTORY)
+            });
+            let (frame, meter) = engine.region_dynamics.meter(index);
+            self.region_dynamics[index].write(frame, engine.rate, meter, record);
         }
     }
 
@@ -187,5 +233,25 @@ impl Telemetry {
     pub(crate) fn harmonic_hz(&self, index: usize) -> Option<f32> {
         let hz = f32::from_bits(self.harmonic_hz[index].load(Ordering::Relaxed));
         (hz > 0.0).then_some(hz)
+    }
+
+    pub(crate) fn response_region(
+        &self,
+        index: usize,
+        mut region: crate::region::RegionControl,
+    ) -> crate::region::RegionControl {
+        for (slot, response) in self.region_response[index]
+            .iter()
+            .zip(&mut region.responses)
+        {
+            let bits = slot.load(Ordering::Relaxed);
+            if response.enabled && bits != 0 {
+                response.strength = f32::from_bits(bits as u32);
+                response.reference = f32::from_bits((bits >> 32) as u32);
+                response.bypass = false;
+            }
+        }
+
+        region
     }
 }

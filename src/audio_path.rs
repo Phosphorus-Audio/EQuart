@@ -2,6 +2,7 @@ use crate::band::{BAND_COUNT, Band, BandControl, COEFF_FRAMES};
 use crate::dsp;
 use crate::oversample::{DownsamplePath, HIGH, Oversampling, Resampler};
 use crate::precision::Sample;
+use crate::region::dynamics::Rack;
 use crate::region::{REGION_COUNT, Region};
 
 pub(crate) struct AudioPath<T: Sample> {
@@ -100,6 +101,7 @@ impl<T: Sample> AudioPath<T> {
         controls: &[BandControl; BAND_COUNT],
         output: OutputMix,
         delta_mix: &mut f32,
+        dynamics: &mut Rack,
     ) {
         let len = left.len();
         let mode = self.resampler.mode();
@@ -166,6 +168,15 @@ impl<T: Sample> AudioPath<T> {
                     &mut delta_right[..len],
                     len,
                 );
+            }
+        }
+
+        if dynamics.active {
+            #[cfg(feature = "analyzer-profile")]
+            let _timer =
+                crate::analyzer::profile::Timer::new(crate::analyzer::profile::REGION_MASK);
+            for (i, (left, right)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
+                [*left, *right] = dynamics.apply(i, [*left, *right]);
             }
         }
 

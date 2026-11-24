@@ -466,6 +466,8 @@ impl LinearEq {
     }
 
     fn partition(&mut self) {
+        #[cfg(feature = "analyzer-profile")]
+        let _timer = crate::analyzer::profile::Timer::new(crate::analyzer::profile::FIR_PARTITION);
         let design = &self.plans.designs[self.rate_index][self.quality.index()];
         let fft = design.inverse.len();
         let center = self.center;
@@ -517,6 +519,7 @@ impl LinearEq {
         output: OutputMix,
         gain: f64,
         delta_mix: &mut f32,
+        dynamics: &mut crate::region::dynamics::Rack,
     ) {
         if self.design_bin.is_some() {
             let design_frames = (self.update_hops - 1).max(1) * HOP;
@@ -528,7 +531,12 @@ impl LinearEq {
         let target_bypass = f64::from(output.bypass);
         let bypass_mix = self.bypass_mix.get_or_insert(target_bypass);
 
-        for (left, right) in left.iter_mut().zip(right) {
+        #[cfg(feature = "analyzer-profile")]
+        let dynamics_timer = dynamics
+            .active
+            .then(|| crate::analyzer::profile::Timer::new(crate::analyzer::profile::REGION_MASK));
+
+        for (i, (left, right)) in left.iter_mut().zip(right).enumerate() {
             let input = [left.double(), right.double()];
             let dry = std::mem::replace(&mut self.dry[self.dry_pos], input);
             self.dry_pos = (self.dry_pos + 1) % latency;
@@ -543,12 +551,13 @@ impl LinearEq {
 
             let delta = f64::from(*delta_mix) * (1.0 - *bypass_mix);
             let wet = f64::from(output.wet) * (1.0 - *bypass_mix);
+            let filtered = dynamics.apply(i, [self.output[0][self.pos], self.output[1][self.pos]]);
 
             for (ch, sample) in [left, right].into_iter().enumerate() {
                 let mixed = if wet == 0.0 {
                     dry[ch]
                 } else {
-                    dry[ch] * (1.0 - wet) + self.output[ch][self.pos] * gain * wet
+                    dry[ch] * (1.0 - wet) + filtered[ch] * gain * wet
                 };
 
                 *sample = T::value(mixed * (1.0 - delta) + self.output[ch + 2][self.pos] * delta);
@@ -556,6 +565,9 @@ impl LinearEq {
 
             self.pos += 1;
         }
+
+        #[cfg(feature = "analyzer-profile")]
+        drop(dynamics_timer);
 
         if self.pos == HOP {
             self.finish_hop();
