@@ -7,7 +7,10 @@ Parametric EQ by Phosphorus Audio, built with [nice-plug](https://codeberg.org/R
 ## downloads
 
 [GitHub Releases](https://github.com/Phosphorus-Audio/EQuart/releases) provides CLAP
-and VST3 for Windows x64, macOS Universal, and Linux x64.
+and VST3 for Windows x64, macOS Universal, and Linux x64. The macOS release also
+includes a self-contained Audio Unit (AUv2) for Logic Pro and other AU hosts.
+macOS 14 or newer is required. The plugins are ad-hoc signed, and the installer
+is unsigned; neither is notarized, so macOS may require approval in Privacy & Security.
 
 ## features
 
@@ -34,6 +37,17 @@ cargo xtask bundle equart --release
 ```
 
 Outputs `target/bundled/equart.clap` and `target/bundled/equart.vst3/`. (`build.bat` / `build.sh` wrap this too.)
+
+To build the macOS Universal AU, install both Rust macOS targets, CMake, and Xcode
+command line tools, then run:
+
+```sh
+MACOSX_DEPLOYMENT_TARGET=14.0 cargo xtask bundle-universal equart --release --locked
+python3 tools/ci/build_au.py
+```
+
+This creates `target/bundled/equart.component` with its own embedded CLAP engine.
+Install it in `~/Library/Audio/Plug-Ins/Components/` or use the release PKG.
 
 With `dpi-trace` enabled, frame stats log to `%LOCALAPPDATA%\f0lock\diagnostics\`:
 

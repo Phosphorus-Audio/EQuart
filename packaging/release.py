@@ -1,4 +1,4 @@
-"""Package the EQuart CLAP and VST3 bundles for the current CI runner."""
+"""Package the EQuart plugin bundles for the current CI runner."""
 
 import os
 from pathlib import Path
@@ -21,8 +21,12 @@ def run(*args):
     subprocess.run(args, check=True)
 
 
-def stage_bundles(stage):
-    for name in FORMATS:
+def stage_bundles(stage, platform):
+    formats = dict(FORMATS)
+    if platform == "macos":
+        formats["equart.component"] = "Components"
+
+    for name in formats:
         source = ROOT / "target" / "bundled" / name
         if source.is_dir():
             shutil.copytree(source, stage / name, symlinks=True)
@@ -49,6 +53,25 @@ def stage_bundles(stage):
         if directory == "assets/fonts":
             shutil.copy2(sources / "UFL.txt", target)
 
+    if platform == "macos":
+        for name in ("clap-wrapper-MIT.txt", "clap-MIT.txt", "AudioUnitSDK.txt"):
+            shutil.copy2(ROOT / "target/bundled/au-licenses" / name, licenses)
+
+
+def validate_audio_unit(bundle):
+    with (bundle / "Contents/Info.plist").open("rb") as source:
+        metadata = plistlib.load(source)
+    components = metadata["AudioComponents"]
+    identities = [(c["type"], c["subtype"], c["manufacturer"]) for c in components]
+    if identities != [("aufx", "Eqrt", "PhAu")]:
+        raise ValueError(f"Unexpected Audio Unit identity: {identities}")
+    if not components[0]["name"] or not components[0]["factoryFunction"]:
+        raise ValueError("Audio Unit name or factory entry point is missing")
+    for path in (bundle / "Contents/MacOS/equart",
+                 bundle / "Contents/PlugIns/equart.clap/Contents/MacOS/equart"):
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
 
 def validate_binary(path, platform):
     with path.open("rb") as binary:
@@ -74,14 +97,19 @@ def zip_stage(stage, destination):
 
 
 def package_macos(stage, stem, version):
-    for name, directory in FORMATS.items():
+    formats = {**FORMATS, "equart.component": "Components"}
+    for name, directory in formats.items():
         bundle = stage / name
+        if name == "equart.component":
+            validate_audio_unit(bundle)
+            embedded = bundle / "Contents/PlugIns/equart.clap"
+            shutil.copytree(stage / "equart.clap", embedded, symlinks=True, dirs_exist_ok=True)
         binary = bundle / "Contents/MacOS/equart"
         plist = bundle / "Contents/Info.plist"
         with plist.open("rb") as source:
             metadata = plistlib.load(source)
         metadata.update(
-            CFBundleIdentifier=f"audio.equart.eq.{directory.lower()}",
+            CFBundleIdentifier=f"audio.equart.eq.{name.rsplit('.', 1)[1]}",
             CFBundleShortVersionString=version,
             CFBundleVersion=version,
             LSMinimumSystemVersion=MACOS_MIN,
@@ -94,8 +122,8 @@ def package_macos(stage, stem, version):
         run("codesign", "--verify", "--deep", "--strict", bundle)
 
     payload = stage.parent / "payload"
-    for name, directory in FORMATS.items():
-        shutil.copytree(stage / name, payload / "Library/Audio/Plug-Ins" / directory / name)
+    for name, directory in formats.items():
+        shutil.copytree(stage / name, payload / "Library/Audio/Plug-Ins" / directory / name, symlinks=True)
 
     support = payload / "Library/Application Support/EQuart"
     shutil.copytree(stage / "licenses", support / "licenses")
@@ -139,7 +167,7 @@ def main(platform):
     with tempfile.TemporaryDirectory(prefix="equart-release-") as work:
         stage = Path(work) / "stage"
         stage.mkdir()
-        stage_bundles(stage)
+        stage_bundles(stage, platform)
         if platform == "macos":
             package_macos(stage, stem, version)
             return
