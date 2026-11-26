@@ -435,7 +435,7 @@ impl EquartEditor {
         }
     }
 
-    fn delete_region(&mut self, index: usize) {
+    pub(super) fn delete_region(&mut self, index: usize) {
         let Some(gui) = &self.gui else { return };
         self.reset_region(&gui.param_setter(), index);
         self.region_conversion_baselines[index] = None;

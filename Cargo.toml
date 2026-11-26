@@ -38,6 +38,7 @@ nice-assert-no-alloc = "1.0"
 [target.'cfg(windows)'.dependencies]
 nice-plug-egui = { path = "vendor/nice-plug/crates/nice-plug-egui", default-features = false, features = ["wgpu"] }
 egui-wgpu = { version = "0.37", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(not(windows))'.dependencies]
 nice-plug-egui = { path = "vendor/nice-plug/crates/nice-plug-egui" }

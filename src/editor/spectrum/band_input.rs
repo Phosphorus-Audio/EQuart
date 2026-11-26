@@ -4,11 +4,15 @@ pub(crate) struct BandDrag {
     pub(crate) band: usize,
     pub(crate) grab: Vec2,
     pub(crate) origin: (f32, f32),
+    pub(crate) origin_pos: Pos2,
+    pub(crate) last_pos: Pos2,
+    pub(crate) virtual_pos: Pos2,
     pub(crate) origin_y: f32,
     pub(crate) origin_q: f32,
     pub(super) origin_range: f32,
     pub(crate) followers: Vec<(usize, (f32, f32))>,
     pub(super) vertical: VerticalDrag,
+    pub(super) gestures: Vec<ParamPtr>,
 }
 
 #[derive(Clone, Copy)]
@@ -104,7 +108,7 @@ pub(super) fn cut_q(param: &FloatParam, from: f32, db_delta: f32, fine: bool) ->
     param.preview_plain(param.preview_normalized(q))
 }
 
-const AUTO_LOW_CUT_HZ: f32 = 20.0;
+const AUTO_LOW_CUT_HZ: f32 = 35.0;
 const AUTO_HIGH_CUT_HZ: f32 = 15_000.0;
 
 pub(super) fn new_band_kind(hz: f32) -> FilterKind {
@@ -180,8 +184,9 @@ impl EquartEditor {
         db: f32,
         controls: &[BandControl; BAND_COUNT],
         time: f64,
-    ) {
+    ) -> Option<usize> {
         let kind = new_band_kind(hz);
+
         match controls.iter().position(|control| !control.enabled) {
             Some(index) => {
                 if let Some(gui) = &self.gui {
@@ -202,10 +207,108 @@ impl EquartEditor {
                     self.band_conversion_baselines[index] = Some(baseline);
                     self.params.mark_placed(index);
                 }
+
                 self.pick_only(index);
                 self.notify(format!("Band {} · {}", index + 1, format_hz(hz)), time);
+                Some(index)
             }
-            None => self.notify("No free bands", time),
+            None => {
+                self.notify("No free bands", time);
+                None
+            }
+        }
+    }
+
+    pub(super) fn begin_band_drag(
+        &mut self,
+        index: usize,
+        position: Pos2,
+        grab: Vec2,
+        control: &BandControl,
+        followers: Vec<(usize, (f32, f32))>,
+        axis_range: f32,
+        plot_range: f32,
+    ) {
+        self.end_band_drag();
+
+        let mut gestures = Vec::new();
+
+        if let Some(gui) = &self.gui {
+            let setter = gui.param_setter();
+            let lead = &self.params.bands[index];
+
+            if !control.pitch.enabled {
+                let ptr = lead.frequency.as_ptr();
+                setter.begin_set_parameter(&lead.frequency);
+                gestures.push(ptr);
+            }
+
+            if control.kind.has_gain() {
+                let ptr = lead.gain.as_ptr();
+                setter.begin_set_parameter(&lead.gain);
+                gestures.push(ptr);
+            } else if control.kind.is_cut() && control.slope != CutSlope::Db6 {
+                let ptr = lead.q.as_ptr();
+                setter.begin_set_parameter(&lead.q);
+                gestures.push(ptr);
+            }
+
+            for &(other, _) in &followers {
+                let follower = &self.params.bands[other];
+
+                if !follower.pitch.enabled.value() {
+                    let ptr = follower.frequency.as_ptr();
+                    setter.begin_set_parameter(&follower.frequency);
+                    gestures.push(ptr);
+                }
+
+                if self.control(other).kind.has_gain() {
+                    let ptr = follower.gain.as_ptr();
+                    setter.begin_set_parameter(&follower.gain);
+                    gestures.push(ptr);
+                }
+            }
+        }
+
+        let virtual_pos = position + grab;
+        let vertical = VerticalDrag {
+            y: virtual_pos.y,
+            start_range: axis_range,
+            db: if control.kind.is_cut() {
+                cut_handle_db(control.q)
+            } else {
+                control.gain
+            },
+        };
+
+        self.drag = Some(BandDrag {
+            band: index,
+            grab,
+            origin: (control.frequency, control.gain),
+            origin_pos: position,
+            last_pos: position,
+            virtual_pos,
+            origin_y: vertical.y,
+            origin_q: control.q,
+            origin_range: plot_range,
+            followers,
+            vertical,
+            gestures,
+        });
+    }
+
+    pub(in crate::editor) fn end_band_drag(&mut self) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+
+        if let Some(gui) = &self.gui {
+            let setter = gui.param_setter();
+
+            for ptr in drag.gestures {
+                // SAFETY: `self.params` keeps all parameter pointers alive
+                unsafe { setter.raw_context.raw_end_set_parameter(ptr) };
+            }
         }
     }
 

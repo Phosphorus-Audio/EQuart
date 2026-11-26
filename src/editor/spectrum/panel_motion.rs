@@ -1,9 +1,9 @@
 use super::*;
 
 /// Wait this long after dragging or editing before card starts moving.
-const PANEL_HOLD_SECONDS: f64 = 1.0;
-/// Smooth-damp time, takes like ~2s to settle nicely.
-const PANEL_SMOOTH_TIME: f64 = 0.42;
+const PANEL_HOLD_SECONDS: f64 = 0.25;
+/// Smooth-damp time for panel glide.
+const PANEL_SMOOTH_TIME: f64 = 0.16;
 /// Cap frame delta so lag spikes won't make the card teleport.
 const PANEL_MAX_FRAME_DELTA: f64 = 0.05;
 /// Snap to target and stop moving when close enough.

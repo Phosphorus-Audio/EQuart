@@ -260,11 +260,27 @@ pub(crate) fn knob(
             .on_hover_cursor(egui::CursorIcon::Grab)
     };
 
-    // i dont want to support the wayland or x11 and i have not mac
     #[cfg(target_os = "windows")]
+    if !read_only && response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed())
+    {
+        use windows_sys::Win32::{Foundation::POINT, UI::WindowsAndMessaging::GetCursorPos};
+
+        let mut position = POINT { x: 0, y: 0 };
+        // SAFETY: position is a valid writable POINT.
+        assert_ne!(
+            unsafe { GetCursorPos(&mut position) },
+            0,
+            "GetCursorPos failed"
+        );
+        ui.data_mut(|data| data.insert_temp(id.with("cursor-anchor"), [position.x, position.y]));
+    }
+
     if !read_only && response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down())
     {
+        #[cfg(target_os = "windows")]
         ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        #[cfg(not(target_os = "windows"))]
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
 
     if !read_only && response.clicked() {
@@ -283,6 +299,26 @@ pub(crate) fn knob(
             0.004
         };
 
+        #[cfg(target_os = "windows")]
+        let delta = {
+            use windows_sys::Win32::{
+                Foundation::POINT,
+                UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos},
+            };
+
+            let [x, y] = ui
+                .data(|data| data.get_temp::<[i32; 2]>(id.with("cursor-anchor")))
+                .expect("knob drag started without a cursor anchor");
+            let mut position = POINT { x: 0, y: 0 };
+            // SAFETY: position is a valid writable POINT and the anchor is a screen coordinate.
+            unsafe {
+                assert_ne!(GetCursorPos(&mut position), 0, "GetCursorPos failed");
+                assert_ne!(SetCursorPos(x, y), 0, "SetCursorPos failed");
+            }
+            Vec2::new((position.x - x) as f32, (position.y - y) as f32)
+                / ui.ctx().pixels_per_point()
+        };
+        #[cfg(not(target_os = "windows"))]
         let delta = response.drag_delta();
         let previous = ui
             .data(|data| data.get_temp::<f32>(id))

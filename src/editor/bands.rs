@@ -12,12 +12,12 @@ impl EquartEditor {
     }
 
     pub(crate) fn clear_selection(&mut self) {
+        self.end_band_drag();
         self.picked = [false; crate::band::BAND_COUNT];
         self.selected = None;
         self.selected_region = None;
         self.pending_region_selection = None;
         self.conversion_dialog = None;
-        self.drag = None;
         self.slope_wheel = 0.0;
         self.modifier_picker = None;
     }
@@ -47,6 +47,24 @@ impl EquartEditor {
         self.reset_band(&gui.param_setter(), index);
         self.band_conversion_baselines[index] = None;
         self.clear_selection();
+    }
+
+    pub(super) fn delete_selected_bands(&mut self) {
+        let Some(gui) = &self.gui else { return };
+        let setter = gui.param_setter();
+        let mut deleted = false;
+
+        for index in 0..BAND_COUNT {
+            if self.is_picked(index) && self.band_exists(index) {
+                self.reset_band(&setter, index);
+                self.band_conversion_baselines[index] = None;
+                deleted = true;
+            }
+        }
+
+        if deleted {
+            self.clear_selection();
+        }
     }
 
     pub(super) fn delete_all_objects(&mut self) {

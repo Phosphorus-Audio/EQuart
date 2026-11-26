@@ -255,6 +255,7 @@ impl NiceEguiApp for EquartEditor {
     }
 
     fn editor_closed(&mut self) {
+        self.end_band_drag();
         self.meter_smoothed_peak = 0.0;
         self.held_delta = None;
         self.held_audition = None;
@@ -264,7 +265,6 @@ impl NiceEguiApp for EquartEditor {
         self.gui = None;
         self.history_host = None;
         self.history.lock().unwrap().finish_edit();
-        self.drag = None;
         self.conversion_dialog = None;
         self.dial.shut();
         self.theme_open = false;

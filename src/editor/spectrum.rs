@@ -27,7 +27,7 @@ mod trace;
 use super::wheel::{take_steps, wheel_steps};
 use backdrop::{ease_glow, edge_fade, soft_wash};
 pub(crate) use band_input::{BandDrag, cut_handle_q, cut_handle_y};
-use band_input::{VerticalDrag, cut_handle_db, cut_q, follow, key_hz};
+use band_input::{cut_handle_db, cut_q, follow, key_hz};
 pub(super) use fill::gradient_fill;
 use grid::{draw_axis_labels, draw_grid_lines};
 use keys::{draw_keys, note_at, note_hz};
@@ -216,6 +216,8 @@ impl EquartEditor {
         let nearest = pointer.and_then(point_at);
         let pressed_at = ui.input(|i| i.pointer.press_origin());
         let pressed_band_id = response.id.with("pressed-band");
+        let curve_preview_id = response.id.with("curve-preview");
+        let pressed_preview_id = response.id.with("pressed-preview");
 
         if ui.input(|i| i.pointer.primary_pressed()) {
             let pressed = pressed_at
@@ -223,6 +225,21 @@ impl EquartEditor {
                 .filter(|_| response.is_pointer_button_down_on())
                 .map(|i| (i, controls[i].enabled && controls[i].pitch.enabled));
             ui.data_mut(|data| data.insert_temp(pressed_band_id, pressed));
+
+            let last_preview = ui
+                .data(|data| data.get_temp::<Option<Pos2>>(curve_preview_id))
+                .flatten();
+            let hit_preview = pressed
+                .is_none()
+                .then(|| {
+                    pressed_at.and_then(|pos| {
+                        last_preview.filter(|preview| {
+                            response.is_pointer_button_down_on() && preview.distance(pos) <= 16.0
+                        })
+                    })
+                })
+                .flatten();
+            ui.data_mut(|data| data.insert_temp(pressed_preview_id, hit_preview));
         }
 
         let press_target = ui
@@ -235,6 +252,9 @@ impl EquartEditor {
         if response.clicked()
             && let Some(index) = clicked_band
         {
+            if ui.input(|i| i.modifiers.alt) {
+                self.set_band_enabled(index, !controls[index].enabled);
+            }
             self.pick_only(index);
         }
 
@@ -248,6 +268,18 @@ impl EquartEditor {
             || self.band_dropdown_is_up()
             || self.footer_menu_is_up()
             || self.dial.is_shown();
+
+        if !popup_open
+            && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
+        {
+            if let Some(region) = self.selected_region {
+                self.delete_region(region);
+            } else {
+                self.delete_selected_bands();
+            }
+        }
+
         if response.clicked()
             && !response.double_clicked()
             && clicked_band.is_none()
@@ -328,33 +360,45 @@ impl EquartEditor {
                             .map(|(other, control)| (other, (control.frequency, control.gain)))
                             .collect();
                         let grab = marker.map_or(Vec2::ZERO, |point| point - position);
-                        let control = &controls[index];
-                        let vertical = VerticalDrag {
-                            y: position.y + grab.y,
-                            start_range: axis_range,
-                            db: if control.kind.is_cut() {
-                                cut_handle_db(control.q)
-                            } else {
-                                control.gain
-                            },
-                        };
-                        self.drag = Some(BandDrag {
-                            band: index,
+                        self.begin_band_drag(
+                            index,
+                            position,
                             grab,
-                            origin: (control.frequency, control.gain),
-                            origin_y: vertical.y,
-                            origin_q: control.q,
-                            origin_range: plot.range,
+                            &controls[index],
                             followers,
-                            vertical,
-                        });
+                            axis_range,
+                            plot.range,
+                        );
                     }
                 }
-                // start marquee box on empty space
-                None if !over_panel => {
-                    if let Some(start) = pressed_at.or(pointer) {
+                // drag on curve preview creates and drags a new band immediately
+                None if !over_panel && !popup_open => {
+                    let hit_preview = ui
+                        .data(|data| data.get_temp::<Option<Pos2>>(pressed_preview_id))
+                        .flatten();
+
+                    if let Some(point) = hit_preview
+                        && let Some(index) = self.place_band(
+                            plot.hz(point.x),
+                            plot.db(point.y),
+                            &controls,
+                            ui.input(|i| i.time),
+                        )
+                    {
+                        let created = self.control(index);
+                        let start = pressed_at.unwrap_or(point);
+                        self.begin_band_drag(
+                            index,
+                            start,
+                            point - start,
+                            &created,
+                            Vec::new(),
+                            axis_range,
+                            plot.range,
+                        );
+                    } else if let Some(start) = pressed_at.or(pointer) {
                         self.marquee = Some((start, start));
-                        self.drag = None;
+                        self.end_band_drag();
                     }
                 }
                 None => {}
@@ -367,23 +411,40 @@ impl EquartEditor {
                     self.marquee = Some((start, position));
                 }
             } else if let Some(drag) = &self.drag
-                && let Some(position) = ui.input(|i| i.pointer.interact_pos())
+                && let Some(raw_pos) = ui.input(|i| i.pointer.interact_pos())
                 && let Some(gui) = &self.gui
             {
                 let setter = gui.param_setter();
-                let position = position + drag.grab;
+                let (shift, lock_axis) =
+                    ui.input(|i| (i.modifiers.shift, i.modifiers.command));
+                let delta = raw_pos - drag.last_pos;
+                let step_scale = if shift { 0.15 } else { 1.0 };
+
+                let mut virtual_pos = drag.virtual_pos + delta * step_scale;
+                let origin_virtual = drag.origin_pos + drag.grab;
+
+                if lock_axis {
+                    let total = raw_pos - drag.origin_pos;
+                    if total.x.abs() >= total.y.abs() {
+                        virtual_pos.y = origin_virtual.y;
+                    } else {
+                        virtual_pos.x = origin_virtual.x;
+                    }
+                }
+
+                let position = virtual_pos;
                 let band = &self.params.bands[drag.band];
                 let hz = if band.pitch.enabled.value() {
                     drag.origin.0
                 } else {
                     let hz = plot.hz(position.x);
-                    self.set(&setter, &band.frequency, hz);
+                    setter.set_parameter(&band.frequency, hz);
                     hz
                 };
-                let control = &controls[drag.band];
+
+                let control = self.control(drag.band);
                 let lead_has_gain = control.kind.has_gain();
                 let adjusts_cut_q = control.kind.is_cut() && control.slope != CutSlope::Db6;
-                let fine_q = adjusts_cut_q && ui.input(|i| i.modifiers.shift);
 
                 let mut vertical = drag.vertical;
                 let auto_db = if layout.auto_expand_eq_axis && (lead_has_gain || adjusts_cut_q) {
@@ -393,7 +454,7 @@ impl EquartEditor {
                     } else {
                         cut_handle_db(Q_MIN)..=cut_handle_db(Q_MAX)
                     };
-                    let next_range = vertical.update(&plot, position.y, axis_range, limits, fine_q);
+                    let next_range = vertical.update(&plot, position.y, axis_range, limits, false);
 
                     if next_range != axis_range {
                         self.params
@@ -406,6 +467,7 @@ impl EquartEditor {
                 } else {
                     None
                 };
+
                 let db = if lead_has_gain {
                     auto_db.unwrap_or_else(|| plot.db(position.y))
                 } else {
@@ -414,95 +476,124 @@ impl EquartEditor {
                 };
 
                 if lead_has_gain {
-                    self.set(&setter, &band.gain, db);
+                    setter.set_parameter(&band.gain, db);
                 } else if adjusts_cut_q {
-                    // cuts use vertical drag for Q (except 6dB/oct)
                     let db_delta = auto_db.map_or_else(
                         || plot.db_free(position.y) - plot.db_free(drag.origin_y),
                         |db| db - cut_handle_db(drag.origin_q),
                     );
-                    let q = cut_q(
-                        &band.q,
-                        drag.origin_q,
-                        db_delta,
-                        fine_q && auto_db.is_none(),
-                    );
-                    self.set(&setter, &band.q, q);
+                    let q = cut_q(&band.q, drag.origin_q, db_delta, false);
+                    setter.set_parameter(&band.q, q);
                 }
 
-                // move other picked bands together
                 for &(index, at_start) in &drag.followers {
                     let (moved_hz, moved_db) =
                         follow(drag.origin, (hz, db), at_start, lead_has_gain);
                     let follower = self.params.band(index);
+
                     if !follower.pitch.enabled.value() {
-                        self.set(&setter, &follower.frequency, moved_hz);
+                        setter.set_parameter(&follower.frequency, moved_hz);
                     }
+
                     if self.control(index).kind.has_gain() {
-                        self.set(&setter, &self.params.bands[index].gain, moved_db);
+                        setter.set_parameter(&self.params.bands[index].gain, moved_db);
                     }
                 }
 
                 if let Some(drag) = &mut self.drag {
+                    drag.last_pos = raw_pos;
+                    drag.virtual_pos = virtual_pos;
                     drag.vertical = vertical;
                 }
             }
         }
 
         if response.drag_stopped_by(egui::PointerButton::Primary) {
-            self.drag = None;
+            self.end_band_drag();
             if let Some((start, end)) = self.marquee.take() {
                 self.finish_marquee(start, end, &markers);
             }
         }
 
-        // wheel edits Q on bells or slope on cuts (uses hover_pos since pointer isn't down)
-        let wheel_nearest = response.hover_pos().and_then(point_at);
-        let mut q_change = None;
+        // wheel edits Q on bells or slope on cuts (works while dragging, hovering a node, or with a selected band)
+        let wheel_target = self
+            .drag
+            .as_ref()
+            .map(|drag| drag.band)
+            .or_else(|| response.hover_pos().and_then(point_at))
+            .or_else(|| {
+                (response.hovered() && !over_panel && !popup_open)
+                    .then_some(self.selected)
+                    .flatten()
+            });
+        let mut q_scale = None;
         let mut slope_change = None;
-        if let Some(index) = wheel_nearest {
-            if controls[index].kind.is_cut() {
+
+        if let Some(index) = wheel_target {
+            let target_control = self.control(index);
+
+            if target_control.kind.is_cut() {
                 let travel = ui.input(|i| wheel_steps(&i.raw.events));
                 let (steps, leftover) = take_steps(self.slope_wheel + travel);
                 self.slope_wheel = leftover;
+
                 if steps != 0 {
-                    slope_change = Some((index, controls[index].slope.step(steps)));
+                    slope_change = Some((index, target_control.slope.step(steps)));
                 }
             } else {
                 self.slope_wheel = 0.0;
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-                if scroll != 0.0 && controls[index].kind.uses_q(controls[index].slope) {
+
+                if scroll != 0.0 && target_control.kind.uses_q(target_control.slope) {
                     let fine = if ui.input(|i| i.modifiers.shift) {
                         0.2
                     } else {
                         1.0
                     };
-                    let q =
-                        (controls[index].q * (1.0 + scroll * 0.0025 * fine)).clamp(Q_MIN, Q_MAX);
-                    q_change = Some((index, q));
+                    q_scale = Some((index, 1.0 + scroll * 0.0025 * fine));
                 }
             }
         } else {
-            // reset leftover trackpad wheel delta when leaving node
             self.slope_wheel = 0.0;
         }
-        if let Some((index, q)) = q_change {
+
+        if let Some((index, factor)) = q_scale {
             if let Some(gui) = &self.gui {
                 let setter = gui.param_setter();
-                self.set(&setter, &self.params.bands[index].q, q);
+                let group_edit = self.is_picked(index);
+
+                for other in 0..BAND_COUNT {
+                    let apply = other == index || (group_edit && self.is_picked(other));
+                    if !apply {
+                        continue;
+                    }
+
+                    let control = self.control(other);
+                    if control.kind.uses_q(control.slope) {
+                        let q = (control.q * factor).clamp(Q_MIN, Q_MAX);
+                        self.set(&setter, &self.params.bands[other].q, q);
+                    }
+                }
             }
-            self.selected_region = None;
-            self.pending_region_selection = None;
-            self.selected = Some(index);
+
+            if self.drag.is_none() {
+                self.selected_region = None;
+                self.pending_region_selection = None;
+                self.selected = Some(index);
+            }
         }
+
         if let Some((index, slope)) = slope_change {
             if let Some(gui) = &self.gui {
                 let setter = gui.param_setter();
                 self.set(&setter, &self.params.bands[index].slope, slope);
             }
-            self.selected_region = None;
-            self.pending_region_selection = None;
-            self.selected = Some(index);
+
+            if self.drag.is_none() {
+                self.selected_region = None;
+                self.pending_region_selection = None;
+                self.selected = Some(index);
+            }
         }
 
         #[derive(Clone, Copy)]
@@ -655,6 +746,8 @@ impl EquartEditor {
         if let Some(mode) = phase_mode {
             phase::draw_label(&p, &plot, outer, mode);
         }
+
+        ui.data_mut(|data| data.insert_temp(curve_preview_id, preview));
 
         if let Some(point) = preview {
             p.circle_filled(point, 5.0, self.theme.panel.marker);
