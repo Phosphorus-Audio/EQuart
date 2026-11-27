@@ -262,8 +262,9 @@ impl EquartEditor {
         let panel = self
             .region_panel_rect(canvas, rate)
             .or_else(|| self.selected.map(|_| self.band_panel_rect(ui, canvas)));
-        let over_panel =
-            pointer.is_some_and(|position| panel.is_some_and(|panel| panel.contains(position)));
+        let panel_pointer = pointer.or_else(|| ui.input(|input| input.pointer.hover_pos()));
+        let over_panel = panel_pointer
+            .is_some_and(|position| panel.is_some_and(|panel| panel.contains(position)));
         let popup_open = egui::Popup::is_any_open(ui.ctx())
             || self.band_dropdown_is_up()
             || self.footer_menu_is_up()
@@ -520,11 +521,14 @@ impl EquartEditor {
             .drag
             .as_ref()
             .map(|drag| drag.band)
-            .or_else(|| response.hover_pos().and_then(point_at))
             .or_else(|| {
-                (response.hovered() && !over_panel && !popup_open)
-                    .then_some(self.selected)
-                    .flatten()
+                if over_panel || popup_open {
+                    return None;
+                }
+
+                response
+                    .hover_pos()
+                    .and_then(|position| point_at(position).or(self.selected))
             });
         let mut q_scale = None;
         let mut slope_change = None;

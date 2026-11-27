@@ -64,7 +64,7 @@ pub(super) fn scroll<R>(
     area: egui::ScrollArea,
     colors: crate::display_preferences::theme::Scrollbar,
     body: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
+) -> egui::scroll_area::ScrollAreaOutput<R> {
     let style = Arc::clone(ui.style());
 
     ui.scope(|ui| {
@@ -79,9 +79,69 @@ pub(super) fn scroll<R>(
             content.set_style(style);
             body(content)
         })
-        .inner
     })
     .inner
+}
+
+pub(super) fn panel_scroll(
+    ui: &mut egui::Ui,
+    panel: Rect,
+    area: egui::ScrollArea,
+    colors: crate::display_preferences::theme::Scrollbar,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let painter = ui.painter_at(panel);
+    let output = scroll(ui, area, colors, |content| {
+        body(content);
+        // reserve a slot above the content and below the scrollbar
+        painter.add(egui::Shape::Noop)
+    });
+
+    let width = 26.0_f32.min(panel.width() * 0.5);
+    let radius = f32::from(controls::BAND_PANEL_RADIUS)
+        .min(width)
+        .min(panel.height() * 0.5);
+    let hidden_left = output.state.clamped_offset().x;
+    let hidden_right = output.content_size.x - output.inner_rect.width() - hidden_left;
+
+    let mut mesh = egui::Mesh::default();
+
+    for (edge, direction, hidden) in [
+        (panel.left(), 1.0, hidden_left),
+        (panel.right(), -1.0, hidden_right),
+    ] {
+        if hidden <= 0.5 {
+            continue;
+        }
+
+        let opacity = 128.0 * (hidden / 14.0).min(1.0);
+        let first = mesh.vertices.len() as u32;
+
+        for step in 0..=6 {
+            let angle = std::f32::consts::FRAC_PI_2 * step as f32 / 6.0;
+            let distance = radius * (1.0 - angle.cos());
+            let inset = radius * (1.0 - angle.sin());
+            let x = edge + direction * distance;
+            let shadow = Color32::from_black_alpha((opacity * (1.0 - distance / width)).round() as u8);
+
+            mesh.colored_vertex(Pos2::new(x, panel.top() + inset), shadow);
+            mesh.colored_vertex(Pos2::new(x, panel.bottom() - inset), shadow);
+        }
+
+        let fade = edge + direction * width;
+        mesh.colored_vertex(Pos2::new(fade, panel.top()), Color32::TRANSPARENT);
+        mesh.colored_vertex(Pos2::new(fade, panel.bottom()), Color32::TRANSPARENT);
+
+        for step in 0..7 {
+            let pair = first + 2 * step;
+            mesh.add_triangle(pair, pair + 1, pair + 2);
+            mesh.add_triangle(pair + 1, pair + 2, pair + 3);
+        }
+    }
+
+    if !mesh.is_empty() {
+        painter.set(output.inner, egui::Shape::mesh(mesh));
+    }
 }
 
 impl EquartEditor {

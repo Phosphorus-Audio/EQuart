@@ -179,8 +179,8 @@ impl LfoParams {
                 },
             )
             .display_as(" Hz", 2),
-            depth_hz: number(name("Frequency Depth"), 0.0, (0.0, 24.0), " st"),
-            depth_gain: number(name("Gain Depth"), 0.0, (0.0, 24.0), " dB"),
+            depth_hz: number(name("Frequency Depth"), 0.0, (0.0, 96.0), " st"),
+            depth_gain: number(name("Gain Depth"), 0.0, (0.0, 48.0), " dB"),
             depth_q: number(name("Q Depth"), 0.0, (0.0, 3.0), " oct"),
             phase: number(name("Phase"), 0.0, (0.0, 360.0), "°"),
             unipolar: BoolParam::new(name("Unipolar"), false).non_automatable(),

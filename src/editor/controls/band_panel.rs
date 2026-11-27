@@ -1,7 +1,7 @@
 use super::*;
 
-const BAND_PANEL_RADIUS: u8 = 10;
-pub(in crate::editor) const BAND_ACTION_WIDTH: f32 = 36.0;
+pub(in crate::editor) const BAND_PANEL_RADIUS: u8 = 10;
+const BAND_ACTION_WIDTH: f32 = 36.0;
 const BAND_ACTION_GLYPH: f32 = 14.0;
 
 
@@ -340,7 +340,7 @@ impl EquartEditor {
                     .auto_shrink([false, false])
                     .max_height(panel.height());
 
-                theme::scroll(ui, area, self.theme.scrollbar, |content| {
+                theme::panel_scroll(ui, panel, area, self.theme.scrollbar, |content| {
                     let origin = content.cursor().min;
                     content.set_min_size(Vec2::new(
                         Layout::PANEL_W + attached().map(modifiers::Modifier::width).sum::<f32>(),

@@ -168,6 +168,7 @@ fn f0_mapping_chain() {
 
 #[test]
 fn lfo_audio_block_invariance() {
+    let params = crate::modulation::LfoParams::new("Band 1");
     let signal = (0..8192)
         .map(|i| (std::f64::consts::TAU * 1200.0 * i as f64 / f64::from(RATE)).sin() * 0.15)
         .collect::<Vec<_>>();
@@ -177,7 +178,7 @@ fn lfo_audio_block_invariance() {
         bands[0].lfo = Lfo {
             enabled,
             target,
-            depth: 2.0,
+            depth: params.depth(target).range().unnormalize(1.0),
             hz: 21.0,
             wave: Wave::Square,
             sync: false,

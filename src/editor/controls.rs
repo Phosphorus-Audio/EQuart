@@ -6,7 +6,8 @@ mod band_panel;
 mod card;
 
 pub(super) use band_panel::{
-    BAND_ACTION_WIDTH, delete_point_clicked, panel_actions, panel_listening, panel_plate, panel_power, power_icon,
+    BAND_PANEL_RADIUS, delete_point_clicked, panel_actions, panel_listening, panel_plate,
+    panel_power, power_icon,
 };
 pub(super) use card::{CardLife, Fall};
 

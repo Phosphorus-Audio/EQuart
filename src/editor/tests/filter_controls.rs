@@ -23,6 +23,33 @@ fn wheel_steps_cut_slope() {
 }
 
 #[test]
+fn mapping_preview_ignores_wheel() {
+    let (ctx, mut editor) = editor();
+    one_bell(&mut editor);
+    attach_host(&mut editor);
+
+    {
+        let setter = editor.gui.as_ref().unwrap().param_setter();
+        editor.set(&setter, &editor.params.band(0).mapping.enabled, true);
+    }
+
+    editor.pick_only(0);
+    let control = editor.control(0);
+    let input = format!(
+        "Input  {}",
+        crate::modulation::Target::Frequency.display(control.frequency)
+    );
+    let graph = text_center(&ctx, &mut editor, 0.0, &input).unwrap() - Vec2::new(0.0, 34.0);
+
+    wheel_at(&ctx, &mut editor, 0.1, graph, false);
+    assert_eq!(editor.control(0).q, control.q);
+
+    let band = node(&editor, 0);
+    wheel_at(&ctx, &mut editor, 0.5, band, false);
+    assert!(editor.control(0).q > control.q);
+}
+
+#[test]
 fn panel_close_click_preserves_point_and_control_click_deletes_it() {
     let (ctx, mut editor) = editor();
     one_bell(&mut editor);

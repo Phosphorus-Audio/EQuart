@@ -554,7 +554,7 @@ impl EquartEditor {
                     .auto_shrink([false, false])
                     .max_height(panel.height());
 
-                theme::scroll(ui, area, self.theme.scrollbar, |content| {
+                theme::panel_scroll(ui, panel, area, self.theme.scrollbar, |content| {
                     let origin = content.cursor().min;
                     content.set_min_size(Vec2::new(width, panel.height() - 5.0));
                     self.region_panel_contents(
@@ -656,57 +656,51 @@ impl EquartEditor {
         {
             self.set(&setter, &region.bypass, !bypass);
         }
-        let parameters = Rect::from_min_max(
-            panel.min + Vec2::new(16.0, 36.0),
-            base.max - Vec2::new(controls::BAND_ACTION_WIDTH + 12.0, 8.0),
-        );
-        let label = |ui: &mut egui::Ui, text| ui.add_sized([98.0, 20.0], egui::Label::new(text));
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .id_salt(("region-panel", index))
-                .max_rect(parameters)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                ui.horizontal(|ui| {
-                    label(ui, "Range")
-                        .on_hover_text("The range endpoints are at half the set gain.");
-                    self.region_number(ui, &setter, &region.low, 1.0);
-                    ui.label("–");
-                    self.region_number(ui, &setter, &region.high, 1.0);
-                });
-                ui.horizontal(|ui| {
-                    label(ui, "Edge Softness").on_hover_text("Widen the transition at each edge.");
-                    self.region_number(ui, &setter, &region.softness, 0.3);
-                });
-                ui.horizontal(|ui| {
-                    label(ui, "Gain");
-                    self.region_number(ui, &setter, &region.gain, 0.1);
-                });
-            },
-        );
-    }
 
-    fn region_number(
-        &self,
-        ui: &mut egui::Ui,
-        setter: &ParamSetter<'_>,
-        param: &FloatParam,
-        speed: f32,
-    ) {
-        let mut value = param.value();
-        let range = param.range();
-        if ui
-            .add(
-                egui::DragValue::new(&mut value)
-                    .range(range.unnormalize(0.0)..=range.unnormalize(1.0))
-                    .suffix(param.unit())
-                    .speed(speed)
-                    .max_decimals(1),
-            )
-            .changed()
-        {
-            self.set(setter, param, value);
+        let edge_tip = Some("The range endpoint is at half the set gain.");
+        let knobs = [
+            (&region.low, "Range Start", edge_tip),
+            (&region.high, "Range End", edge_tip),
+            (
+                &region.softness,
+                "Edge Softness",
+                Some("Widen the transition at each edge."),
+            ),
+            (&region.gain, "Gain", None),
+        ];
+        let accent = self.theme.region[index];
+
+        for (slot, (param, label, tip)) in knobs.into_iter().enumerate() {
+            let center = base.min + Vec2::new(47.0 + 70.0 * slot as f32, 75.0);
+            let bounds = Rect::from_center_size(center, Vec2::new(70.0, 94.0));
+            let builder = egui::UiBuilder::new()
+                .id_salt(("region-knob", index, slot))
+                .max_rect(bounds);
+
+            ui.scope_builder(builder, |ui| {
+                ui.visuals_mut().selection.bg_fill = accent.gamma_multiply(0.3);
+                ui.visuals_mut().selection.stroke = Stroke::new(1.0, accent);
+
+                let response = knob::knob(
+                    ui,
+                    param,
+                    &setter,
+                    knob::KnobAppearance {
+                        center,
+                        radius: 20.0,
+                        grow: 1.05,
+                        body_fill: 1.06,
+                        label_gap: 27.0,
+                        label,
+                        bipolar: slot == 3,
+                    },
+                    knob::KnobMode::Editable,
+                );
+
+                if let Some(tip) = tip {
+                    response.on_hover_text(tip);
+                }
+            });
         }
     }
 }

@@ -241,7 +241,8 @@ impl EquartEditor {
                 column(ui, CONTROL_WIDTH, |ui| {
                     self.modulation_choice(ui, &setter, &params.target, &targets, Target::label);
                     self.modulation_choice(ui, &setter, &params.wave, &Wave::ALL, |wave| Wave::variants()[wave.to_index()]);
-                    self.dynamic_number(ui, &setter, "Depth", params.depth(control.target), 0.02);
+                    let speed = if control.target == Target::Q { 0.02 } else { 0.1 };
+                    self.dynamic_number(ui, &setter, "Depth", params.depth(control.target), speed);
                     if !targets.contains(&control.target) {
                         ui.small("Target unavailable for this filter");
                     }

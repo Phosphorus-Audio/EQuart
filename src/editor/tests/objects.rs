@@ -116,10 +116,12 @@ fn plot_menu_bands_and_regions() {
     assert!(region.enabled && !region.bypass);
     assert!((region.high / region.low - 2.0).abs() < 0.001);
     assert_eq!(region.gain, crate::region::DEFAULT_GAIN);
-    let range = find_text(&mut editor, 2.8, "Range");
-    let softness = find_text(&mut editor, 2.81, "Edge Softness");
-    let gain = find_text(&mut editor, 2.82, "Gain");
-    assert!(range.y < softness.y && softness.y < gain.y);
+    let start = find_text(&mut editor, 2.8, "Range Start");
+    let end = find_text(&mut editor, 2.81, "Range End");
+    let softness = find_text(&mut editor, 2.82, "Edge Softness");
+    let gain = find_text(&mut editor, 2.83, "Gain");
+    assert!(start.x < end.x && end.x < softness.x && softness.x < gain.x);
+    assert!((start.y - gain.y).abs() < 2.0);
     let panel = editor
         .region_panel_rect(Rect::from_min_size(Pos2::ZERO, CANVAS), 0.0)
         .unwrap();
