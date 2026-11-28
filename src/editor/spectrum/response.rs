@@ -2,19 +2,20 @@ use super::*;
 
 /// get complex response of one band at a freq
 pub(super) fn band_response(
-    sections: &[Coefficients; SECTIONS],
+    sections: &[Coefficients<f64>; SECTIONS],
     count: usize,
-    rate: f32,
-    hz: f32,
+    warped: f64,
 ) -> Complex32 {
-    let mut response = Complex32::new(1.0, 0.0);
+    let mut response = realfft::num_complex::Complex64::new(1.0, 0.0);
+
     for section in sections.iter().take(count) {
-        response *= section.response(rate, hz);
+        response *= section.response_warped(warped);
     }
-    response
+
+    Complex32::new(response.re as f32, response.im as f32)
 }
 
-type ResponseSections = ([Coefficients; SECTIONS], usize);
+type ResponseSections = ([Coefficients<f64>; SECTIONS], usize);
 
 struct BandResponse {
     base: ResponseSections,
@@ -24,13 +25,13 @@ struct BandResponse {
 
 impl BandResponse {
     fn new(control: BandControl, offset: f32, rate: f32) -> Self {
-        let base = control.sections(rate);
+        let base = control.sections_for(rate);
         let with_offset = |delta| {
             BandControl {
                 gain: control.gain + delta,
                 ..control
             }
-            .sections(rate)
+            .sections_for(rate)
         };
         let mut live = None;
         let mut range = None;
@@ -70,6 +71,7 @@ pub(super) struct ResponseInput<'a> {
     pub(super) regions: &'a [RegionControl],
     pub(super) telemetry: &'a crate::Telemetry,
     pub(super) rate: f32,
+    pub(super) oversampling: crate::oversample::Oversampling,
     pub(super) selected: Option<usize>,
     pub(super) phase_mode: Option<phase::Mode>,
     pub(super) linear_center: Option<usize>,
@@ -116,6 +118,7 @@ pub(super) fn draw_response(
         regions,
         telemetry,
         rate,
+        oversampling,
         selected,
         phase_mode,
         linear_center,
@@ -143,7 +146,7 @@ pub(super) fn draw_response(
         .collect();
     let region_sections: Vec<_> = region_bands
         .iter()
-        .map(|band| band.sections(rate))
+        .map(|band| band.sections_for(rate))
         .collect();
     let phase_response = phase_mode.filter(|_| linear_center.is_none()).map(|_| {
         phase::Response::new(
@@ -188,6 +191,10 @@ pub(super) fn draw_response(
         if !control.enabled {
             continue;
         }
+        if control.brickwall() {
+            let center = control.frequency.clamp(10.0, rate * 0.49);
+            refine((center * scale).tan(), 0.04);
+        }
         if control.gain == 0.0 && band.live.is_none() && band.range.is_none() {
             continue;
         }
@@ -206,8 +213,8 @@ pub(super) fn draw_response(
                 {
                     let [high, _, low_delta] = section.mix;
                     let zero = section.g * ((high + low_delta) / high).sqrt();
-                    refine(section.g, section.k * 0.5);
-                    refine(zero, section.k * 0.5);
+                    refine(section.g as f32, section.k as f32 * 0.5);
+                    refine(zero as f32, section.k as f32 * 0.5);
                 }
             }
         }
@@ -251,26 +258,78 @@ pub(super) fn draw_response(
             values.reserve(xs.len());
         }
     }
+    let include_resampler = oversampling.factor() > 1
+        && controls.iter().any(|control| control.enabled && control.brickwall());
+    let host_rate = rate / oversampling.factor() as f32;
+    let warped_at = |hz| (std::f64::consts::PI * f64::from(hz) / f64::from(rate)).tan();
+    let response_at = |hz: f32| {
+        let mut total = Complex32::new(1.0, 0.0);
+        let warped = warped_at(hz);
+
+        for (control, response) in controls.iter().zip(&responses) {
+            if control.enabled {
+                let (coefficients, count) = response.live.as_ref().unwrap_or(&response.base);
+                total *= band_response(coefficients, *count, warped);
+            }
+        }
+        for (sections, count) in &region_sections {
+            total *= band_response(sections, *count, warped);
+        }
+
+        total
+    };
     let mut sum = Vec::with_capacity(xs.len());
+    let mut natural_phase = include_resampler
+        .then(|| Vec::with_capacity(xs.len()))
+        .filter(|_| phase_mode.is_some());
     for &x in &xs {
         let hz = plot.hz_extended(x);
+        let hz = if include_resampler { hz.min(host_rate * 0.5) } else { hz };
+        let warped = warped_at(hz);
 
         let mut total = Complex32::new(1.0, 0.0);
         for (band, response) in responses.iter().enumerate() {
             if controls[band].enabled {
                 let (coefficients, count) = &response.base;
-                let base = band_response(coefficients, *count, rate, hz);
+                let base = band_response(coefficients, *count, warped);
                 db[band].push(response_db(base));
                 total *= response
                     .live
                     .as_ref()
                     .map_or(base, |(coefficients, count)| {
-                        band_response(coefficients, *count, rate, hz)
+                        band_response(coefficients, *count, warped)
                     });
             }
         }
         for (sections, count) in &region_sections {
-            total *= band_response(sections, *count, rate, hz);
+            total *= band_response(sections, *count, warped);
+        }
+
+        if include_resampler {
+            let weights = crate::oversample::response_images(
+                oversampling, f64::from(hz), f64::from(host_rate),
+            );
+            total *= weights[0] as f32;
+
+            for (image, weight) in weights.into_iter().enumerate().skip(1) {
+                if weight <= 1e-12 {
+                    continue;
+                }
+
+                let image_hz = hz + image as f32 * host_rate;
+                let signed = if image_hz > rate * 0.5 {
+                    image_hz - rate
+                } else {
+                    image_hz
+                };
+                let image_response = response_at(signed.abs());
+                total += if signed < 0.0 { image_response.conj() } else { image_response }
+                    * weight as f32;
+            }
+
+            if let Some(phase) = &mut natural_phase {
+                phase.push(total.arg().to_degrees());
+            }
         }
 
         sum.push(response_db(total));
@@ -281,13 +340,14 @@ pub(super) fn draw_response(
 
     if let (Some(index), Some(base)) = (selected, base)
         && base.enabled && (base.mapping.enabled || base.lfo.enabled)
+        && !(linear_center.is_some() && base.brickwall())
     {
         let ink = palette.band[index];
         let draw_curve = |band: BandControl, opacity: f32| {
-            let (sections, count) = band.sections(rate);
+            let (sections, count) = band.sections_for(rate);
             let points: Vec<_> = xs.iter().map(|&x| {
                 let hz = plot.hz_extended(x);
-                let db = response_db(band_response(&sections, count, rate, hz));
+                let db = response_db(band_response(&sections, count, warped_at(hz)));
                 Pos2::new(x, plot.y_free(db))
             }).collect();
             painter.extend(egui::Shape::dashed_line(
@@ -340,7 +400,7 @@ pub(super) fn draw_response(
         for (i, &x) in xs.iter().enumerate() {
             let hz = plot.hz_extended(x);
             let [a, b] = bounds.each_ref().map(|(coefficients, count)| {
-                response_db(band_response(coefficients, *count, rate, hz))
+                response_db(band_response(coefficients, *count, warped_at(hz)))
             });
             let base = db[band][i];
             top.push(Pos2::new(x, plot.y_free(a.max(b).max(base))));
@@ -364,6 +424,10 @@ pub(super) fn draw_response(
     }
 
     for band in 0..BAND_COUNT {
+        if linear_center.is_some() && controls[band].brickwall() {
+            continue;
+        }
+
         if linear_center.is_some() && selected == Some(band)
             && base.is_some_and(|base| base.mapping.enabled || base.lfo.enabled)
         {
@@ -406,6 +470,7 @@ pub(super) fn draw_response(
         let tilt = matches!(control.kind, FilterKind::TiltShelf | FilterKind::FlatTilt);
         if !control.enabled
             || !(control.kind.is_cut() || tilt)
+            || (linear_center.is_some() && control.brickwall())
             || db[band].iter().all(|value| value.abs() < FLAT_DB)
         {
             continue;
@@ -417,7 +482,7 @@ pub(super) fn draw_response(
             cut_handle_y(plot, cut_handle_q(control))
         };
         let (band_sections, count) = &responses[band].base;
-        let at_cutoff = band_response(band_sections, *count, rate, control.frequency);
+        let at_cutoff = band_response(band_sections, *count, warped_at(control.frequency));
         let foot = plot
             .y_free(20.0 * at_cutoff.norm().max(1e-9).log10())
             .clamp(plot.rect.top(), plot.rect.bottom());
@@ -456,13 +521,23 @@ pub(super) fn draw_response(
         Stroke::new(1.9, palette.curves.response.gamma_multiply(0.95)),
     ));
     if let Some(mode) = phase_mode {
-        let samples = match phase_response {
+        let mut samples = match phase_response {
             Some(response) => response.sample(plot, &xs),
             None => vec![
                 (plot.rect.left(), Some(0.0)),
                 (plot.rect.right(), Some(0.0)),
             ],
         };
+        if let Some(angles) = natural_phase {
+            for (x, phase) in &mut samples {
+                if let Some(degrees) = phase
+                    && let Ok(index) = xs.binary_search_by(|px| px.total_cmp(x))
+                {
+                    let offset = (angles[index] - *degrees + 180.0).rem_euclid(360.0) - 180.0;
+                    *degrees += offset;
+                }
+            }
+        }
         phase::draw(p, plot, mode, &samples);
     }
 

@@ -445,7 +445,7 @@ impl EquartEditor {
 
                 let control = self.control(drag.band);
                 let lead_has_gain = control.kind.has_gain();
-                let adjusts_cut_q = control.kind.is_cut() && control.slope != CutSlope::Db6;
+                let adjusts_cut_q = control.kind.is_cut() && control.kind.uses_q(control.slope);
 
                 let mut vertical = drag.vertical;
                 let auto_db = if layout.auto_expand_eq_axis && (lead_has_gain || adjusts_cut_q) {
@@ -688,6 +688,7 @@ impl EquartEditor {
                 regions: &effective_regions,
                 telemetry: &self.telemetry,
                 rate: design_rate,
+                oversampling,
                 selected: self.selected,
                 phase_mode,
                 linear_center: linear_phase.then(|| {
@@ -859,7 +860,10 @@ impl EquartEditor {
             text.push_str(&format!("  {:+.1} dB", control.gain));
         }
         if !control.kind.slopes().is_empty() {
-            text.push_str(&format!("  {}  Q {:.3}", control.slope.label(), control.q));
+            text.push_str(&format!("  {}", control.slope.label()));
+            if control.kind.uses_q(control.slope) {
+                text.push_str(&format!("  Q {:.3}", control.q));
+            }
         }
 
         p.text(

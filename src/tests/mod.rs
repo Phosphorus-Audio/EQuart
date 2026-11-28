@@ -79,6 +79,7 @@ fn db(value: f32, reference: f32) -> f32 {
 }
 
 mod bell;
+mod brickwall;
 mod dynamics;
 mod filter_shapes;
 mod host;

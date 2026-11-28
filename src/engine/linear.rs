@@ -16,6 +16,9 @@ use crate::precision::Sample;
 use crate::processing_mode::LinearQuality;
 use crate::region::{FILTERS, REGION_COUNT};
 
+mod worker;
+use worker::Worker;
+
 const CONTROL_HISTORY: usize = LinearQuality::MAX_CENTER / HOP + 1;
 const QUADRATURE_BINS: usize = 32;
 const CAPACITY: usize = BAND_COUNT + REGION_COUNT * FILTERS;
@@ -32,6 +35,7 @@ struct Design {
     inverse: Arc<dyn ComplexToReal<f64>>,
     warped: Vec<f64>,
     window: Vec<f64>,
+    kaiser: Vec<f64>,
     average_correction: Vec<f64>,
     nodes: [[f64; 8]; QUADRATURE_BINS],
 }
@@ -57,6 +61,10 @@ impl Design {
                 if i == 0 { 1.0 } else { angle / angle.sin() }
             })
             .collect();
+        let denominator = bessel_i0(9.62);
+        let kaiser = (0..=center)
+            .map(|i| bessel_i0(9.62 * (1.0 - (i as f64 / center as f64).powi(2)).sqrt()) / denominator)
+            .collect();
         let nodes = std::array::from_fn(|bin| {
             GAUSS_NODES.map(|node| {
                 (std::f64::consts::PI * (bin as f64 + 0.5 * node) / fft as f64)
@@ -71,8 +79,21 @@ impl Design {
             inverse: planner.plan_fft_inverse(fft),
             warped,
             window,
+            kaiser,
         }
     }
+}
+
+fn bessel_i0(x: f64) -> f64 {
+    let mut term = 1.0;
+    let mut sum = term;
+
+    for i in 1..=24 {
+        term *= (x / (2 * i) as f64).powi(2);
+        sum += term;
+    }
+
+    sum
 }
 
 // nodes and weights for integrating one frequency cell
@@ -129,10 +150,16 @@ struct Stage {
     sections: [Coefficients<f64>; SECTIONS],
     count: usize,
     route: ChannelMode,
+    brickwall: Option<(f64, bool)>,
 }
 
 impl Stage {
-    fn magnitude(&self, warped: f64) -> f64 {
+    fn magnitude(&self, warped: f64, bin: f64) -> f64 {
+        if let Some((cutoff, highpass)) = self.brickwall {
+            let lowpass = (cutoff - bin + 0.5).clamp(0.0, 1.0);
+            return if highpass { 1.0 - lowpass } else { lowpass };
+        }
+
         self.sections[..self.count].iter().fold(1.0, |gain, c| {
             let r = warped / c.g;
             let [dry, band, low] = c.mix;
@@ -150,23 +177,37 @@ struct Snapshot {
     delta: Option<Range<usize>>,
 }
 
+struct Designer {
+    plans: &'static SharedPlans,
+    rate_index: usize,
+    quality: LinearQuality,
+    center: usize,
+    scratch: Vec<Complex64>,
+    spectra: [Vec<Complex64>; 8],
+    work: Vec<f64>,
+    taps: Vec<f64>,
+    stages: Vec<Stage>,
+    delta: Option<Range<usize>>,
+    design_bin: Option<usize>,
+    integrate: bool,
+    brickwall: bool,
+    stereo: bool,
+}
+
 pub(super) struct LinearEq {
     plans: &'static SharedPlans,
     quality: LinearQuality,
     rate_index: usize,
     center: usize,
     convolution: Box<Convolution>,
-    scratch: Vec<Complex64>,
-    spectra: [Vec<Complex64>; 8],
-    work: Vec<f64>,
-    taps: Vec<f64>,
+    designer: Designer,
     configured: Vec<BandControl>,
-    stages: Vec<Stage>,
     rate: f32,
     delta: Option<Range<usize>>,
-    design_bin: Option<usize>,
-    integrate: bool,
-    stereo: bool,
+    worker: Option<Worker>,
+    generation: u64,
+    async_design: bool,
+    ready: bool,
     current: Kernel,
     revision: u64,
     next: Kernel,
@@ -197,32 +238,20 @@ impl LinearEq {
             }
         });
 
-        let max_fft = 4 * LinearQuality::MAX_CENTER;
-        let scratch_size = plans
-            .designs
-            .iter()
-            .flatten()
-            .map(|d| d.inverse.get_scratch_len())
-            .max()
-            .unwrap();
-
         Self {
             plans,
             quality: LinearQuality::default(),
             rate_index: 0,
             center: LinearQuality::Standard.center(),
             convolution: Box::new(Convolution::new(&plans.convolution)),
-            scratch: vec![Complex64::default(); scratch_size],
-            spectra: std::array::from_fn(|_| vec![Complex64::default(); max_fft / 2 + 1]),
-            work: vec![0.0; max_fft],
-            taps: vec![0.0; 2 * LinearQuality::MAX_CENTER + 1],
+            designer: Designer::new(plans),
             configured: Vec::with_capacity(CAPACITY),
-            stages: Vec::with_capacity(CAPACITY),
             rate: 0.0,
             delta: None,
-            design_bin: None,
-            integrate: false,
-            stereo: true,
+            worker: None,
+            generation: 0,
+            async_design: false,
+            ready: false,
             current: Kernel::new(),
             revision: 0,
             next: Kernel::new(),
@@ -242,8 +271,15 @@ impl LinearEq {
         }
     }
 
+    pub(super) fn start_worker(&mut self) -> std::io::Result<()> {
+        self.worker = Some(Worker::new(self.plans)?);
+        self.async_design = self.configured.iter().any(BandControl::brickwall);
+        Ok(())
+    }
+
     pub(super) fn reset(&mut self) {
-        if self.design_bin.take().is_some() {
+        self.generation = self.generation.wrapping_add(1);
+        if self.designer.design_bin.take().is_some() || self.async_design {
             self.rate = 0.0;
         }
         self.convolution.reset();
@@ -258,11 +294,11 @@ impl LinearEq {
     }
 
     pub(super) fn response_revision(&self) -> u64 {
-        if self.rate == 0.0 { 0 } else { self.revision }
+        if self.ready { self.revision } else { 0 }
     }
 
     pub(super) fn response(&self) -> Option<[Option<&[f64]>; 4]> {
-        (self.rate > 0.0).then(|| {
+        self.ready.then(|| {
             std::array::from_fn(|lane| {
                 self.current.routes[lane]
                     .map(|route| &self.current.half_taps[route][..=self.center])
@@ -277,6 +313,8 @@ impl LinearEq {
 
     pub(super) fn set_rate(&mut self, rate: f32) {
         self.rate = 0.0;
+        self.ready = false;
+        self.current.identity = true;
         self.center = self.quality.center_at(rate);
         self.rate_index = usize::from(self.center != self.quality.center());
         self.reset();
@@ -311,7 +349,7 @@ impl LinearEq {
             .iter()
             .map(BandControl::section_count)
             .sum::<usize>();
-        sections = sections.max(self.stages.iter().map(|stage| stage.count).sum());
+        sections = sections.max(self.configured.iter().map(BandControl::section_count).sum());
         self.update_hops = self.design_period(sections);
 
         // align the control snapshot to the source near the middle of the crossfade
@@ -325,18 +363,112 @@ impl LinearEq {
         }
 
         let initial = self.snapshots_seen == 1 || self.rate == 0.0;
+        let brickwall = snapshot.bands.iter().any(BandControl::brickwall);
+        self.async_design |= brickwall && self.worker.is_some();
+
+        if self.async_design
+            && !self.worker.as_mut().unwrap().submit(
+                &snapshot.bands,
+                snapshot.delta.clone(),
+                rate,
+                self.quality,
+                self.generation,
+            )
+        {
+            return;
+        }
+
         self.configured.clear();
         self.configured.extend_from_slice(&snapshot.bands);
         self.rate = rate;
         self.delta = snapshot.delta.clone();
+        if self.async_design {
+            self.designer.design_bin = None;
+            return;
+        }
+
+        self.designer.configure(
+            &self.configured, self.delta.clone(), rate, self.quality, &mut self.next,
+        );
+
+        if initial {
+            self.designer.design(self.design_length());
+            self.designer.partition(&mut self.convolution, &mut self.next);
+            std::mem::swap(&mut self.current, &mut self.next);
+            self.ready = true;
+            self.revision = NEXT_KERNEL_REVISION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn design_period(&self, sections: usize) -> usize {
+        // budget more hops for larger spectra and cascades
+        let hops = match self.quality {
+            LinearQuality::Short | LinearQuality::Standard => 1 + usize::from(sections > 8),
+            LinearQuality::High | LinearQuality::Extended => 4,
+        };
+        hops << self.rate_index
+    }
+
+    fn design_length(&self) -> usize {
+        2 * self.center + 1
+    }
+}
+
+impl Designer {
+    fn new(plans: &'static SharedPlans) -> Self {
+        let max_fft = 4 * LinearQuality::MAX_CENTER;
+        let scratch_size = plans.designs.iter().flatten()
+            .map(|design| design.inverse.get_scratch_len()).max().unwrap();
+
+        Self {
+            plans,
+            rate_index: 0,
+            quality: LinearQuality::default(),
+            center: 0,
+            scratch: vec![Complex64::default(); scratch_size],
+            spectra: std::array::from_fn(|_| vec![Complex64::default(); max_fft / 2 + 1]),
+            work: vec![0.0; max_fft],
+            taps: vec![0.0; 2 * LinearQuality::MAX_CENTER + 1],
+            stages: Vec::with_capacity(CAPACITY),
+            delta: None,
+            design_bin: None,
+            integrate: false,
+            brickwall: false,
+            stereo: true,
+        }
+    }
+
+    fn configure(
+        &mut self,
+        bands: &[BandControl],
+        delta: Option<Range<usize>>,
+        rate: f32,
+        quality: LinearQuality,
+        kernel: &mut Kernel,
+    ) {
+        self.quality = quality;
+        self.center = quality.center_at(rate);
+        self.rate_index = usize::from(self.center != quality.center());
+        self.delta = delta;
+        self.brickwall = bands.iter().any(BandControl::brickwall);
         self.stages.clear();
 
-        for control in &self.configured {
-            let (sections, count) = control.sections_for(rate);
+        for control in bands {
+            let brickwall = control.brickwall().then(|| {
+                let cutoff = f64::from(control.frequency.clamp(10.0, rate * 0.49))
+                    * (4 * self.center) as f64 / f64::from(rate);
+                (cutoff, control.kind == crate::filter::FilterKind::Highpass)
+            });
+            let (sections, count) = if brickwall.is_some() {
+                ([Coefficients::identity(); SECTIONS], 0)
+            } else {
+                control.sections_for(rate)
+            };
             self.stages.push(Stage {
                 sections,
                 count,
                 route: control.channel,
+                brickwall,
             });
         }
 
@@ -375,36 +507,18 @@ impl LinearEq {
             routes[4..].fill(None);
         }
 
-        self.next.routes = routes;
+        kernel.routes = routes;
+        kernel.identity = false;
+        kernel.last_tap = self.brickwall;
         self.design_bin = Some(0);
-
-        if initial {
-            self.design(self.design_length());
-            self.partition();
-            std::mem::swap(&mut self.current, &mut self.next);
-            self.revision = NEXT_KERNEL_REVISION.fetch_add(1, Ordering::Relaxed);
-        }
     }
 
-    fn design_period(&self, sections: usize) -> usize {
-        // budget more hops for larger spectra and cascades
-        let hops = match self.quality {
-            LinearQuality::Short | LinearQuality::Standard => 1 + usize::from(sections > 8),
-            LinearQuality::High | LinearQuality::Extended => 4,
-        };
-        hops << self.rate_index
-    }
-
-    fn design_length(&self) -> usize {
-        2 * self.center + 1
-    }
-
-    fn magnitude(&self, warped: f64) -> [f64; 8] {
+    fn magnitude(&self, warped: f64, bin: f64) -> [f64; 8] {
         if self.stereo && self.delta.is_none() {
             let gain = self
                 .stages
                 .iter()
-                .map(|stage| stage.magnitude(warped))
+                .map(|stage| stage.magnitude(warped, bin))
                 .product();
             return [gain, 0.0, 0.0, gain, 0.0, 0.0, 0.0, 0.0];
         }
@@ -418,7 +532,7 @@ impl LinearEq {
                 before = matrix;
             }
 
-            matrix = cascade(matrix, stage.route, stage.magnitude(warped));
+            matrix = cascade(matrix, stage.route, stage.magnitude(warped, bin));
 
             if self.delta.as_ref().is_some_and(|range| range.end == i + 1) {
                 removed = std::array::from_fn(|j| before[j] - matrix[j]);
@@ -435,13 +549,14 @@ impl LinearEq {
         let design = &self.plans.designs[self.rate_index][self.quality.index()];
 
         for (bin, &warped) in design.warped.iter().enumerate().take(end).skip(start) {
-            let mut gain = self.magnitude(warped);
+            let mut gain = self.magnitude(warped, bin as f64);
             if self.integrate
                 && let Some(nodes) = design.nodes.get(bin)
             {
                 let mut average = [0.0; 8];
-                for (&node, weight) in nodes.iter().zip(GAUSS_WEIGHTS) {
-                    for (sum, value) in average.iter_mut().zip(self.magnitude(node)) {
+                for ((&node, weight), offset) in nodes.iter().zip(GAUSS_WEIGHTS).zip(GAUSS_NODES) {
+                    let coordinate = (bin as f64 + 0.5 * offset).abs();
+                    for (sum, value) in average.iter_mut().zip(self.magnitude(node, coordinate)) {
                         *sum += weight * value;
                     }
                 }
@@ -465,15 +580,16 @@ impl LinearEq {
         self.design_bin = Some(end);
     }
 
-    fn partition(&mut self) {
+    fn partition(&mut self, convolution: &mut Convolution, kernel: &mut Kernel) {
         #[cfg(feature = "analyzer-profile")]
         let _timer = crate::analyzer::profile::Timer::new(crate::analyzer::profile::FIR_PARTITION);
         let design = &self.plans.designs[self.rate_index][self.quality.index()];
         let fft = design.inverse.len();
         let center = self.center;
+        let window = if self.brickwall { &design.kaiser } else { &design.window };
 
         for (lane, spectrum) in self.spectra.iter_mut().enumerate() {
-            if !self.next.routes.contains(&Some(lane)) {
+            if !kernel.routes.contains(&Some(lane)) {
                 continue;
             }
 
@@ -489,7 +605,7 @@ impl LinearEq {
 
             for lag in 1..=center {
                 let tap =
-                    (self.work[lag] + self.work[fft - lag]) * design.window[lag] / (2 * fft) as f64;
+                    (self.work[lag] + self.work[fft - lag]) * window[lag] / (2 * fft) as f64;
                 let tap = if self.integrate {
                     tap * design.average_correction[lag]
                 } else {
@@ -500,18 +616,21 @@ impl LinearEq {
             }
 
             if lane < 4 {
-                self.next.half_taps[lane][..=center]
+                kernel.half_taps[lane][..=center]
                     .copy_from_slice(&self.taps[center..=2 * center]);
             }
 
-            for (part, taps) in self.taps[..2 * center].chunks(HOP).enumerate() {
-                self.convolution.partition(&mut self.next, lane, part, taps);
+            let len = 2 * center + usize::from(kernel.last_tap);
+            for (part, taps) in self.taps[..len].chunks(HOP).enumerate() {
+                convolution.partition(kernel, lane, part, taps);
             }
         }
 
         self.design_bin = None;
     }
+}
 
+impl LinearEq {
     pub(super) fn process<T: Sample>(
         &mut self,
         left: &mut [T],
@@ -521,10 +640,10 @@ impl LinearEq {
         delta_mix: &mut f32,
         dynamics: &mut crate::region::dynamics::Rack,
     ) {
-        if self.design_bin.is_some() {
+        if self.designer.design_bin.is_some() {
             let design_frames = (self.update_hops - 1).max(1) * HOP;
             let elapsed = (self.hop * HOP + self.pos + left.len()).min(design_frames);
-            self.design(elapsed * self.design_length() / design_frames);
+            self.designer.design(elapsed * self.design_length() / design_frames);
         }
 
         let latency = latency(self.center);
@@ -577,9 +696,12 @@ impl LinearEq {
 
     fn finish_hop(&mut self) {
         let update_hops = self.update_hops;
-        let complete = self.design_bin.is_some() && self.hop == update_hops - 1;
+        let mut complete = self.designer.design_bin.is_some() && self.hop == update_hops - 1;
+
         if complete {
-            self.partition();
+            self.designer.partition(&mut self.convolution, &mut self.next);
+        } else if let Some(worker) = &mut self.worker {
+            complete = worker.receive(self.generation, &mut self.next);
         }
 
         self.convolution.push();
@@ -592,6 +714,7 @@ impl LinearEq {
 
         if complete {
             std::mem::swap(&mut self.current, &mut self.next);
+            self.ready = true;
             self.revision = NEXT_KERNEL_REVISION.fetch_add(1, Ordering::Relaxed);
         }
 

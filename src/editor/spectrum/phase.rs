@@ -28,12 +28,12 @@ struct Section {
     quadratic: f64,
 }
 
-impl From<&Coefficients> for Section {
-    fn from(coeff: &Coefficients) -> Self {
-        let [direct, band, low] = coeff.mix.map(f64::from);
-        let damping = f64::from(coeff.k);
+impl<T: crate::precision::Sample> From<&Coefficients<T>> for Section {
+    fn from(coeff: &Coefficients<T>) -> Self {
+        let [direct, band, low] = coeff.mix.map(crate::precision::Sample::double);
+        let damping = coeff.k.double();
         Self {
-            warp: f64::from(coeff.g),
+            warp: coeff.g.double(),
             damping,
             constant: direct + low,
             linear: direct * damping + band,
@@ -69,10 +69,10 @@ pub(super) struct Response {
 }
 
 impl Response {
-    pub(super) fn new<'a>(
+    pub(super) fn new<'a, T: crate::precision::Sample + 'a>(
         plot: &Plot,
         rate: f32,
-        sections: impl IntoIterator<Item = &'a Coefficients>,
+        sections: impl IntoIterator<Item = &'a Coefficients<T>>,
     ) -> Self {
         let sections: Vec<_> = sections.into_iter().map(Section::from).collect();
         let scale = std::f64::consts::PI / f64::from(rate);
@@ -285,7 +285,7 @@ mod tests {
             FilterKind::LowShelf,
             FilterKind::Notch,
         ] {
-            let section = Coefficients::for_kind(48_000.0, 1_000.0, 2.0, -12.0, kind);
+            let section = Coefficients::<f32>::for_kind(48_000.0, 1_000.0, 2.0, -12.0, kind);
             let response = Response::new(&plot, 48_000.0, [&section; 3]);
             for hz in [250.0, 950.0, 1_050.0, 10_000.0] {
                 let expected = section.response(48_000.0, hz).powu(3).arg().to_degrees();

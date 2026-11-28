@@ -91,6 +91,10 @@ impl Default for BandControl {
 }
 
 impl BandControl {
+    pub(crate) fn brickwall(&self) -> bool {
+        self.kind.is_cut() && self.slope == CutSlope::Brickwall
+    }
+
     /// Number of second-order sections this band needs.
     pub fn section_count(&self) -> usize {
         if self.kind.is_cut() || self.kind.is_shelf() {
@@ -127,7 +131,13 @@ impl BandControl {
         let count = self.section_count();
         let mut sections = [Coefficients::identity(); SECTIONS];
 
-        if self.kind.is_cut() {
+        if self.brickwall() {
+            let designed = crate::filter::brickwall::design(rate.double(), frequency.double(), self.kind);
+
+            for (section, designed) in sections.iter_mut().zip(designed) {
+                *section = Coefficients::from_coefficients(designed);
+            }
+        } else if self.kind.is_cut() {
             let (_, first_order) = self.slope.sections();
             let base = self.slope.section_q::<T>();
             let resonance = (T::SQRT_2() * q).clamp(T::value(0.05), T::value(40.0));
@@ -236,6 +246,7 @@ pub(crate) struct CoefficientTiming {
 pub struct Band<T: Sample = f32> {
     /// heap-allocated so 32 bands won't blow up host stack on init
     slots: Box<[Slot<T>]>,
+    brickwall: Option<Box<Band<f64>>>,
     /// fade-in for sections 1..
     fade: [f32; SECTIONS - 1],
     sections: usize,
@@ -256,12 +267,15 @@ pub struct Band<T: Sample = f32> {
 
 impl<T: Sample> Band<T> {
     pub fn new() -> Self {
-        Self::with_rack(SECTIONS, false)
+        let mut band = Self::with_rack(SECTIONS, false);
+        band.brickwall = Some(Box::new(Band::with_rack(crate::filter::brickwall::SECTIONS, false)));
+        band
     }
 
     pub(crate) fn with_rack(capacity: usize, ramp_on_start: bool) -> Self {
         Self {
             slots: (0..capacity).map(|_| Slot::new()).collect(),
+            brickwall: None,
             fade: [0.0; SECTIONS - 1],
             sections: 1,
             log_frequency: 1_000.0_f32.ln(),
@@ -280,6 +294,10 @@ impl<T: Sample> Band<T> {
     }
 
     pub fn reset(&mut self) {
+        if let Some(brickwall) = &mut self.brickwall {
+            brickwall.reset();
+        }
+
         for slot in &mut self.slots {
             slot.state = [State::zero(); 2];
             slot.previous = slot.coeff;
@@ -297,6 +315,10 @@ impl<T: Sample> Band<T> {
     }
 
     pub(crate) fn transfer_from<S: Sample>(&mut self, source: &Band<S>) {
+        if let (Some(brickwall), Some(previous)) = (&mut self.brickwall, &source.brickwall) {
+            brickwall.transfer_from(previous);
+        }
+
         self.fade = source.fade;
         self.sections = source.sections;
         self.log_frequency = source.log_frequency;
@@ -320,12 +342,49 @@ impl<T: Sample> Band<T> {
 
     /// force coeff rebuild on next update
     pub fn invalidate(&mut self) {
+        if let Some(brickwall) = &mut self.brickwall {
+            brickwall.invalidate();
+        }
+
         self.last = None;
         self.moving = true;
     }
 
     /// smooth coeffs and enable ramp once per COEFF_FRAMES
     pub fn update(&mut self, control: BandControl, rate: f32, timing: CoefficientTiming) {
+        if let Some(brickwall) = &mut self.brickwall {
+            let selected = control.brickwall();
+            let was_brickwall = brickwall.wet > 0.0;
+            let previous = brickwall.last.unwrap_or_default();
+            brickwall.ramp_on_start = self.wet > 0.0;
+            let brick_control = if selected && control.enabled {
+                BandControl {
+                    enabled: true,
+                    kind: control.kind,
+                    slope: CutSlope::Brickwall,
+                    frequency: control.frequency,
+                    ..BandControl::default()
+                }
+            } else {
+                BandControl { enabled: false, ..previous }
+            };
+            if brick_control.enabled || brickwall.started {
+                brickwall.update_path(brick_control, rate, timing);
+            }
+
+            let ordinary = if selected {
+                BandControl { enabled: false, ..self.last.unwrap_or_default() }
+            } else {
+                control
+            };
+            self.ramp_on_start = was_brickwall;
+            self.update_path(ordinary, rate, timing);
+        } else {
+            self.update_path(control, rate, timing);
+        }
+    }
+
+    fn update_path(&mut self, control: BandControl, rate: f32, timing: CoefficientTiming) {
         let changed = self.last != Some(control);
         if changed {
             self.last = Some(control);
@@ -456,7 +515,42 @@ impl<T: Sample> Band<T> {
 
     /// filter stereo channels (handles Mid/Side here)
     pub fn process(&mut self, left: &mut [T], right: &mut [T], route: ChannelMode) {
-        if !self.is_processing() {
+        self.process_path(left, right, route);
+
+        if let Some(brickwall) = &mut self.brickwall
+            && brickwall.wet_active()
+        {
+            if route == ChannelMode::Stereo
+                && brickwall.wet == 1.0
+                && brickwall.previous_wet == 1.0
+            {
+                brickwall.process_brickwall_stereo(left, right);
+                return;
+            }
+
+            const TILE: usize = COEFF_FRAMES * 4;
+            let mut wide_left = [0.0; TILE];
+            let mut wide_right = [0.0; TILE];
+
+            for (left, right) in left.chunks_mut(TILE).zip(right.chunks_mut(TILE)) {
+                let l = &mut wide_left[..left.len()];
+                let r = &mut wide_right[..right.len()];
+
+                for (wide, sample) in l.iter_mut().zip(left.iter()).chain(r.iter_mut().zip(right.iter())) {
+                    *wide = sample.double();
+                }
+
+                brickwall.process_path(l, r, route);
+
+                for (sample, wide) in left.iter_mut().zip(l.iter()).chain(right.iter_mut().zip(r.iter())) {
+                    *sample = T::value(*wide);
+                }
+            }
+        }
+    }
+
+    fn process_path(&mut self, left: &mut [T], right: &mut [T], route: ChannelMode) {
+        if !self.wet_active() {
             return;
         }
 
@@ -483,6 +577,10 @@ impl<T: Sample> Band<T> {
     }
 
     pub(crate) fn is_processing(&self) -> bool {
+        self.wet_active() || self.brickwall.as_ref().is_some_and(|band| band.wet_active())
+    }
+
+    fn wet_active(&self) -> bool {
         self.wet != 0.0 || self.previous_wet != 0.0
     }
 
@@ -538,6 +636,63 @@ impl<T: Sample> Band<T> {
                 }
             }
         }
+    }
+}
+
+impl Band<f64> {
+    fn process_brickwall_stereo<T: Sample>(&mut self, left: &mut [T], right: &mut [T]) {
+        const TILE: usize = COEFF_FRAMES * 4;
+        let mut stereo = [[0.0; 2]; TILE];
+
+        for (left, right) in left.chunks_mut(TILE).zip(right.chunks_mut(TILE)) {
+            let frames = &mut stereo[..left.len()];
+
+            for (frame, (left, right)) in frames.iter_mut().zip(left.iter().zip(right.iter())) {
+                *frame = [left.double(), right.double()];
+            }
+
+            for slot in &mut self.slots[..self.sections] {
+                if slot.block {
+                    slot.run_stereo::<false>(frames, self.ramp_frame, self.ramp_frames);
+                } else {
+                    slot.run_stereo::<true>(frames, self.ramp_frame, self.ramp_frames);
+                }
+            }
+
+            for ([l, r], (left, right)) in frames.iter().zip(left.iter_mut().zip(right.iter_mut())) {
+                *left = T::value(*l);
+                *right = T::value(*r);
+            }
+
+            self.ramp_frame = (self.ramp_frame + left.len()).min(self.ramp_frames);
+        }
+    }
+}
+
+impl Slot<f64> {
+    fn run_stereo<const MOVING: bool>(&mut self, buffer: &mut [[f64; 2]], position: usize, span: usize) {
+        let mut ic1 = self.state.map(|state| state.ic1);
+        let mut ic2 = self.state.map(|state| state.ic2);
+        let inverse_span = (span as f64).recip();
+
+        for (i, samples) in buffer.iter_mut().enumerate() {
+            let frame = position + i + 1;
+            let c = if MOVING && frame < span {
+                self.previous.interpolate(self.coeff, frame as f64 * inverse_span)
+            } else {
+                self.coeff
+            };
+            let v3 = std::array::from_fn::<_, 2, _>(|ch| samples[ch] - ic2[ch]);
+            let v1 = std::array::from_fn::<_, 2, _>(|ch| c.a1 * ic1[ch] + c.a2 * v3[ch]);
+            let v2 = std::array::from_fn::<_, 2, _>(|ch| ic2[ch] + c.a2 * ic1[ch] + c.a3 * v3[ch]);
+            ic1 = std::array::from_fn(|ch| 2.0 * v1[ch] - ic1[ch]);
+            ic2 = std::array::from_fn(|ch| 2.0 * v2[ch] - ic2[ch]);
+            *samples = std::array::from_fn(|ch| {
+                c.mix[0] * samples[ch] + c.mix[1] * v1[ch] + c.mix[2] * v2[ch]
+            });
+        }
+
+        self.state = std::array::from_fn(|ch| State { ic1: ic1[ch], ic2: ic2[ch] });
     }
 }
 

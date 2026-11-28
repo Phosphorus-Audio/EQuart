@@ -113,8 +113,7 @@ impl EquartEditor {
                 column(ui, GRAPH_WIDTH, |ui| {
                     route_title(ui, control.source.label(), control.target.label());
                     let graph = if control.bypass
-                        || !control.target.supported(band)
-                        || !control.source.supported(band)
+                        || !control.source.maps_to(control.target, band)
                     {
                         Mapping {
                             strength: 0.0,
@@ -123,7 +122,7 @@ impl EquartEditor {
                     } else {
                         control
                     };
-                    mapping_graph(ui, graph, [source, stage_base, effective], rate, accent);
+                    mapping_graph(ui, graph, [source, stage_base, effective], rate, accent, band.brickwall());
                     ui.small(format!("Input  {}", control.source.display(source)));
                     ui.small(format!(
                         "Base {}  ·  Out {}",
@@ -134,14 +133,20 @@ impl EquartEditor {
                 column(ui, CONTROL_WIDTH, |ui| {
                     let choices = Target::ALL
                         .into_iter()
-                        .filter(|target| *target != control.target && target.supported(band))
+                        .filter(|source| {
+                            source.supported(band)
+                                && (*source != control.target || source.maps_to(control.target, band))
+                        })
                         .collect::<Vec<_>>();
                     ui.small("Source");
                     self.modulation_choice(ui, &setter, &mapping.source, &choices, Target::label);
 
                     let choices = Target::ALL
                         .into_iter()
-                        .filter(|target| *target != control.source && target.supported(band))
+                        .filter(|target| {
+                            target.supported(band)
+                                && (*target != control.source || control.source.maps_to(*target, band))
+                        })
                         .collect::<Vec<_>>();
                     ui.small("Target");
                     self.modulation_choice(ui, &setter, &mapping.target, &choices, Target::label);
@@ -295,6 +300,7 @@ fn mapping_graph(
     [source, base, effective]: [f32; 3],
     rate: f32,
     accent: Color32,
+    brickwall: bool,
 ) {
     use super::relation::{Axis, DEFAULT_HEIGHT, Diagram, relation};
     let axes = [mapping.source, mapping.target].map(|target| Axis {
@@ -311,7 +317,7 @@ fn mapping_graph(
             accent,
             height: DEFAULT_HEIGHT,
         },
-        |input| mapping.output(input, base, rate),
+        |input| mapping.output(input, base, rate, brickwall),
         |input, output, _| {
             format!(
                 "{} to {}",

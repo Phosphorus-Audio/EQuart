@@ -52,6 +52,12 @@ impl Target {
         }
     }
 
+    pub(crate) fn maps_to(self, target: Self, band: BandControl) -> bool {
+        self.supported(band)
+            && target.supported(band)
+            && (self != target || (self == Self::Frequency && band.brickwall()))
+    }
+
     fn set(self, band: &mut BandControl, value: f32, rate: f32) {
         let (min, max) = self.limits(rate);
         let value = value.clamp(min, max);
@@ -114,8 +120,11 @@ impl Default for Mapping {
 }
 
 impl Mapping {
-    pub(crate) fn output(self, source: f32, base: f32, rate: f32) -> f32 {
-        if self.source == self.target || self.strength == 0.0 || !self.strength.is_finite() {
+    pub(crate) fn output(self, source: f32, base: f32, rate: f32, brickwall: bool) -> f32 {
+        if (self.source == self.target && !brickwall)
+            || self.strength == 0.0
+            || !self.strength.is_finite()
+        {
             return base;
         }
 

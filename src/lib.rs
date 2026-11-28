@@ -233,6 +233,10 @@ impl Plugin for Equart {
         self.engine = Engine::new(config.sample_rate);
         let controls = self.controls();
         self.engine.prepare_processing(&controls);
+        if let Err(error) = self.engine.start_fir_worker() {
+            nice_plug::nice_error!("Could not start the FIR designer: {error}");
+            return false;
+        }
         self.reported_latency = self.engine.latency();
         context.set_latency_samples(self.reported_latency);
         self.analyzer_capture.reset();

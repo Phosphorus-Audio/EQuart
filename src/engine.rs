@@ -650,6 +650,10 @@ impl Engine {
         }
     }
 
+    pub(crate) fn start_fir_worker(&mut self) -> std::io::Result<()> {
+        self.linear.start_worker()
+    }
+
     fn snapshot_linear(&mut self, controls: &Controls) {
         let pending = self.linear.begin_snapshot();
 
@@ -730,9 +734,11 @@ impl Engine {
             if control.kind.has_gain() {
                 control.gain += self.dynamic_gains[i];
             }
-            match self.precision {
-                Precision::Single => self.single.bands[i].update(control, rate, timing),
-                Precision::Double => self.double.bands[i].update(control, rate, timing),
+            if self.linear_phase.is_none() {
+                match self.precision {
+                    Precision::Single => self.single.bands[i].update(control, rate, timing),
+                    Precision::Double => self.double.bands[i].update(control, rate, timing),
+                }
             }
         }
         for (index, (&control, reductions)) in controls

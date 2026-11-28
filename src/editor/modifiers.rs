@@ -311,6 +311,13 @@ impl EquartEditor {
                 (ModifierTarget::Band(index), Modifier::Mapping) => {
                     let band = self.params.band(index);
                     self.lock_mapping_references(&setter, band);
+
+                    if band.control().brickwall() {
+                        let frequency = crate::modulation::Target::Frequency;
+                        self.set(&setter, &band.mapping.source, frequency);
+                        self.set(&setter, &band.mapping.target, frequency);
+                    }
+
                     (&band.mapping.enabled, &band.mapping.bypass)
                 }
                 (ModifierTarget::Band(index), Modifier::Lfo) => {

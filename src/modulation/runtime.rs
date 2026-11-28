@@ -192,11 +192,7 @@ impl Rack {
 
         let mapping_input = mapping.source.value(*band);
         let mapping_base = mapping.target.value(*band);
-        if mapping.enabled
-            && mapping.source != mapping.target
-            && mapping.target.supported(*band)
-            && mapping.source.supported(*band)
-        {
+        if mapping.enabled && mapping.source.maps_to(mapping.target, *band) {
             let target = if mapping.bypass || !mapping.strength.is_finite() {
                 0.0
             } else {
@@ -213,7 +209,7 @@ impl Rack {
                     strength: state.strength,
                     ..mapping
                 }
-                .output(mapping_input, mapping_base, rate);
+                .output(mapping_input, mapping_base, rate, band.brickwall());
                 mapping.target.set(band, value, rate);
             }
         } else {

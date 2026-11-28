@@ -89,7 +89,7 @@ pub(super) fn follow(
 const CUT_HANDLE_DB: f32 = 3.0103;
 
 pub(crate) fn cut_handle_q(control: &BandControl) -> f32 {
-    control.q
+    if control.brickwall() { 0.5 } else { control.q }
 }
 
 /// The response of our cut
@@ -247,7 +247,7 @@ impl EquartEditor {
                 let ptr = lead.gain.as_ptr();
                 setter.begin_set_parameter(&lead.gain);
                 gestures.push(ptr);
-            } else if control.kind.is_cut() && control.slope != CutSlope::Db6 {
+            } else if control.kind.is_cut() && control.kind.uses_q(control.slope) {
                 let ptr = lead.q.as_ptr();
                 setter.begin_set_parameter(&lead.q);
                 gestures.push(ptr);

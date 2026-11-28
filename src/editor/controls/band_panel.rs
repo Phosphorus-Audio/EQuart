@@ -1,4 +1,5 @@
 use super::*;
+use crate::filter::CutSlope;
 
 pub(in crate::editor) const BAND_PANEL_RADIUS: u8 = 10;
 const BAND_ACTION_WIDTH: f32 = 36.0;
@@ -598,6 +599,8 @@ impl EquartEditor {
                 );
                 if read_only {
                     response.on_hover_text("Frequency is controlled by f0lock.");
+                } else if label == "Q" && current_slope == CutSlope::Brickwall {
+                    response.on_disabled_hover_text("Brickwall uses a fixed transition shape. The IIR cutoff is at −3 dB. Linear Phase tracks the applied FIR and its transition depends on quality.");
                 }
             });
         }

@@ -2,6 +2,8 @@ use crate::precision::Sample;
 use nice_plug::prelude::*;
 use realfft::num_complex::Complex;
 
+pub(crate) mod brickwall;
+
 pub const FLAT_TILT_SECTIONS: usize = 8;
 
 #[derive(Enum, Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -94,11 +96,16 @@ impl FilterKind {
         match self {
             Self::Peak | Self::Notch | Self::BandPass => &CutSlope::EVEN_ORDER,
             Self::FlatTilt => &[],
+            Self::Highpass | Self::Lowpass => &CutSlope::CUT,
             _ => &CutSlope::ALL,
         }
     }
 
     pub fn effective_slope(self, slope: CutSlope) -> CutSlope {
+        if slope == CutSlope::Brickwall && !self.is_cut() {
+            return self.effective_slope(CutSlope::Db96);
+        }
+
         match self {
             Self::Peak | Self::Notch | Self::BandPass => slope.as_even_order(),
             _ => slope,
@@ -106,7 +113,9 @@ impl FilterKind {
     }
 
     pub fn uses_q(self, slope: CutSlope) -> bool {
-        self != Self::FlatTilt && (slope != CutSlope::Db6 || !(self.is_cut() || self.is_shelf()))
+        self != Self::FlatTilt
+            && !(self.is_cut() && slope == CutSlope::Brickwall)
+            && (slope != CutSlope::Db6 || !(self.is_cut() || self.is_shelf()))
     }
 }
 
@@ -141,6 +150,9 @@ pub enum CutSlope {
     #[id = "96"]
     #[name = "96 dB/oct"]
     Db96,
+    #[id = "brickwall"]
+    #[name = "Brickwall"]
+    Brickwall,
 }
 
 impl CutSlope {
@@ -154,6 +166,11 @@ impl CutSlope {
         Self::Db48,
         Self::Db72,
         Self::Db96,
+    ];
+
+    const CUT: [Self; 10] = [
+        Self::Db6, Self::Db12, Self::Db18, Self::Db24, Self::Db30,
+        Self::Db36, Self::Db48, Self::Db72, Self::Db96, Self::Brickwall,
     ];
 
     /// Slopes built from whole biquads for bells, notches and band-pass filters.
@@ -194,23 +211,27 @@ impl CutSlope {
             Self::Db48 => 8,
             Self::Db72 => 12,
             Self::Db96 => 16,
+            Self::Brickwall => 14,
         }
     }
 
     pub fn label(self) -> String {
-        format!("{} dB/oct", self.order() * 6)
+        match self {
+            Self::Brickwall => "Brickwall".to_owned(),
+            _ => format!("{} dB/oct", self.order() * 6),
+        }
     }
 
     /// step slope by wheel notches, clamped at ends
     pub fn step(self, steps: i32) -> Self {
-        let at = Self::ALL
+        let at = Self::CUT
             .iter()
             .position(|&slope| slope == self)
             .expect("every cut slope is in the ordered list") as i32;
         let index = at
             .saturating_add(steps)
-            .clamp(0, Self::ALL.len() as i32 - 1) as usize;
-        Self::ALL[index]
+            .clamp(0, Self::CUT.len() as i32 - 1) as usize;
+        Self::CUT[index]
     }
 
     /// Number of second-order sections, and whether one real pole is left over.
@@ -469,7 +490,11 @@ impl<T: Sample> Coefficients<T> {
     }
 
     pub fn response(self, rate: T, frequency: T) -> Complex<T> {
-        let r = (T::PI() * frequency / rate).tan() / self.g;
+        self.response_warped((T::PI() * frequency / rate).tan())
+    }
+
+    pub(crate) fn response_warped(self, warped: T) -> Complex<T> {
+        let r = warped / self.g;
         let denominator = Complex::new(T::one() - r * r, self.k * r);
 
         Complex::new(self.mix[0], T::zero())

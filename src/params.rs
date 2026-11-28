@@ -25,7 +25,7 @@ pub const FREQUENCY_MAX_HZ: f32 = 30_000.0;
 #[derive(Params)]
 pub struct EquartParams {
     #[nested(array, group = "Band")]
-    pub bands: [BandParams; BAND_COUNT],
+    pub bands: Box<[BandParams; BAND_COUNT]>,
 
     #[nested(array, group = "Spectral Region")]
     pub regions: [crate::region::RegionParams; crate::region::REGION_COUNT],
@@ -59,7 +59,12 @@ pub struct EquartParams {
 impl Default for EquartParams {
     fn default() -> Self {
         Self {
-            bands: std::array::from_fn(BandParams::at),
+            bands: (0..BAND_COUNT)
+                .map(BandParams::at)
+                .collect::<Box<[_]>>()
+                .try_into()
+                .ok()
+                .expect("one parameter group per band"),
             regions: std::array::from_fn(crate::region::RegionParams::new),
             spectral_transfer_curves: Default::default(),
             bands_placed: AtomicU32::new(0),

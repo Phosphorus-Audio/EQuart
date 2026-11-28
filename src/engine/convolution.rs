@@ -5,7 +5,7 @@ use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex
 pub(super) const HOP: usize = 256;
 const FFT: usize = 2 * HOP;
 const BINS: usize = HOP + 1;
-const PARTITIONS: usize = 2 * crate::processing_mode::LinearQuality::MAX_CENTER / HOP;
+const PARTITIONS: usize = 2 * crate::processing_mode::LinearQuality::MAX_CENTER / HOP + 1;
 
 type Spectrum = [Complex64; BINS];
 
@@ -13,6 +13,8 @@ pub(super) struct Kernel {
     partitions: [Vec<Spectrum>; 8],
     pub(super) routes: [Option<usize>; 8],
     pub(super) half_taps: [Vec<f64>; 4],
+    pub(super) identity: bool,
+    pub(super) last_tap: bool,
 }
 
 impl Kernel {
@@ -20,6 +22,8 @@ impl Kernel {
         Self {
             partitions: std::array::from_fn(|_| vec![[Complex64::default(); BINS]; PARTITIONS]),
             routes: [None; 8],
+            identity: false,
+            last_tap: false,
             half_taps: std::array::from_fn(|_| {
                 vec![0.0; crate::processing_mode::LinearQuality::MAX_CENTER + 1]
             }),
@@ -148,6 +152,13 @@ impl Convolution {
     }
 
     fn render_channel(&mut self, kernel: &Kernel, count: usize, lane: usize) {
+        if kernel.identity && lane < 2 {
+            let head = (self.head + PARTITIONS - count / 2) % PARTITIONS;
+            self.bins.copy_from_slice(&self.history[lane][head]);
+            self.inverse();
+            return;
+        }
+
         let routes = &kernel.routes[2 * lane..2 * lane + 2];
         if routes.iter().all(Option::is_none) {
             self.work[HOP..].fill(0.0);
@@ -158,7 +169,7 @@ impl Convolution {
 
         for (history, route) in self.history.iter().zip(routes) {
             let Some(route) = route else { continue };
-            let filters = &kernel.partitions[*route][..count];
+            let filters = &kernel.partitions[*route][..count + usize::from(kernel.last_tap)];
             let history = history[..=self.head]
                 .iter()
                 .rev()
@@ -171,6 +182,10 @@ impl Convolution {
             }
         }
 
+        self.inverse();
+    }
+
+    fn inverse(&mut self) {
         self.plans
             .inverse
             .process_with_scratch(&mut self.bins, &mut self.work, &mut self.scratch)

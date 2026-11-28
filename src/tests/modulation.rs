@@ -14,14 +14,14 @@ fn mapping_power_law() {
         (1.0, 4.0),
     ] {
         mapping.strength = strength;
-        assert!((mapping.output(400.0, 2.0, RATE) - expected).abs() < 1e-5);
+        assert!((mapping.output(400.0, 2.0, RATE, false) - expected).abs() < 1e-5);
     }
 
     mapping.reference = 400.0;
-    assert_eq!(mapping.output(400.0, 2.0, RATE), 2.0);
-    assert_eq!(mapping.output(1e12, 2.0, RATE), crate::params::Q_MAX);
-    assert_eq!(mapping.output(0.01, 2.0, RATE), crate::params::Q_MIN);
-    assert_eq!(mapping.output(f32::NAN, 2.0, RATE), 2.0);
+    assert_eq!(mapping.output(400.0, 2.0, RATE, false), 2.0);
+    assert_eq!(mapping.output(1e12, 2.0, RATE, false), crate::params::Q_MAX);
+    assert_eq!(mapping.output(0.01, 2.0, RATE, false), crate::params::Q_MIN);
+    assert_eq!(mapping.output(f32::NAN, 2.0, RATE, false), 2.0);
 
     for source in Target::ALL {
         for target in Target::ALL {
@@ -38,7 +38,7 @@ fn mapping_power_law() {
                 reference,
                 ..mapping
             }
-            .output(input, base, RATE);
+            .output(input, base, RATE, false);
             if source == target {
                 assert_eq!(result, base);
             } else if target == Target::Gain {

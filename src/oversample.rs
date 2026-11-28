@@ -91,6 +91,43 @@ fn design<T: Sample>() -> [T; TAPS] {
     taps
 }
 
+pub(crate) fn response_images(mode: Oversampling, hz: f64, rate: f64) -> [f64; 4] {
+    static TAPS_F64: std::sync::OnceLock<[f64; TAPS]> = std::sync::OnceLock::new();
+    let taps = TAPS_F64.get_or_init(design::<f64>);
+    let factor = mode.factor();
+    let zero_phase = |cycles: f64| {
+        let angle = std::f64::consts::TAU * cycles;
+        let recurrence = 2.0 * (2.0 * angle).cos();
+        let mut previous = angle.cos();
+        let mut cosine = previous;
+        let mut gain = taps[DELAY];
+
+        for offset in (1..DELAY).step_by(2) {
+            gain += 2.0 * taps[DELAY + offset] * cosine;
+            (previous, cosine) = (cosine, recurrence * cosine - previous);
+        }
+
+        gain
+    };
+
+    std::array::from_fn(|image| {
+        if image >= factor {
+            return 0.0;
+        }
+        if factor == 1 {
+            return 1.0;
+        }
+
+        let cycles = (hz / rate + image as f64) / factor as f64;
+        let gain = if factor == 4 {
+            zero_phase(cycles) * zero_phase(2.0 * cycles)
+        } else {
+            zero_phase(cycles)
+        };
+        gain * gain
+    })
+}
+
 fn bessel_i0<T: Sample>(x: T) -> T {
     let half = x * T::value(0.5);
     let mut term = T::one();
