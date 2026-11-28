@@ -352,10 +352,10 @@ fn plot_response_tracks_the_applied_fir_at_each_rate_and_quality() {
                     tap * angle.cos()
                 })
                 .sum();
-            let plotted = response.db(hz, rate, center).unwrap();
+            let plotted = 20.0 * response.matrix(hz, rate, center).unwrap()[0].norm().log10();
             assert!((f64::from(plotted) - 20.0 * magnitude.abs().log10()).abs() < 0.08);
         }
 
-        assert!(response.db(32.0, rate, center / 2).is_none());
+        assert!(response.matrix(32.0, rate, center / 2).is_none());
     }
 }

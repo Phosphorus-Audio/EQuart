@@ -1,5 +1,11 @@
 use super::*;
 
+mod routes;
+#[cfg(test)]
+mod tests;
+
+use routes::{IDENTITY, Traces};
+
 /// get complex response of one band at a freq
 pub(super) fn band_response(
     sections: &[Coefficients<f64>; SECTIONS],
@@ -146,8 +152,16 @@ pub(super) fn draw_response(
         .collect();
     let region_sections: Vec<_> = region_bands
         .iter()
-        .map(|band| band.sections_for(rate))
+        .map(|band| (band.channel, band.sections_for(rate)))
         .collect();
+    let modes = if let Some(center) = linear_center {
+        fir_response.channel_modes(rate, center).unwrap_or(0)
+    } else {
+        controls.iter().chain(&region_bands).filter(|band| band.enabled)
+            .fold(0, |mask, band| mask | band.channel.bit())
+    };
+    let split = modes & !ChannelMode::Stereo.bit() != 0;
+
     let phase_response = phase_mode.filter(|_| linear_center.is_none()).map(|_| {
         phase::Response::new(
             plot,
@@ -157,7 +171,7 @@ pub(super) fn draw_response(
                 .zip(controls)
                 .filter(|(_, control)| control.enabled)
                 .map(|(response, _)| response.live.as_ref().unwrap_or(&response.base))
-                .chain(&region_sections)
+                .chain(region_sections.iter().map(|(_, sections)| sections))
                 .flat_map(|(coefficients, count)| &coefficients[..*count]),
         )
     });
@@ -259,57 +273,81 @@ pub(super) fn draw_response(
         }
     }
     let include_resampler = oversampling.factor() > 1
-        && controls.iter().any(|control| control.enabled && control.brickwall());
+        && (split || controls.iter().any(|control| control.enabled && control.brickwall()));
     let host_rate = rate / oversampling.factor() as f32;
     let warped_at = |hz| (std::f64::consts::PI * f64::from(hz) / f64::from(rate)).tan();
+    let cascade = |mut matrix: [Complex32; 4], channel, response| {
+        if split {
+            crate::routing::cascade(matrix, channel, response)
+        } else {
+            matrix[0] *= response;
+            matrix[3] = matrix[0];
+            matrix
+        }
+    };
     let response_at = |hz: f32| {
-        let mut total = Complex32::new(1.0, 0.0);
+        let mut matrix = IDENTITY;
         let warped = warped_at(hz);
 
         for (control, response) in controls.iter().zip(&responses) {
             if control.enabled {
                 let (coefficients, count) = response.live.as_ref().unwrap_or(&response.base);
-                total *= band_response(coefficients, *count, warped);
+                matrix = cascade(matrix, control.channel, band_response(coefficients, *count, warped));
             }
         }
-        for (sections, count) in &region_sections {
-            total *= band_response(sections, *count, warped);
+        for (channel, (sections, count)) in &region_sections {
+            matrix = cascade(matrix, *channel, band_response(sections, *count, warped));
         }
 
-        total
+        matrix
     };
-    let mut sum = Vec::with_capacity(xs.len());
-    let mut natural_phase = include_resampler
-        .then(|| Vec::with_capacity(xs.len()))
-        .filter(|_| phase_mode.is_some());
-    for &x in &xs {
-        let hz = plot.hz_extended(x);
-        let hz = if include_resampler { hz.min(host_rate * 0.5) } else { hz };
-        let warped = warped_at(hz);
+    let mut traces = Traces::new(
+        modes,
+        xs.len(),
+        phase_mode.is_some() && (split || linear_center.is_some()),
+        linear_center.is_some() && fir_response.is_symmetric(),
+    );
+    let mut natural_phase = (include_resampler && !split && phase_mode.is_some())
+        .then(|| Vec::with_capacity(xs.len()));
 
-        let mut total = Complex32::new(1.0, 0.0);
+    for &x in &xs {
+        let hz = plot.hz_extended(x).min(host_rate * 0.5);
+        let warped = warped_at(hz.min(rate * 0.49999));
+
+        let mut matrix = IDENTITY;
         for (band, response) in responses.iter().enumerate() {
-            if controls[band].enabled {
-                let (coefficients, count) = &response.base;
-                let base = band_response(coefficients, *count, warped);
-                db[band].push(response_db(base));
-                total *= response
-                    .live
-                    .as_ref()
-                    .map_or(base, |(coefficients, count)| {
-                        band_response(coefficients, *count, warped)
-                    });
+            if !controls[band].enabled {
+                continue;
+            }
+
+            let (coefficients, count) = &response.base;
+            let base = band_response(coefficients, *count, warped);
+            db[band].push(response_db(base));
+
+            if linear_center.is_none() {
+                let live = response.live.as_ref().map_or(base, |(coefficients, count)| {
+                    band_response(coefficients, *count, warped)
+                });
+                matrix = cascade(matrix, controls[band].channel, live);
             }
         }
-        for (sections, count) in &region_sections {
-            total *= band_response(sections, *count, warped);
+
+        if let Some(center) = linear_center {
+            if let Some(matrix) = fir_response.matrix(hz, rate, center) {
+                traces.push(plot, x, matrix);
+            }
+            continue;
+        }
+
+        for (channel, (sections, count)) in &region_sections {
+            matrix = cascade(matrix, *channel, band_response(sections, *count, warped));
         }
 
         if include_resampler {
             let weights = crate::oversample::response_images(
                 oversampling, f64::from(hz), f64::from(host_rate),
             );
-            total *= weights[0] as f32;
+            matrix = matrix.map(|value| value * weights[0] as f32);
 
             for (image, weight) in weights.into_iter().enumerate().skip(1) {
                 if weight <= 1e-12 {
@@ -322,17 +360,18 @@ pub(super) fn draw_response(
                 } else {
                     image_hz
                 };
-                let image_response = response_at(signed.abs());
-                total += if signed < 0.0 { image_response.conj() } else { image_response }
-                    * weight as f32;
+                let image = response_at(signed.abs());
+                for (value, image) in matrix.iter_mut().zip(image) {
+                    *value += if signed < 0.0 { image.conj() } else { image } * weight as f32;
+                }
             }
 
             if let Some(phase) = &mut natural_phase {
-                phase.push(total.arg().to_degrees());
+                phase.push(matrix[0].arg().to_degrees());
             }
         }
 
-        sum.push(response_db(total));
+        traces.push(plot, x, matrix);
     }
 
     let painter = p.with_clip_rect(outer);
@@ -497,37 +536,8 @@ pub(super) fn draw_response(
         }
     }
 
-    // draw total combined curve
-    let combined: Vec<Pos2> = xs
-        .iter()
-        .zip(sum)
-        .filter_map(|(&x, target_db)| {
-            let db = if let Some(center) = linear_center {
-                fir_response.db(plot.hz_extended(x), rate, center)?
-            } else {
-                target_db
-            };
-            Some(Pos2::new(x, plot.y_free(db)))
-        })
-        .collect();
-    let preview = preview_hover.and_then(|pointer| preview_point(&combined, pointer, plot.rect));
-
-    painter.add(egui::Shape::line(
-        combined.clone(),
-        Stroke::new(5.0, palette.curves.response.gamma_multiply(0.14)),
-    ));
-    painter.add(egui::Shape::line(
-        combined,
-        Stroke::new(1.9, palette.curves.response.gamma_multiply(0.95)),
-    ));
-    if let Some(mode) = phase_mode {
-        let mut samples = match phase_response {
-            Some(response) => response.sample(plot, &xs),
-            None => vec![
-                (plot.rect.left(), Some(0.0)),
-                (plot.rect.right(), Some(0.0)),
-            ],
-        };
+    let analytic = phase_response.filter(|_| !split).map(|response| {
+        let mut samples = response.sample(plot, &xs);
         if let Some(angles) = natural_phase {
             for (x, phase) in &mut samples {
                 if let Some(degrees) = phase
@@ -538,8 +548,8 @@ pub(super) fn draw_response(
                 }
             }
         }
-        phase::draw(p, plot, mode, &samples);
-    }
+        samples
+    });
 
-    preview
+    traces.draw(&painter, plot, phase_mode, analytic, preview_hover)
 }

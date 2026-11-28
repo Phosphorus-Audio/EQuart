@@ -142,7 +142,7 @@ struct Axis {
 }
 
 impl Axis {
-    fn new(mode: Mode, samples: &[(f32, Option<f32>)]) -> Self {
+    fn new(mode: Mode, angles: impl Iterator<Item = f32>) -> Self {
         if mode == Mode::Wrapped {
             return Self {
                 min: -HALF_TURN,
@@ -150,10 +150,7 @@ impl Axis {
                 step: 90.0,
             };
         }
-        let (mut min, mut max) = samples
-            .iter()
-            .filter_map(|(_, phase)| *phase)
-            .fold((0.0_f32, 0.0_f32), |(low, high), phase| {
+        let (mut min, mut max) = angles.fold((0.0_f32, 0.0_f32), |(low, high), phase| {
                 (low.min(phase), high.max(phase))
             });
         if max - min < HALF_TURN {
@@ -219,17 +216,26 @@ fn paths(mode: Mode, axis: &Axis, rect: Rect, samples: &[(f32, Option<f32>)]) ->
     paths
 }
 
-pub(super) fn draw(p: &egui::Painter, plot: &Plot, mode: Mode, samples: &[(f32, Option<f32>)]) {
+pub(super) fn draw<'a>(
+    p: &egui::Painter,
+    plot: &Plot,
+    mode: Mode,
+    curves: impl Iterator<Item = (Color32, &'a [(f32, Option<f32>)])> + Clone,
+) {
     let phase_color = theme::current(p.ctx()).curves.phase;
-    let axis = Axis::new(mode, samples);
+    let angles = curves.clone().flat_map(|(_, samples)| samples.iter().filter_map(|&(_, angle)| angle));
+    let axis = Axis::new(mode, angles);
     let curve = p.with_clip_rect(plot.rect);
-    for path in paths(mode, &axis, plot.rect, samples) {
-        curve.extend(egui::Shape::dashed_line(
-            &path,
-            Stroke::new(1.35, phase_color),
-            6.0,
-            3.5,
-        ));
+
+    for (color, samples) in curves {
+        for path in paths(mode, &axis, plot.rect, samples) {
+            curve.extend(egui::Shape::dashed_line(
+                &path,
+                Stroke::new(1.35, color),
+                6.0,
+                3.5,
+            ));
+        }
     }
 
     let x = plot.rect.right();
@@ -257,11 +263,14 @@ pub(super) fn draw(p: &egui::Painter, plot: &Plot, mode: Mode, samples: &[(f32, 
     }
 }
 
-pub(super) fn draw_label(p: &egui::Painter, plot: &Plot, outer: Rect, mode: Mode) {
+pub(super) fn draw_label(p: &egui::Painter, plot: &Plot, outer: Rect, mode: Mode, linear: bool) {
+    let label = mode.label();
+    let label = if linear { format!("{label} · delay compensated") } else { label.to_owned() };
+
     p.text(
         Pos2::new(plot.rect.center().x, outer.top() + 18.0),
         egui::Align2::CENTER_CENTER,
-        mode.label(),
+        label,
         FontId::proportional(10.0),
         theme::current(p.ctx()).curves.phase,
     );
@@ -298,7 +307,7 @@ mod tests {
         let rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(100.0, 100.0));
         for (before, after, edge) in [(170.0, 190.0, rect.top()), (-170.0, -190.0, rect.bottom())] {
             let samples = [(20.0, Some(before)), (80.0, Some(after))];
-            let axis = Axis::new(Mode::Wrapped, &samples);
+            let axis = Axis::new(Mode::Wrapped, samples.iter().filter_map(|&(_, phase)| phase));
             let segments = paths(Mode::Wrapped, &axis, rect, &samples);
             assert_eq!(segments.len(), 2);
             assert_eq!(segments[0][1], Pos2::new(50.0, edge));
@@ -306,9 +315,9 @@ mod tests {
         }
 
         let samples = [(0.0, Some(0.0)), (100.0, Some(-1_080.0))];
-        let wrapped = Axis::new(Mode::Wrapped, &samples);
+        let wrapped = Axis::new(Mode::Wrapped, samples.iter().filter_map(|&(_, phase)| phase));
         assert_eq!(paths(Mode::Wrapped, &wrapped, rect, &samples).len(), 4);
-        let unwrapped = Axis::new(Mode::Unwrapped, &samples);
+        let unwrapped = Axis::new(Mode::Unwrapped, samples.iter().filter_map(|&(_, phase)| phase));
         assert!(unwrapped.min <= -1_080.0);
         assert_eq!(paths(Mode::Unwrapped, &unwrapped, rect, &samples).len(), 1);
 

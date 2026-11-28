@@ -3,7 +3,7 @@ use crate::analyzer::{
     AnalyzerOption, HOLD_MODES, MIN_HZ, RESOLUTION_LABELS, SPECTRUM_SMOOTHINGS,
     SPECTRUM_SPEED_LABELS, SpectrumFrame, TILT_LABELS, max_frequency,
 };
-use crate::band::{BAND_COUNT, BandControl, SECTIONS};
+use crate::band::{BAND_COUNT, BandControl, ChannelMode, SECTIONS};
 use crate::editor::format_hz;
 use crate::filter::{Coefficients, CutSlope, FilterKind, bell_bandwidth};
 use crate::params::{Q_MAX, Q_MIN};
@@ -12,6 +12,7 @@ use realfft::num_complex::Complex32;
 
 mod backdrop;
 mod band_input;
+mod channel_badges;
 mod fill;
 mod grid;
 pub(super) mod heatmap;
@@ -42,6 +43,8 @@ pub(crate) const KEYS_BAND: f32 = 26.0;
 const KEYS_HEIGHT: f32 = 27.0;
 /// fade width at both ends of keyboard
 const KEYS_FADE: f32 = 78.0;
+
+const BAND_READOUT_TOP: f32 = 42.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum AxisScale {
@@ -795,7 +798,7 @@ impl EquartEditor {
         }
 
         if let Some(mode) = phase_mode {
-            phase::draw_label(&p, &plot, outer, mode);
+            phase::draw_label(&p, &plot, outer, mode, linear_phase);
         }
 
         ui.data_mut(|data| data.insert_temp(curve_preview_id, preview));
@@ -877,6 +880,14 @@ impl EquartEditor {
             );
         }
 
+        channel_badges::draw(
+            &p,
+            outer,
+            &markers,
+            &controls,
+            [pressed_marker, hovered_marker, self.selected],
+        );
+
         // draw marquee box
         if let Some((start, end)) = self.marquee {
             let band = Rect::from_two_pos(start, end);
@@ -915,7 +926,7 @@ impl EquartEditor {
         }
 
         p.text(
-            plot.rect.min + Vec2::new(10.0, 42.0),
+            plot.rect.min + Vec2::new(10.0, BAND_READOUT_TOP),
             egui::Align2::LEFT_TOP,
             text,
             FontId::monospace(11.0),

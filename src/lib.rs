@@ -18,6 +18,7 @@ mod realtime;
 #[cfg(test)]
 mod reference;
 mod region;
+mod routing;
 mod telemetry;
 #[cfg(test)]
 mod tests;

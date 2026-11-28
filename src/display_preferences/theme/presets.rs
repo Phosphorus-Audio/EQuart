@@ -71,6 +71,10 @@ fn im_disperser_light() -> Theme {
             response: hex(0x164e45),
             phase: hex(0x456d80),
             peak_hold: fern,
+            left: hex(0x643c97),
+            right: hex(0xa5343e),
+            mid: hex(0x29621f),
+            side: hex(0x155d91),
         },
         ..Theme::default()
     };
@@ -186,6 +190,7 @@ fn im_disperser_dark() -> Theme {
             response: mint,
             phase: hex(0x72c8b1),
             peak_hold: cream,
+            ..Curves::default()
         },
         ..Theme::default()
     };
@@ -291,6 +296,7 @@ fn dark_pink() -> Theme {
             response: hex(0xfff9fd),
             phase: hex(0xae8db5),
             peak_hold: ink,
+            ..Curves::default()
         },
         ..Theme::default()
     };
@@ -376,6 +382,7 @@ fn f0lock() -> Theme {
             response: red,
             phase: hex(0x85a3b0),
             peak_hold: gray(195),
+            ..Curves::default()
         },
         ..Theme::default()
     };
@@ -432,6 +439,10 @@ fn in_warm() -> Theme {
             response: blue,
             phase: hex(0x765637),
             peak_hold: hex(0x34748f),
+            left: hex(0x654295),
+            right: hex(0x9e3327),
+            mid: hex(0x366321),
+            side: hex(0x006a79),
         },
         ..Theme::default()
     };

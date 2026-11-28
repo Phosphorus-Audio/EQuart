@@ -36,6 +36,10 @@ pub enum ChannelMode {
 impl ChannelMode {
     pub const ALL: [Self; 5] = [Self::Stereo, Self::Left, Self::Right, Self::Mid, Self::Side];
 
+    pub(crate) const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
     pub fn tag(self) -> &'static str {
         match self {
             Self::Stereo => "ST",

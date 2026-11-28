@@ -135,9 +135,27 @@ palette!(Scrollbar {
 
 palette!(Curves {
     response: "Combined EQ response" = rgb(245, 208, 76),
+    left: "Left response" = rgb(201, 177, 255),
+    right: "Right response" = rgb(255, 123, 118),
+    mid: "Mid response" = rgb(126, 224, 139),
+    side: "Side response" = rgb(100, 197, 245),
     phase: "Phase" = rgb(142, 190, 203),
     peak_hold: "Peak hold" = rgb(238, 243, 245),
 });
+
+impl Curves {
+    pub(crate) fn channel(self, mode: crate::band::ChannelMode) -> Color32 {
+        use crate::band::ChannelMode::*;
+
+        match mode {
+            Stereo => self.response,
+            Left => self.left,
+            Right => self.right,
+            Mid => self.mid,
+            Side => self.side,
+        }
+    }
+}
 
 palette!(HeatmapPalette {
     minimum: "Minimum" = gray(28),

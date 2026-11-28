@@ -1,7 +1,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
 
-use realfft::{RealFftPlanner, RealToComplex, num_complex::Complex64};
+use realfft::{
+    RealFftPlanner, RealToComplex,
+    num_complex::{Complex32, Complex64},
+};
 
 use crate::{engine::Engine, processing_mode::LinearQuality};
 
@@ -12,6 +15,7 @@ pub(crate) struct FirTelemetry {
     rate: AtomicU32,
     count: AtomicU32,
     routes: AtomicU32,
+    metadata: AtomicU32,
     taps: [Box<[AtomicU64]>; 4],
 }
 
@@ -24,6 +28,7 @@ impl Default for FirTelemetry {
             rate: AtomicU32::new(0),
             count: AtomicU32::new(0),
             routes: AtomicU32::new(0),
+            metadata: AtomicU32::new(0),
             taps: std::array::from_fn(|_| {
                 (0..=LinearQuality::MAX_CENTER)
                     .map(|_| AtomicU64::new(0))
@@ -71,6 +76,9 @@ impl FirTelemetry {
 
         self.count.store(count as u32, Ordering::Relaxed);
         self.routes.store(routes, Ordering::Relaxed);
+        let (modes, last_tap) = engine.linear_response_metadata();
+        self.metadata
+            .store(u32::from(modes) | (u32::from(last_tap) << 8), Ordering::Relaxed);
         self.epoch.fetch_add(1, Ordering::Release);
     }
 }
@@ -93,9 +101,10 @@ impl ResponseFft {
         }
     }
 
-    fn accumulate(&mut self, taps: &[f64], power: &mut [f64], scale: f64) {
+    fn transform(&mut self, taps: &[f64], last_tap: bool, output: &mut Vec<Complex32>) {
         self.time.fill(0.0);
-        self.time[..taps.len()].copy_from_slice(taps);
+        let end = taps.len() - usize::from(!last_tap);
+        self.time[..end].copy_from_slice(&taps[..end]);
         let fft = self.time.len();
 
         for (lag, &tap) in taps.iter().enumerate().skip(1) {
@@ -105,9 +114,8 @@ impl ResponseFft {
         self.plan
             .process_with_scratch(&mut self.time, &mut self.spectrum, &mut self.scratch)
             .unwrap();
-        for (power, response) in power.iter_mut().zip(&self.spectrum) {
-            *power += scale * response.re * response.re;
-        }
+        output.clear();
+        output.extend(self.spectrum.iter().map(|bin| Complex32::new(bin.re as f32, bin.im as f32)));
     }
 }
 
@@ -120,8 +128,10 @@ pub(crate) struct FirResponse {
     taps: [Vec<f64>; 4],
     previous: [Vec<f64>; 4],
     previous_routes: u32,
+    channel_modes: u8,
+    last_tap: bool,
     fft: Option<ResponseFft>,
-    power: Vec<f64>,
+    spectra: [Vec<Complex32>; 4],
 }
 
 impl FirResponse {
@@ -138,6 +148,8 @@ impl FirResponse {
         let count = source.count.load(Ordering::Relaxed) as usize;
         let rate = f32::from_bits(source.rate.load(Ordering::Relaxed));
         let routes = source.routes.load(Ordering::Relaxed);
+        let metadata = source.metadata.load(Ordering::Relaxed);
+        let last_tap = metadata & (1 << 8) != 0;
         let mut usage = [0; 4];
 
         for lane in 0..4 {
@@ -167,8 +179,11 @@ impl FirResponse {
         self.epoch = epoch;
         self.rate = rate;
         self.count = count;
+        self.channel_modes = metadata as u8;
 
-        if count == 0 || (self.taps == self.previous && routes == self.previous_routes) {
+        if count == 0
+            || (self.taps == self.previous && routes == self.previous_routes && last_tap == self.last_tap)
+        {
             return;
         }
 
@@ -179,29 +194,40 @@ impl FirResponse {
         }
 
         let fft = self.fft.as_mut().unwrap();
-        self.power.resize(fft.spectrum.len(), 0.0);
-        self.power.fill(0.0);
-
-        for (taps, usage) in self.taps.iter().zip(usage) {
+        for ((taps, usage), spectrum) in self.taps.iter().zip(usage).zip(&mut self.spectra) {
             if usage > 0 {
-                fft.accumulate(taps, &mut self.power, 0.5 * f64::from(usage));
+                fft.transform(taps, last_tap, spectrum);
             }
         }
 
         std::mem::swap(&mut self.taps, &mut self.previous);
         self.previous_routes = routes;
+        self.last_tap = last_tap;
     }
 
-    pub(crate) fn db(&self, hz: f32, rate: f32, center: usize) -> Option<f32> {
-        if self.count != center + 1 || self.rate != rate {
-            return None;
-        }
+    pub(crate) fn channel_modes(&self, rate: f32, center: usize) -> Option<u8> {
+        (self.count == center + 1 && self.rate == rate).then_some(self.channel_modes)
+    }
 
-        let bin = f64::from(hz.clamp(0.0, rate * 0.5) / rate) * (16 * center) as f64;
+    pub(crate) fn is_symmetric(&self) -> bool {
+        self.last_tap || self.previous.iter().all(|taps| taps.last().is_none_or(|tap| *tap == 0.0))
+    }
+
+    pub(crate) fn matrix(&self, hz: f32, rate: f32, center: usize) -> Option<[Complex32; 4]> {
+        self.channel_modes(rate, center)?;
+        let bin = (f64::from(hz.clamp(0.0, rate * 0.5)) / f64::from(rate)) * (16 * center) as f64;
         let index = bin as usize;
-        let a = self.power[index];
-        let b = self.power.get(index + 1).copied().unwrap_or(a);
-        let power = a + (b - a) * bin.fract();
-        Some((10.0 * power.max(1e-18).log10()) as f32)
+        let blend = bin.fract() as f32;
+        Some(std::array::from_fn(|lane| {
+            let tap = (self.previous_routes >> (4 * lane)) & 15;
+            if tap == 0 {
+                return Complex32::default();
+            }
+
+            let spectrum = &self.spectra[tap as usize - 1];
+            let a = spectrum[index];
+            let b = spectrum.get(index + 1).copied().unwrap_or(a);
+            a + (b - a) * blend
+        }))
     }
 }

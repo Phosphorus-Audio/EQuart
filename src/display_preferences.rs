@@ -556,6 +556,7 @@ mod tests {
         theme.heatmap = Some(heatmap);
         theme.band[31] = egui::Color32::GOLD;
         theme.region[5] = egui::Color32::LIGHT_RED;
+        theme.curves.left = egui::Color32::LIGHT_GREEN;
         let expected = DisplayPreferences {
             spectrum: SpectrumPreferences {
                 resolution: 0,

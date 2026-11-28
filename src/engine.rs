@@ -198,6 +198,10 @@ impl Engine {
         self.linear_phase.and_then(|_| self.linear.response())
     }
 
+    pub(crate) fn linear_response_metadata(&self) -> (u8, bool) {
+        self.linear.response_metadata()
+    }
+
     pub(crate) fn tail(&self) -> u32 {
         self.linear_phase
             .map_or(0, |quality| linear::tail(quality.center_at(self.rate)))

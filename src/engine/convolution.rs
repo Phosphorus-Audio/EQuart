@@ -15,6 +15,7 @@ pub(super) struct Kernel {
     pub(super) half_taps: [Vec<f64>; 4],
     pub(super) identity: bool,
     pub(super) last_tap: bool,
+    pub(super) channel_modes: u8,
 }
 
 impl Kernel {
@@ -24,6 +25,7 @@ impl Kernel {
             routes: [None; 8],
             identity: false,
             last_tap: false,
+            channel_modes: 0,
             half_taps: std::array::from_fn(|_| {
                 vec![0.0; crate::processing_mode::LinearQuality::MAX_CENTER + 1]
             }),

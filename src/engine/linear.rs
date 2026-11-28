@@ -15,6 +15,7 @@ use crate::filter::Coefficients;
 use crate::precision::Sample;
 use crate::processing_mode::LinearQuality;
 use crate::region::{FILTERS, REGION_COUNT};
+use crate::routing::cascade;
 
 mod worker;
 use worker::Worker;
@@ -125,26 +126,6 @@ struct SharedPlans {
 
 type Matrix = [f64; 4];
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0];
-
-fn cascade(matrix: Matrix, route: ChannelMode, gain: f64) -> Matrix {
-    let [ll, lr, rl, rr] = matrix;
-
-    match route {
-        ChannelMode::Stereo => matrix.map(|tap| tap * gain),
-        ChannelMode::Left => [ll * gain, lr * gain, rl, rr],
-        ChannelMode::Right => [ll, lr, rl * gain, rr * gain],
-        ChannelMode::Mid | ChannelMode::Side => {
-            let same = (gain + 1.0) * 0.5;
-            let cross = (gain - 1.0) * if route == ChannelMode::Mid { 0.5 } else { -0.5 };
-            [
-                same * ll + cross * rl,
-                same * lr + cross * rr,
-                cross * ll + same * rl,
-                cross * lr + same * rr,
-            ]
-        }
-    }
-}
 
 struct Stage {
     sections: [Coefficients<f64>; SECTIONS],
@@ -304,6 +285,10 @@ impl LinearEq {
                     .map(|route| &self.current.half_taps[route][..=self.center])
             })
         })
+    }
+
+    pub(super) fn response_metadata(&self) -> (u8, bool) {
+        (self.current.channel_modes, self.current.last_tap)
     }
 
     pub(super) fn set_quality(&mut self, quality: LinearQuality, rate: f32) {
@@ -472,10 +457,8 @@ impl Designer {
             });
         }
 
-        self.stereo = self
-            .stages
-            .iter()
-            .all(|stage| stage.route == ChannelMode::Stereo);
+        let modes = self.stages.iter().fold(0, |mask, stage| mask | stage.route.bit());
+        self.stereo = modes & !ChannelMode::Stereo.bit() == 0;
         let design = &self.plans.designs[self.rate_index][self.quality.index()];
         self.integrate = self.stages.iter().any(|stage| {
             stage.sections[..stage.count].iter().any(|section| {
@@ -484,10 +467,7 @@ impl Designer {
                     && section.mix != [1.0, 0.0, 0.0]
             })
         });
-        let crossed = self
-            .stages
-            .iter()
-            .any(|stage| matches!(stage.route, ChannelMode::Mid | ChannelMode::Side));
+        let crossed = modes & (ChannelMode::Mid.bit() | ChannelMode::Side.bit()) != 0;
         let mut routes = if self.stereo {
             [Some(0), None, None, Some(0), Some(4), None, None, Some(4)]
         } else {
@@ -510,6 +490,7 @@ impl Designer {
         kernel.routes = routes;
         kernel.identity = false;
         kernel.last_tap = self.brickwall;
+        kernel.channel_modes = modes;
         self.design_bin = Some(0);
     }
 
