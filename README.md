@@ -8,9 +8,7 @@ Parametric EQ by Phosphorus Audio, built with [nice-plug](https://codeberg.org/R
 
 [GitHub Releases](https://github.com/Phosphorus-Audio/EQuart/releases) provides CLAP
 and VST3 for Windows x64, macOS Universal, and Linux x64. The macOS release also
-includes a self-contained Audio Unit (AUv2) for Logic Pro and other AU hosts.
-macOS 14 or newer is required. The plugins are ad-hoc signed, and the installer
-is unsigned; neither is notarized, so macOS may require approval in Privacy & Security.
+includes a self-contained Audio Unit (AUv2) for Logic Pro and other AU hosts (macOS 14 or newer is required)
 
 ## features
 

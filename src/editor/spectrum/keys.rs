@@ -1,5 +1,7 @@
 use super::*;
 
+const BLACK_KEY_HEIGHT: f32 = KEYS_HEIGHT * 0.58;
+
 /// A4 = MIDI 69 = 440 Hz
 pub(super) fn note_hz(note: f32) -> f32 {
     440.0 * ((note - 69.0) / 12.0).exp2()
@@ -130,7 +132,7 @@ pub(super) fn draw_keys(
         let half = (semitone * 0.38).max(0.95);
         let key = Rect::from_min_max(
             Pos2::new(centre - half, rect.top()),
-            Pos2::new(centre + half, rect.top() + KEYS_HEIGHT * 0.58),
+            Pos2::new(centre + half, rect.top() + BLACK_KEY_HEIGHT),
         );
         if !key.intersects(rect) {
             continue;
@@ -201,5 +203,57 @@ pub(super) fn draw_keys(
             font,
             keys.tip_text,
         );
+    }
+}
+
+pub(super) fn draw_key_markers(
+    p: &egui::Painter,
+    plot: &Plot,
+    outer: Rect,
+    markers: &[(usize, Pos2)],
+    ink: impl Fn(usize) -> Color32,
+) {
+    let rect = keys_strip(outer);
+    let painter = p.with_clip_rect(rect);
+    let semitone = plot.x_unchecked(note_hz(1.0)) - plot.x_unchecked(note_hz(0.0));
+
+    let mut notes = [(0, 0); BAND_COUNT];
+    let notes = &mut notes[..markers.len()];
+
+    for (entry, &(band, pos)) in notes.iter_mut().zip(markers) {
+        *entry = (note_at(plot.hz_extended(pos.x)).round() as i32, band);
+    }
+
+    notes.sort_unstable();
+
+    for group in notes.chunk_by(|a, b| a.0 == b.0) {
+        let note = group[0].0;
+        let black = is_black(note);
+        let center_note = if black {
+            note as f32
+        } else {
+            let (left, right) = white_key_edges(note);
+            (left + right) * 0.5
+        };
+        let x = plot.x_unchecked(note_hz(center_note));
+
+        let split = rect.top() + BLACK_KEY_HEIGHT;
+        let (top, bottom) = if black {
+            (rect.top() + 2.0, split - 1.0)
+        } else {
+            (split, rect.bottom() - 2.0)
+        };
+
+        let spacing = ((bottom - top) / group.len() as f32).min(9.5);
+        let radius = 5.0_f32.min(semitone * 0.55).min(spacing * 0.49);
+        let center = (top + bottom) * 0.5;
+        let start = center - spacing * (group.len() - 1) as f32 * 0.5;
+
+        for (index, &(_, band)) in group.iter().enumerate() {
+            let pos = Pos2::new(x, start + spacing * index as f32);
+            let color = ink(band);
+            let stroke = Stroke::new(0.7_f32.min(radius * 0.30), color.gamma_multiply(0.78));
+            painter.circle(pos, radius, color.gamma_multiply(0.55), stroke);
+        }
     }
 }

@@ -30,7 +30,7 @@ pub(crate) use band_input::{BandDrag, cut_handle_q, cut_handle_y};
 use band_input::{cut_handle_db, cut_q, follow, key_hz};
 pub(super) use fill::gradient_fill;
 use grid::{draw_axis_labels, draw_grid_lines};
-use keys::{draw_keys, note_at, note_hz};
+use keys::{draw_key_markers, draw_keys, note_at, note_hz};
 pub(crate) use plot::Plot;
 use response::{ResponseInput, draw_response};
 use trace::draw_spectrum;
@@ -744,8 +744,19 @@ impl EquartEditor {
             spectrum_highlight,
         );
 
+        let band_marker_ink = |index: usize| {
+            let color = self.theme.band[index];
+
+            if controls[index].enabled {
+                color
+            } else {
+                color.gamma_multiply(0.45)
+            }
+        };
+
         if piano_keys_visible {
             draw_keys(&p, &plot, outer, hover, self.accent(), piano_key_fade);
+            draw_key_markers(&p, &plot, outer, &markers, band_marker_ink);
         }
 
         if let Some(mode) = phase_mode {
@@ -795,12 +806,7 @@ impl EquartEditor {
             let selected = self.selected == Some(index);
             let on = controls[index].enabled;
             let color = self.theme.band[index];
-            // dim ghost marker for disabled bands
-            let ink = if on {
-                color
-            } else {
-                color.gamma_multiply(0.45)
-            };
+            let ink = band_marker_ink(index);
 
             if selected {
                 p.circle_filled(

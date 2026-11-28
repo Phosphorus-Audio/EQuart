@@ -120,6 +120,37 @@ fn double_click_key_adds_band() {
     assert_eq!(editor.selected, Some(0));
     assert!(editor.params.is_placed(0));
     assert!(!editor.params.is_placed(1));
+
+    let setter = editor.gui.as_ref().unwrap().param_setter();
+    editor.set(&setter, &editor.params.band(0).frequency, 260.0);
+    editor.set(&setter, &editor.params.band(1).frequency, 264.0);
+    editor.set_band_enabled(1, true);
+
+    let input = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+        time: Some(1.1),
+        ..Default::default()
+    };
+    let mut output = ctx.run_ui(input, |ui| editor.draw(ui));
+    output.textures_delta.clear();
+
+    let strip = spectrum::keys_strip(axis_outer());
+    let c4_center = key_at(440.0 * (-8.75_f32 / 12.0).exp2()).x;
+    let dots: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            let egui::Shape::Circle(dot) = &shape.shape else {
+                return None;
+            };
+            (strip.contains(dot.center) && (dot.center.x - c4_center).abs() < 0.1).then_some(dot)
+        })
+        .collect();
+
+    assert_eq!(dots.len(), 2);
+    assert_eq!(dots[0].fill, editor.theme.band[0].gamma_multiply(0.55));
+    assert_eq!(dots[1].fill, editor.theme.band[1].gamma_multiply(0.55));
+    assert!(dots[0].center.y < dots[1].center.y);
 }
 
 /// old state without placed mask still keeps ghost if param != default
