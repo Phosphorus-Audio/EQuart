@@ -164,12 +164,21 @@ pub(in crate::editor) fn panel_actions(
                 Color32::from_white_alpha(15).gamma_multiply(hover),
             );
         }
-        let color = if glyph == Glyph::Listen && panel_listening(ui, &response) {
-            let palette = theme::current(ui.ctx());
-            match target {
-                modifiers::ModifierTarget::Band(index) => palette.band[index],
-                modifiers::ModifierTarget::Region(index) => palette.region[index],
-            }
+        let palette = theme::current(ui.ctx());
+        let accent = match target {
+            modifiers::ModifierTarget::Band(index) => palette.band[index],
+            modifiers::ModifierTarget::Region(index) => palette.region[index],
+        };
+        let listening = glyph == Glyph::Listen && panel_listening(ui, &response);
+        if listening {
+            p.rect_filled(
+                rect,
+                egui::CornerRadius::ZERO,
+                accent.gamma_multiply(0.22),
+            );
+        }
+        let color = if listening {
+            accent
         } else if enabled {
             ui.visuals().text_color()
         } else {
@@ -405,7 +414,9 @@ impl EquartEditor {
             return;
         }
         if panel_listening(ui, &listen) {
-            self.held_audition = Some(crate::engine::audition::Target::Band(index));
+            let target = crate::engine::audition::Target::Band(index);
+            self.held_audition = Some(target);
+            self.listening = Some((target, ui.input(|input| input.time)));
         }
         if switch.clicked()
             && let Some(destination) = destination

@@ -500,3 +500,82 @@ fn region_modifier_conversion_requires_confirmation() {
     assert_eq!(editor.selected, Some(0));
     assert!(!params.regions[0].harmonic.enabled.value());
 }
+
+fn listen_rings(ctx: &egui::Context, editor: &mut EquartEditor, time: f64) -> usize {
+    fn walk(shape: &egui::Shape, room: (Pos2, f32), count: &mut usize) {
+        match shape {
+            egui::Shape::Circle(circle) => {
+                let centred = (circle.center - room.0).length() < 0.5;
+                let ring = circle.fill == Color32::TRANSPARENT
+                    && circle.stroke.width > 0.0
+                    && (9.9..=36.5).contains(&circle.radius);
+                if centred && ring {
+                    *count += 1;
+                }
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, room, count)),
+            _ => {}
+        }
+    }
+
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.draw(ui),
+    );
+    output.textures_delta.clear();
+
+    let room = (node(editor, 0), 40.0);
+    let mut count = 0;
+    for clipped in &output.shapes {
+        walk(&clipped.shape, room, &mut count);
+    }
+    count
+}
+
+fn band_panel(ctx: &egui::Context, editor: &mut EquartEditor, time: f64) -> Rect {
+    let mut rect = Rect::NOTHING;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| {
+            editor.draw(ui);
+            rect = editor.band_panel_rect(ui, ui.max_rect());
+        },
+    );
+    output.textures_delta.clear();
+    rect
+}
+
+fn listen_shade(ctx: &egui::Context, editor: &mut EquartEditor, time: f64) -> Option<Rect> {
+    let plot = axis_plot();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, CANVAS)),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| editor.draw(ui),
+    );
+    output.textures_delta.clear();
+
+    output.shapes.iter().find_map(|clipped| match &clipped.shape {
+        egui::Shape::Rect(rect)
+            if (rect.rect.height() - plot.rect.height()).abs() < 1.0
+                && rect.fill.a() > 0
+                && rect.rect.width() < plot.rect.width() =>
+        {
+            Some(rect.rect)
+        }
+        _ => None,
+    })
+}

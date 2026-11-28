@@ -84,6 +84,8 @@ pub struct EquartEditor {
     region_dynamics_paused: [bool; crate::region::REGION_COUNT],
     held_delta: Option<usize>,
     held_audition: Option<crate::engine::audition::Target>,
+    /// last frame a listen button was held
+    listening: Option<(crate::engine::audition::Target, f64)>,
     /// multi-selected bands (for dragging together)
     pub(crate) picked: [bool; crate::band::BAND_COUNT],
     /// selection box (start, current)
@@ -161,6 +163,7 @@ impl EquartEditor {
             region_dynamics_paused: Default::default(),
             held_delta: None,
             held_audition: None,
+            listening: None,
             picked: [false; crate::band::BAND_COUNT],
             marquee: None,
             drag: None,
@@ -260,6 +263,7 @@ impl NiceEguiApp for EquartEditor {
         self.meter_smoothed_peak = 0.0;
         self.held_delta = None;
         self.held_audition = None;
+        self.listening = None;
         self.telemetry.set_delta_region(None);
         self.telemetry.set_region_dynamics_monitor(None);
         self.telemetry.set_audition(None);
@@ -366,6 +370,16 @@ pub(crate) fn configure_style(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     let default = Theme::default();
     theme::install(ctx, default, default.panel.accent);
+}
+
+const LISTEN_ECHO: f64 = 0.12;
+
+impl EquartEditor {
+    pub(super) fn audition_target(&self, now: f64) -> Option<crate::engine::audition::Target> {
+        self.listening
+            .filter(|(_, at)| now - at < LISTEN_ECHO)
+            .map(|(target, _)| target)
+    }
 }
 
 fn lighten(color: Color32, amount: f32) -> Color32 {

@@ -28,14 +28,14 @@ impl Target {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(super) struct Focus {
+pub(crate) struct Focus {
     sections: [(FilterKind, f32, f32); 2],
     count: usize,
     route: ChannelMode,
 }
 
 impl Focus {
-    pub(super) fn band(band: BandControl, frequency: f32) -> Self {
+    pub(crate) fn band(band: BandControl, frequency: f32) -> Self {
         let (kind, q) = match band.kind {
             FilterKind::Highpass | FilterKind::LowShelf => (FilterKind::Lowpass, 0.707),
             FilterKind::Lowpass | FilterKind::HighShelf => (FilterKind::Highpass, 0.707),
@@ -49,7 +49,7 @@ impl Focus {
         }
     }
 
-    pub(super) fn region([low, high]: [f32; 2]) -> Self {
+    pub(crate) fn region([low, high]: [f32; 2]) -> Self {
         Self {
             sections: [
                 (FilterKind::Highpass, low, 0.707),
@@ -58,6 +58,30 @@ impl Focus {
             count: 2,
             route: ChannelMode::Stereo,
         }
+    }
+
+    pub(crate) fn passband(&self) -> (Option<f32>, Option<f32>) {
+        let mut low = f32::NEG_INFINITY;
+        let mut high = f32::INFINITY;
+
+        for &(kind, frequency, q) in &self.sections[..self.count] {
+            match kind {
+                FilterKind::Lowpass => high = high.min(frequency),
+                FilterKind::Highpass => low = low.max(frequency),
+                FilterKind::BandPass => {
+                    let half = 0.5 / q;
+                    let spread = (1.0 + half * half).sqrt();
+                    low = low.max(frequency * (spread - half));
+                    high = high.min(frequency * (spread + half));
+                }
+                _ => {}
+            }
+        }
+
+        (
+            low.is_finite().then_some(low),
+            high.is_finite().then_some(high),
+        )
     }
 }
 

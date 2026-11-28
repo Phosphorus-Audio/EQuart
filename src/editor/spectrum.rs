@@ -202,6 +202,33 @@ impl EquartEditor {
             std::array::from_fn(|index| self.params.regions[index].control());
         self.draw_regions(ui, &plot, &regions);
 
+        let now = ui.input(|input| input.time);
+        let listening = self.audition_target(now);
+
+        let mut echoes = [0.0_f32; BAND_COUNT];
+        for &(index, _) in &markers {
+            echoes[index] = ui.ctx().animate_value_with_time(
+                response.id.with(("band-listen-echo", index)),
+                f32::from(listening == Some(crate::engine::audition::Target::Band(index))),
+                layout.animation_speed.duration(0.16),
+            );
+        }
+
+        for &(index, _) in &markers {
+            if echoes[index] <= 0.01 {
+                continue;
+            }
+
+            let control = display_controls[index];
+            let color = self.theme.band[index];
+            let color = if control.enabled {
+                color
+            } else {
+                color.gamma_multiply(0.45)
+            };
+            listen_range(&p, &plot, &control, color, echoes[index]);
+        }
+
         // find nearest band dot within 16px
         let point_at = |position: Pos2| {
             markers
@@ -516,6 +543,14 @@ impl EquartEditor {
             }
         }
 
+        if let Some(index) = self.drag.as_ref().map(|drag| drag.band)
+            && ui.input(|i| i.modifiers.alt)
+        {
+            let target = crate::engine::audition::Target::Band(index);
+            self.held_audition = Some(target);
+            self.listening = Some((target, ui.input(|i| i.time)));
+        }
+
         // wheel edits Q on bells or slope on cuts (works while dragging, hovering a node, or with a selected band)
         let wheel_target = self
             .drag
@@ -808,6 +843,13 @@ impl EquartEditor {
             let color = self.theme.band[index];
             let ink = band_marker_ink(index);
 
+            let echo = echoes[index];
+
+            if echo > 0.01 {
+                p.circle_filled(point, 15.0 * scale, ink.gamma_multiply(0.10 * echo));
+                listen_echo(&p, point, scale, ink, now, layout.animation_speed, echo);
+            }
+
             if selected {
                 p.circle_filled(
                     point,
@@ -907,6 +949,65 @@ impl EquartEditor {
 
             self.about.open(now);
         }
+    }
+}
+
+fn listen_range(
+    p: &egui::Painter,
+    plot: &Plot,
+    control: &BandControl,
+    color: Color32,
+    strength: f32,
+) {
+    let (low, high) =
+        crate::engine::audition::Focus::band(*control, control.frequency).passband();
+    let edge = |hz: f32| plot.x(hz).clamp(plot.rect.left(), plot.rect.right());
+    let left = low.map_or(plot.rect.left(), edge);
+    let right = high.map_or(plot.rect.right(), edge);
+
+    if right - left < 0.5 {
+        return;
+    }
+
+    let painter = p.with_clip_rect(plot.rect);
+    let rect = Rect::from_x_y_ranges(left..=right, plot.rect.y_range());
+    painter.rect_filled(rect, 0.0, color.gamma_multiply(0.09 * strength));
+
+    for (x, open) in [(left, low.is_some()), (right, high.is_some())] {
+        if open {
+            painter.vline(
+                x,
+                plot.rect.y_range(),
+                Stroke::new(1.0, color.gamma_multiply(0.45 * strength)),
+            );
+        }
+    }
+}
+
+fn listen_echo(
+    p: &egui::Painter,
+    center: Pos2,
+    scale: f32,
+    color: Color32,
+    now: f64,
+    speed: AnimationSpeed,
+    strength: f32,
+) {
+    let phase = if speed == AnimationSpeed::Instant {
+        0.4
+    } else {
+        (speed.elapsed(now) * 0.7).fract() as f32
+    };
+
+    for step in 0..3 {
+        let t = (phase + step as f32 / 3.0).fract();
+        let radius = (10.0 + 26.0 * t) * scale;
+        let alpha = (1.0 - t) * (1.0 - t) * strength * 0.9;
+        p.circle_stroke(
+            center,
+            radius,
+            Stroke::new(1.6 - 0.7 * t, color.gamma_multiply(alpha)),
+        );
     }
 }
 

@@ -24,6 +24,8 @@ impl EquartEditor {
         regions: &[RegionControl],
     ) {
         let painter = ui.painter_at(plot.rect);
+        let now = ui.input(|input| input.time);
+        let speed = animation::speed(ui.ctx());
         for (row, (index, region)) in regions
             .iter()
             .enumerate()
@@ -35,6 +37,14 @@ impl EquartEditor {
             let low_is_left = region.low <= region.high;
 
             let selected = self.selected_region == Some(index);
+            let glow = ui.ctx().animate_value_with_time(
+                ui.make_persistent_id(("region-listen-echo", index)),
+                f32::from(
+                    self.audition_target(now)
+                        == Some(crate::engine::audition::Target::Region(index)),
+                ),
+                speed.duration(0.16),
+            );
             let fill: u8 = if region.bypass {
                 9
             } else if selected {
@@ -48,7 +58,8 @@ impl EquartEditor {
                 self.theme.region[index]
             };
             let rect = Rect::from_x_y_ranges(left..=right, plot.rect.y_range());
-            painter.rect_filled(rect, 0.0, color.gamma_multiply(f32::from(fill) / 255.0));
+            let alpha = (f32::from(fill) / 255.0).max(0.22 * glow);
+            painter.rect_filled(rect, 0.0, color.gamma_multiply(alpha));
 
             let mid_x = 0.5 * (left + right);
             for (is_left, edge) in [(true, left), (false, right)] {
@@ -97,15 +108,10 @@ impl EquartEditor {
                     self.set(&gui.param_setter(), param, next_hz);
                 }
                 let hot = edge_resp.hovered() || edge_resp.dragged();
+                let width = if hot || glow > 0.5 { 2.0 } else { 1.0 };
+                let ink = if hot { 0.9 } else { 0.4_f32.max(0.85 * glow) };
 
-                painter.vline(
-                    edge,
-                    rect.y_range(),
-                    Stroke::new(
-                        if hot { 2.0 } else { 1.0 },
-                        color.gamma_multiply(if hot { 0.9 } else { 0.4 }),
-                    ),
-                );
+                painter.vline(edge, rect.y_range(), Stroke::new(width, color.gamma_multiply(ink)));
             }
 
             let x = ((left + right) * 0.5).clamp(plot.rect.left() + 39.0, plot.rect.right() - 39.0);
@@ -591,7 +597,9 @@ impl EquartEditor {
             return;
         }
         if controls::panel_listening(ui, &listen) {
-            self.held_audition = Some(crate::engine::audition::Target::Region(index));
+            let target = crate::engine::audition::Target::Region(index);
+            self.held_audition = Some(target);
+            self.listening = Some((target, ui.input(|input| input.time)));
         }
         if switch.clicked()
             && let Some(destination) = destination
