@@ -99,7 +99,7 @@ impl Dropdown {
         let progress = ui.ctx().animate_bool_with_time_and_easing(
             self.group.with(key),
             open,
-            0.18,
+            animation::speed(ui.ctx()).duration(0.18),
             egui::emath::easing::cubic_out,
         );
         self.entries.push(Entry {

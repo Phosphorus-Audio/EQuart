@@ -170,6 +170,7 @@ pub(crate) const COMBO_PROCESSING: u32 = 8;
 pub(crate) const COMBO_LINEAR_QUALITY: u32 = 9;
 pub(crate) const COMBO_FRAME_RATE: u32 = 10;
 pub(crate) const COMBO_HEATMAP: u32 = 11;
+pub(crate) const COMBO_ANIMATION_SPEED: u32 = 12;
 
 const COMBO_CAPTION_H: f32 = 14.0;
 pub(crate) const COMBO_BUTTON_H: f32 = 24.0;
@@ -512,9 +513,12 @@ pub(crate) fn switch(
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let t =
-        ui.ctx()
-            .animate_bool_with_time_and_easing(id, value, 0.22, egui::emath::easing::cubic_out);
+    let t = ui.ctx().animate_bool_with_time_and_easing(
+        id,
+        value,
+        animation::speed(ui.ctx()).duration(0.22),
+        egui::emath::easing::cubic_out,
+    );
 
     let p = ui.painter();
     let palette = theme::current(ui.ctx());

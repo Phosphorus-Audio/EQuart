@@ -91,7 +91,7 @@ impl EquartEditor {
         let visual_range = ui.ctx().animate_value_with_time(
             ui.make_persistent_id("eq-axis-range"),
             axis_range,
-            0.16,
+            layout.animation_speed.duration(0.16),
         );
         let plot = Plot::with_ranges(
             outer,
@@ -800,7 +800,7 @@ impl EquartEditor {
             let scale = ui.ctx().animate_value_with_time(
                 response.id.with(("band-marker-scale", index)),
                 target_scale,
-                0.10,
+                layout.animation_speed.duration(0.10),
             );
 
             let selected = self.selected == Some(index);
@@ -927,9 +927,11 @@ fn draw_brand(ui: &egui::Ui, p: &egui::Painter, plot: &Plot, interactive: bool) 
             .ctx()
             .pointer_hover_pos()
             .is_some_and(|pos| rect.contains(pos));
-    let hover =
-        ui.ctx()
-            .animate_bool_with_time(ui.make_persistent_id("equart-brand-hover"), hovered, 0.16);
+    let hover = ui.ctx().animate_bool_with_time(
+        ui.make_persistent_id("equart-brand-hover"),
+        hovered,
+        animation::speed(ui.ctx()).duration(0.16),
+    );
     let alpha = 0.34 + 0.28 * hover;
     let ink = theme::current(p.ctx()).text.primary.gamma_multiply(alpha);
 

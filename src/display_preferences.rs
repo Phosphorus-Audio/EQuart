@@ -117,6 +117,39 @@ pub(crate) struct LayoutPreferences {
     pub(crate) phase_unwrapped: bool,
     pub(crate) footer_border: bool,
     pub(crate) auto_expand_eq_axis: bool,
+    pub(crate) animation_speed: AnimationSpeed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AnimationSpeed {
+    Slow,
+    #[default]
+    Normal,
+    Fast,
+    Instant,
+}
+
+impl AnimationSpeed {
+    pub(crate) const ALL: [Self; 4] = [Self::Slow, Self::Normal, Self::Fast, Self::Instant];
+    pub(crate) const LABELS: [&str; 4] = ["Slow", "Normal", "Fast", "Instant"];
+
+    pub(crate) fn duration(self, seconds: f32) -> f32 {
+        seconds * match self {
+            Self::Slow => 1.6,
+            Self::Normal => 1.0,
+            Self::Fast => 0.55,
+            Self::Instant => 0.0,
+        }
+    }
+
+    pub(crate) fn elapsed(self, seconds: f64) -> f64 {
+        if self == Self::Instant {
+            f64::INFINITY
+        } else {
+            seconds / f64::from(self.duration(1.0))
+        }
+    }
 }
 
 impl Default for LayoutPreferences {
@@ -131,6 +164,7 @@ impl Default for LayoutPreferences {
             phase_unwrapped: false,
             footer_border: false,
             auto_expand_eq_axis: false,
+            animation_speed: AnimationSpeed::Normal,
         }
     }
 }
@@ -143,6 +177,13 @@ pub(crate) struct DisplayStore {
 }
 
 impl DisplayStore {
+    pub(crate) fn new(path: Option<PathBuf>) -> Self {
+        Self {
+            path,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn shared() -> Arc<Self> {
         static STORE: OnceLock<Arc<DisplayStore>> = OnceLock::new();
 
@@ -154,10 +195,7 @@ impl DisplayStore {
                 nice_plug::nice_warn!("EQuart could not locate the user configuration directory");
             }
 
-            Arc::new(Self {
-                path,
-                ..Self::default()
-            })
+            Arc::new(Self::new(path))
         });
 
         if let Err(error) = store.reload() {
@@ -543,6 +581,7 @@ mod tests {
                 phase_unwrapped: true,
                 footer_border: true,
                 auto_expand_eq_axis: true,
+                animation_speed: AnimationSpeed::Fast,
             },
             theme,
         };
@@ -561,6 +600,7 @@ mod tests {
         assert!(partial.layout.meter_peak_hold);
         assert_eq!(partial.spectrum.frame_rate, DEFAULT_FRAME_RATE);
         assert!(!partial.layout.auto_expand_eq_axis);
+        assert_eq!(partial.layout.animation_speed, AnimationSpeed::Normal);
 
         let original = first.read().theme;
         let mut fill_edit = original;

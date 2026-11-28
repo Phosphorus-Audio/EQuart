@@ -120,24 +120,22 @@ impl Dial {
             return Outcome::Idle;
         };
         let now = ui.input(|i| i.time);
-
-        if self
+        let speed = animation::speed(ui.ctx());
+        let leaving = self
             .closing_at
-            .is_some_and(|at| now - at >= f64::from(EXIT_S))
-        {
+            .map(|at| (speed.elapsed(now - at) as f32 / EXIT_S).clamp(0.0, 1.0));
+
+        if leaving == Some(1.0) {
             self.shut();
             return Outcome::Idle;
         }
 
         let center = self.center(canvas);
-        let leaving = self
-            .closing_at
-            .map(|at| (((now - at) as f32) / EXIT_S).clamp(0.0, 1.0));
         let mirror = self.side.mirror();
         let disc = Disc {
             center,
             mirror,
-            elapsed: ((now - opened_at) as f32).max(0.0),
+            elapsed: speed.elapsed(now - opened_at).max(0.0) as f32,
             leaving: leaving.unwrap_or(0.0),
             fade: 1.0 - leaving.unwrap_or(0.0),
         };

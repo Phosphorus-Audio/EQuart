@@ -1,3 +1,4 @@
+use super::{AnimationSpeed, animation};
 use egui::{Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2};
 use nice_plug::{context::gui::ParamSetter, prelude::*};
 use std::f32::consts::{PI, TAU};
@@ -19,11 +20,17 @@ struct Motion {
 }
 
 impl Motion {
-    fn sample(&mut self, now: f64, active: bool) -> f32 {
-        let t = ((now - self.started) / 0.95).clamp(0.0, 1.0) as f32;
-        let value = self.from + (self.target - self.from) * (1.0 - (1.0 - t).powi(5));
-
+    fn sample(&mut self, now: f64, active: bool, speed: AnimationSpeed) -> f32 {
         let target = f32::from(active);
+
+        if speed == AnimationSpeed::Instant {
+            self.from = target;
+            self.target = target;
+            return target;
+        }
+
+        let t = (speed.elapsed(now - self.started) / 0.95).clamp(0.0, 1.0) as f32;
+        let value = self.from + (self.target - self.from) * (1.0 - (1.0 - t).powi(5));
 
         if target != self.target {
             self.from = value;
@@ -34,8 +41,8 @@ impl Motion {
         value
     }
 
-    fn moving(&self, now: f64) -> bool {
-        self.from != self.target && now - self.started < 0.95
+    fn moving(&self, now: f64, speed: AnimationSpeed) -> bool {
+        self.from != self.target && speed.elapsed(now - self.started) < 0.95
     }
 }
 
@@ -49,15 +56,22 @@ struct ValueMotion {
 }
 
 impl ValueMotion {
-    fn value(&self, now: f64) -> f32 {
-        let t = ((now - self.started) / 0.75).clamp(0.0, 1.0) as f32;
+    fn value(&self, now: f64, speed: AnimationSpeed) -> f32 {
+        let t = (speed.elapsed(now - self.started) / 0.75).clamp(0.0, 1.0) as f32;
         self.from + (self.target - self.from) * (1.0 - (1.0 - t).powi(5))
     }
 
-    fn update(&mut self, binding: usize, target: f32, now: f64, editing: bool) -> f32 {
+    fn update(
+        &mut self,
+        binding: usize,
+        target: f32,
+        now: f64,
+        editing: bool,
+        speed: AnimationSpeed,
+    ) -> f32 {
         if self.binding != binding {
             // Retarget from the visible position, including during a previous transition
-            self.from = self.value(now);
+            self.from = self.value(now, speed);
             self.binding = binding;
             self.started = now;
             self.switching = true;
@@ -68,13 +82,13 @@ impl ValueMotion {
 
         self.target = target;
 
-        if now - self.started >= 0.75 {
+        if speed.elapsed(now - self.started) >= 0.75 {
             self.switching = false;
             self.from = target;
         }
 
         if self.switching {
-            self.value(now)
+            self.value(now, speed)
         } else {
             target
         }
@@ -379,6 +393,7 @@ pub(crate) fn knob(
         _ => param.modulated_normalized_value(),
     };
     let now = ui.input(|i| i.time);
+    let speed = animation::speed(ui.ctx());
     let binding = param as *const FloatParam as usize;
     let editing = entered_value
         || response.dragged()
@@ -399,7 +414,7 @@ pub(crate) fn knob(
                 switching: false,
             });
 
-        let value = motion.update(binding, target, now, editing || read_only);
+        let value = motion.update(binding, target, now, editing || read_only, speed);
         data.insert_temp(motion_id, motion);
         (value, motion.switching)
     });
@@ -426,12 +441,17 @@ pub(crate) fn knob(
     let (hover, press, moving) = ui.data_mut(|data| {
         let motion_id = id.with("motion");
         let mut motion = data.get_temp::<[Motion; 2]>(motion_id).unwrap_or_default();
-        let hover = motion[0].sample(now, !read_only && ui.is_enabled() && response.hovered());
+        let hover = motion[0].sample(
+            now,
+            !read_only && ui.is_enabled() && response.hovered(),
+            speed,
+        );
         let press = motion[1].sample(
             now,
             !read_only && ui.is_enabled() && response.is_pointer_button_down_on(),
+            speed,
         );
-        let moving = motion.iter().any(|m| m.moving(now));
+        let moving = motion.iter().any(|m| m.moving(now, speed));
         data.insert_temp(motion_id, motion);
         (hover, press, moving)
     });

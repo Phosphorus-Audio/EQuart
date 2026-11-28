@@ -24,12 +24,19 @@ impl EquartEditor {
         pivot: Option<Pos2>,
         draw: impl FnOnce(&mut egui::Ui, f32, f32, Option<Fall>) -> bool,
     ) -> bool {
+        let speed = animation::speed(popup.ctx());
+
+        if life.landed(now, speed) {
+            life.shut();
+        }
+
         if !life.is_shown() {
             return false;
         }
-        let (progress, flash) = life.arrival(now);
-        let fall = life.falling(now);
-        let pose = life.pose(now);
+
+        let (progress, flash) = life.arrival(now, speed);
+        let fall = life.falling(now, speed);
+        let pose = card_pose(progress, fall);
         let mut asked_to_close = false;
         let response = popup.interactable(fall.is_none()).show(|ui| {
             asked_to_close = draw(ui, progress, flash, fall);
@@ -49,24 +56,11 @@ impl EquartEditor {
                 shown.response.ctx.request_repaint();
             }
         }
-        if life.landed(now) {
-
-            life.shut();
-        }
         let dismissed = response.as_ref().is_some_and(|r| r.response.should_close());
         dismissed || asked_to_close
     }
 }
 
-
-fn arrival_progress(opened_at: Option<f64>, now: f64) -> (f32, f32) {
-    let elapsed = opened_at.map_or(0.0, |start| (now - start).max(0.0)) as f32;
-    let eased = |seconds: f32, curve: fn(f32) -> f32| curve((elapsed / seconds).clamp(0.0, 1.0));
-    (
-        eased(SETTINGS_ARRIVAL_S, egui::emath::easing::exponential_out),
-        eased(SETTINGS_FLASH_S, egui::emath::easing::cubic_out),
-    )
-}
 
 fn unfold_scale(progress: f32) -> f32 {
     SETTINGS_MIN_SCALE + (1.0 - SETTINGS_MIN_SCALE) * progress.clamp(0.0, 1.0)
@@ -87,8 +81,8 @@ struct CardFall {
 
 impl CardFall {
     /// How far through the fall we are, `0..=1`.
-    fn progress(&self, now: f64) -> f32 {
-        ((now - self.released_at) as f32 / SETTINGS_FALL_S).clamp(0.0, 1.0)
+    fn progress(&self, now: f64, speed: AnimationSpeed) -> f32 {
+        (speed.elapsed(now - self.released_at) as f32 / SETTINGS_FALL_S).clamp(0.0, 1.0)
     }
 }
 
@@ -130,7 +124,6 @@ enum CardState {
         opened_at: f64,
     },
     Falling {
-        opened_at: f64,
         fall: CardFall,
     },
 }
@@ -153,11 +146,11 @@ impl CardLife {
     }
 
     pub(in crate::editor) fn release(&mut self, now: f64) {
-        let CardState::Open { opened_at } = self.0 else {
+        if !self.is_up() {
             return;
-        };
+        }
+
         self.0 = CardState::Falling {
-            opened_at: opened_at.min(now - f64::from(SETTINGS_ARRIVAL_S)),
             fall: CardFall {
                 released_at: now,
                 tip: tip_at(now),
@@ -170,43 +163,46 @@ impl CardLife {
         *self = Self::SHUT;
     }
 
-    fn arrival(&self, now: f64) -> (f32, f32) {
-        let opened_at = match self.0 {
-            CardState::Closed => None,
-            CardState::Open { opened_at } | CardState::Falling { opened_at, .. } => Some(opened_at),
+    fn arrival(&self, now: f64, speed: AnimationSpeed) -> (f32, f32) {
+        let CardState::Open { opened_at } = self.0 else {
+            return (1.0, 1.0);
         };
-        arrival_progress(opened_at, now)
+
+        let elapsed = speed.elapsed(now - opened_at) as f32;
+        let eased =
+            |seconds: f32, curve: fn(f32) -> f32| curve((elapsed / seconds).clamp(0.0, 1.0));
+        (
+            eased(SETTINGS_ARRIVAL_S, egui::emath::easing::exponential_out),
+            eased(SETTINGS_FLASH_S, egui::emath::easing::cubic_out),
+        )
     }
 
-    fn falling(&self, now: f64) -> Option<Fall> {
+    fn falling(&self, now: f64, speed: AnimationSpeed) -> Option<Fall> {
         match self.0 {
-            CardState::Falling { fall, .. } => Some(fall_at(fall.progress(now), fall.tip)),
+            CardState::Falling { fall } => Some(fall_at(fall.progress(now, speed), fall.tip)),
             CardState::Closed | CardState::Open { .. } => None,
         }
     }
 
-    fn landed(&self, now: f64) -> bool {
-        matches!(self.0, CardState::Falling { fall, .. } if fall.progress(now) >= 1.0)
+    fn landed(&self, now: f64, speed: AnimationSpeed) -> bool {
+        matches!(self.0, CardState::Falling { fall } if fall.progress(now, speed) >= 1.0)
     }
+}
 
-    fn pose(&self, now: f64) -> Option<Pose> {
-        if !self.is_shown() {
-            return None;
-        }
-        let pose = match self.falling(now) {
-            Some(fall) => Pose {
-                scale: 1.0,
-                rotation: fall.tip,
-                offset: fall.offset,
-                fade: fall.fade,
-            },
-            None => Pose {
-                scale: unfold_scale(self.arrival(now).0),
-                ..Pose::REST
-            },
-        };
-        (!pose.is_rest()).then_some(pose)
-    }
+fn card_pose(progress: f32, fall: Option<Fall>) -> Option<Pose> {
+    let pose = match fall {
+        Some(fall) => Pose {
+            scale: 1.0,
+            rotation: fall.tip,
+            offset: fall.offset,
+            fade: fall.fade,
+        },
+        None => Pose {
+            scale: unfold_scale(progress),
+            ..Pose::REST
+        },
+    };
+    (!pose.is_rest()).then_some(pose)
 }
 
 fn fall_at(t: f32, tip: f32) -> Fall {

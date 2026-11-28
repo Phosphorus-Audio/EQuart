@@ -3,7 +3,7 @@ use super::*;
 /// Wait this long after dragging or editing before card starts moving.
 const PANEL_HOLD_SECONDS: f64 = 0.25;
 /// Smooth-damp time for panel glide.
-const PANEL_SMOOTH_TIME: f64 = 0.16;
+const PANEL_SMOOTH_TIME: f32 = 0.16;
 /// Cap frame delta so lag spikes won't make the card teleport.
 const PANEL_MAX_FRAME_DELTA: f64 = 0.05;
 /// Snap to target and stop moving when close enough.
@@ -80,6 +80,7 @@ impl EquartEditor {
         let raw = self.panel_target_x(canvas);
         let desired = Layout::panel_focus_x(canvas, raw);
         let id = panel_motion_id(ui);
+        let smooth_time = animation::speed(ui.ctx()).duration(PANEL_SMOOTH_TIME);
 
         ui.data_mut(|data| {
             let mut m = data.get_temp::<PanelMotion>(id).unwrap_or(PanelMotion {
@@ -137,20 +138,18 @@ impl EquartEditor {
             let dt = (now - m.last_frame).clamp(0.0, PANEL_MAX_FRAME_DELTA) as f32;
             m.last_frame = now;
 
-            if m.pending && now - m.last_change.max(m.last_active) >= PANEL_HOLD_SECONDS {
+            let held = now - m.last_change.max(m.last_active) < PANEL_HOLD_SECONDS;
+            if m.pending && (!held || (smooth_time == 0.0 && !pointer_down)) {
                 let remaining = m.target - m.current;
-                if remaining.abs() <= PANEL_SNAP_DISTANCE && m.velocity.abs() <= PANEL_SNAP_SPEED {
+                if smooth_time == 0.0
+                    || (remaining.abs() <= PANEL_SNAP_DISTANCE
+                        && m.velocity.abs() <= PANEL_SNAP_SPEED)
+                {
                     m.current = m.target;
                     m.velocity = 0.0;
                     m.pending = false;
                 } else {
-                    m.current = smooth_damp(
-                        m.current,
-                        m.target,
-                        &mut m.velocity,
-                        PANEL_SMOOTH_TIME as f32,
-                        dt,
-                    );
+                    m.current = smooth_damp(m.current, m.target, &mut m.velocity, smooth_time, dt);
                 }
             }
 

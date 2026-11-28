@@ -1,7 +1,7 @@
 use crate::{
     Telemetry,
     band::{BAND_COUNT, BandControl},
-    display_preferences::{DisplayPreferences, DisplayStore, theme::Theme},
+    display_preferences::{AnimationSpeed, DisplayPreferences, DisplayStore, theme::Theme},
     params::{
         AXIS_RANGES, DEFAULT_AXIS_RANGE, DEFAULT_SPECTRUM_RANGE, EquartParams, SPECTRUM_RANGES,
         UI_SCALES,
@@ -20,6 +20,7 @@ use std::{
 };
 
 mod about;
+mod animation;
 mod bands;
 mod layout;
 mod logo;
@@ -306,7 +307,7 @@ impl NiceEguiApp for EquartEditor {
             || self.scale.is_shown()
             || self.dial.is_shown()
             || self.preset.is_shown()
-            || self.about.is_animating(ui.input(|input| input.time))
+            || self.about.is_animating(ui.input(|input| input.time), animation::speed(ui.ctx()))
             || self.conversion_dialog.is_some()
             || self.drag.is_some()
             || self.marquee.is_some()
@@ -356,10 +357,11 @@ pub(crate) fn configure_style(ctx: &egui::Context) {
     );
     ctx.set_fonts(fonts);
 
-    let style = egui::Style {
+    let mut style = egui::Style {
         visuals: egui::Visuals::dark(),
         ..Default::default()
     };
+    style.animation_time = animation::speed(ctx).duration(style.animation_time);
     ctx.set_style_of(egui::Theme::Dark, style);
     ctx.set_theme(egui::Theme::Dark);
     let default = Theme::default();
@@ -372,7 +374,11 @@ fn lighten(color: Color32, amount: f32) -> Color32 {
 }
 
 fn hover_progress(ctx: &egui::Context, id: egui::Id, hovered: bool) -> f32 {
-    let t = ctx.animate_bool_with_time(id.with("hover-fade"), hovered, 0.16);
+    let t = ctx.animate_bool_with_time(
+        id.with("hover-fade"),
+        hovered,
+        animation::speed(ctx).duration(0.16),
+    );
     // smoothstep both ways
     t * t * (3.0 - 2.0 * t)
 }

@@ -8,12 +8,13 @@ struct TabMotion {
 }
 
 impl TabMotion {
-    fn progress(self, now: f64) -> f32 {
-        egui::emath::easing::cubic_out(((now - self.started) as f32 / 0.24).clamp(0.0, 1.0))
+    fn progress(self, now: f64, speed: AnimationSpeed) -> f32 {
+        let t = (speed.elapsed(now - self.started) / 0.24).clamp(0.0, 1.0);
+        egui::emath::easing::cubic_out(t as f32)
     }
 
-    fn position(self, now: f64) -> f32 {
-        egui::lerp(self.from..=self.selected as f32, self.progress(now))
+    fn position(self, now: f64, speed: AnimationSpeed) -> f32 {
+        egui::lerp(self.from..=self.selected as f32, self.progress(now, speed))
     }
 }
 
@@ -55,6 +56,7 @@ pub(crate) fn segmented_tabs(
         .unwrap_or(selected);
 
     let now = ui.input(|input| input.time);
+    let speed = animation::speed(ui.ctx());
     let motion_id = id.with("motion");
     let motion = ui.data_mut(|data| {
         let motion = data.get_temp_mut_or_insert_with(motion_id, || TabMotion {
@@ -65,7 +67,7 @@ pub(crate) fn segmented_tabs(
 
         if motion.selected != next {
             *motion = TabMotion {
-                from: motion.position(now),
+                from: motion.position(now, speed),
                 selected: next,
                 started: now,
             };
@@ -73,8 +75,8 @@ pub(crate) fn segmented_tabs(
 
         *motion
     });
-    let progress = motion.progress(now);
-    let slide = motion.position(now);
+    let progress = motion.progress(now, speed);
+    let slide = motion.position(now, speed);
 
     if progress < 1.0 {
         ui.ctx().request_repaint();
@@ -204,7 +206,7 @@ pub(crate) fn slider(
     let press = ui.ctx().animate_bool_with_time_and_easing(
         id.with("press"),
         pressing,
-        0.15,
+        animation::speed(ui.ctx()).duration(0.15),
         egui::emath::easing::quadratic_out,
     );
 

@@ -21,7 +21,7 @@ const MENU_KNOB_HEADROOM: f32 = 8.0;
 const MENU_CARD_W: f32 = 444.0;
 const MENU_CARD_H: f32 = 454.0;
 const LAYOUT_CARD_W: f32 = 220.0;
-const LAYOUT_CARD_H: f32 = 319.0;
+const LAYOUT_CARD_H: f32 = 374.0;
 const MENU_CARD_MARGIN: f32 = 14.0;
 const MENU_CARD_GAP: f32 = 18.0;
 const MENU_SCALE_W: f32 = 142.0;
@@ -388,10 +388,21 @@ impl EquartEditor {
         let mut dropdowns = menu::Dropdown::new(ui.ctx(), group);
         self.phase_rows(&mut content, &mut dropdowns, group);
 
+        let speed = layout.animation_speed as usize;
+        dropdowns.combo(
+            &mut content,
+            menu::COMBO_ANIMATION_SPEED,
+            "Animation speed",
+            AnimationSpeed::LABELS[speed],
+            &AnimationSpeed::LABELS,
+            speed,
+            accent,
+        );
+
         if fall.is_none()
             && let Some((key, index)) = dropdowns.finish(ui, card, accent)
         {
-            self.apply_analysis_choice(ui.ctx(), key, index);
+            self.apply_display_choice(ui.ctx(), key, index);
         }
     }
 
@@ -587,7 +598,7 @@ impl EquartEditor {
                     );
                 }
             } else {
-                self.apply_analysis_choice(ui.ctx(), key, index);
+                self.apply_display_choice(ui.ctx(), key, index);
             }
         }
 

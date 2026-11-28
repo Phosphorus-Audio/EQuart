@@ -38,7 +38,7 @@ impl About {
         self.opened_at.is_some()
     }
 
-    pub(super) fn is_animating(&self, now: f64) -> bool {
+    pub(super) fn is_animating(&self, now: f64, speed: AnimationSpeed) -> bool {
         let Some(opened_at) = self.opened_at else {
             return false;
         };
@@ -48,7 +48,7 @@ impl About {
         }
 
         let total_in = f64::from(STAGGER_S * 3.0 + ITEM_IN_S);
-        now - opened_at < total_in
+        speed.elapsed(now - opened_at) < total_in
     }
 }
 
@@ -92,12 +92,12 @@ impl EquartEditor {
         };
 
         let now = ctx.input(|input| input.time);
-        let elapsed = (now - opened_at).max(0.0) as f32;
+        let speed = animation::speed(ctx);
+        let elapsed = speed.elapsed(now - opened_at).max(0.0) as f32;
 
-        let out_t = self
-            .about
-            .closed_at
-            .map_or(0.0, |closed| ((now - closed) as f32 / CARD_OUT_S).clamp(0.0, 1.0));
+        let out_t = self.about.closed_at.map_or(0.0, |closed| {
+            (speed.elapsed(now - closed) as f32 / CARD_OUT_S).clamp(0.0, 1.0)
+        });
 
         if out_t >= 1.0 {
             self.about.shut();
@@ -288,7 +288,7 @@ impl EquartEditor {
             self.about.close(now);
         }
 
-        if self.about.is_animating(now) {
+        if self.about.is_animating(now, speed) {
             ctx.request_repaint();
         }
     }

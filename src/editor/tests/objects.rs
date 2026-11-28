@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+fn layout_animation_speed() {
+    let (ctx, mut editor) = editor();
+    attach_host(&mut editor);
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("equart-animation-{}-{nonce}", std::process::id()));
+    let path = dir.join("display.json");
+    editor.display_preferences = Arc::new(DisplayStore::new(Some(path.clone())));
+
+    let layout = Pos2::new(CANVAS.x - 22.0, CANVAS.y - Layout::FOOTER * 0.5);
+    click(&ctx, &mut editor, 0.0, layout);
+
+    assert!(editor.layout.is_up());
+    assert!(has_visible_text(&ctx, &mut editor, 1.0, "ANIMATION SPEED"));
+    click_text(&ctx, &mut editor, 1.1, "Normal");
+
+    for (time, label) in [(1.5, "Slow"), (1.6, "Fast"), (1.7, "Instant")] {
+        assert!(has_visible_text(&ctx, &mut editor, time, label));
+    }
+
+    click_text(&ctx, &mut editor, 1.8, "Instant");
+    frame(&ctx, &mut editor, 1.9, Vec::new());
+
+    assert_eq!(
+        editor.display_preferences.read().layout.animation_speed,
+        AnimationSpeed::Instant,
+    );
+    assert_eq!(animation::speed(&ctx), AnimationSpeed::Instant);
+    assert_eq!(ctx.global_style().animation_time, 0.0);
+    let saved = std::fs::read_to_string(path).unwrap();
+    let restored: DisplayPreferences = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        restored.layout.animation_speed,
+        AnimationSpeed::Instant,
+    );
+
+    editor.layout.release(2.0);
+    frame(&ctx, &mut editor, 2.0, Vec::new());
+    assert!(!editor.layout.is_shown());
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn heatmap_layer_order() {
     use crate::display_preferences::HeatmapMode;
 

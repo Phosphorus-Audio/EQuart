@@ -80,6 +80,8 @@ impl EquartEditor {
             ui.set_style(ui.ctx().style_of(egui::Theme::Dark));
         }
 
+        animation::install(ui, self.display_preferences.read().layout.animation_speed);
+
         let palette = self.theme;
         let canvas = ui.max_rect();
         ui.allocate_rect(canvas, Sense::hover());

@@ -116,6 +116,7 @@ impl EquartEditor {
         };
         // smooth hover/press glow
         let dt = ui.input(|i| i.stable_dt).clamp(0.0, 0.1);
+        let dt = animation::speed(ui.ctx()).elapsed(f64::from(dt)) as f32;
         let glow = ease_glow(self.axis_glow[slot], target, dt);
         self.axis_glow[slot] = glow;
         if glow != target {
@@ -392,7 +393,7 @@ impl EquartEditor {
         );
     }
 
-    pub(in crate::editor) fn apply_analysis_choice(
+    pub(in crate::editor) fn apply_display_choice(
         &mut self,
         ctx: &egui::Context,
         key: u32,
@@ -409,6 +410,7 @@ impl EquartEditor {
                 prefs.spectrum.heatmap.mode = crate::display_preferences::HeatmapMode::ALL[index];
             }
             menu::COMBO_PHASE => prefs.layout.phase_unwrapped = index == 1,
+            menu::COMBO_ANIMATION_SPEED => prefs.layout.animation_speed = AnimationSpeed::ALL[index],
             _ => {}
         });
     }
